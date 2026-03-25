@@ -1,0 +1,13 @@
+{
+  "strategy": "水晶苍蝇拍 26.3",
+  "run_time": "2026-03-22T12:05:08.726983",
+  "performance": {
+    "total_time_seconds": 470.76,
+    "phase1_time_seconds": 2.21,
+    "phase2_time_seconds": 468.53,
+    "total_scanned": 5194,
+    "phase1_passed": 5194,
+    "final_passed": 0
+  },
+  "final_picks": []
+}
