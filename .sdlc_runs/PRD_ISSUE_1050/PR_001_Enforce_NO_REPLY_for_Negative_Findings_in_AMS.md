@@ -1,4 +1,4 @@
-status: in_progress
+status: closed
 
 # PR-001: Enforce NO_REPLY for Negative Findings in AMS
 
