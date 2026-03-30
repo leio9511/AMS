@@ -1,4 +1,4 @@
-status: in_progress
+status: closed
 
 # PR-001: Update AMS AgentSkill for Native Announce Delivery
 
