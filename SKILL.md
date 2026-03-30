@@ -7,7 +7,7 @@ AgentSkill package for Arbitrage Monitoring System. It tracks ETFs and Convertib
 When you receive data from the script, you MUST:
 1. Validate if a QDII ETF is "限购" (restricted) using `web_search` if an anomaly involves a QDII ETF.
 2. Check overnight index drops (外盘大跌) via `web_search` for context.
-3. Use the `message` tool to deliver the final curated report to the Boss (Telegram target `telegram:6228532305`).
+3. Deliver the final curated report to the Boss using the native `announce` delivery mechanism (respond directly in the chat, do not use any message tools).
 
 ## Execution
 Run the script via: `python3 scripts/etf_tracker.py`
