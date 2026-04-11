@@ -18,9 +18,10 @@
 
 import sys; sys.path.append(".")
 from scripts.qmt_client import QMTClient
-from scripts.adapter import qmt_to_akshare
+from scripts.qmt_data_adapter import QMTDataAdapter
 from scripts.finance_fetcher import fetch_fundamental_data
 qmt_client = QMTClient()
+qmt_adapter = QMTDataAdapter(qmt_client)
 import akshare as ak
 import pandas as pd
 import json
@@ -131,8 +132,7 @@ def phase1_filter():
     start_time = time.time()
     
     try:
-        qmt_data = qmt_client.get_full_tick()
-        df_a = qmt_to_akshare(qmt_data)
+        df_a = qmt_adapter.get_stock_zh_a_spot_em()
         if not df_a.empty:
             df_finance = fetch_fundamental_data()
             df_a = pd.merge(df_a, df_finance, on='代码', how='left')
@@ -197,8 +197,9 @@ def phase1_filter():
         print("\n📊 正在批量获取港股实时行情...")
         hk_start = time.time()
         
-        hk_data = {}
-        df_hk = qmt_to_akshare(hk_data)
+        # QMT Client currently handles only A shares, but we can reuse the adapter API format 
+        # (Assuming it returns an empty DF or handles it similarly for now)
+        df_hk = pd.DataFrame()
         hk_time = time.time() - hk_start
         print(f"✅ 港股数据获取完成 ({hk_time:.1f}秒)，共 {len(df_hk)} 只")
         total_scanned += len(df_hk)

@@ -24,7 +24,23 @@ class QMTDataAdapter:
         if not raw_data:
             return pd.DataFrame(columns=list(FIELD_MAPPING.values()))
             
-        df = pd.DataFrame(raw_data)
+        # Transform dict of dicts to list of dicts, injecting the stock code
+        records = []
+        if isinstance(raw_data, dict):
+            for code, data in raw_data.items():
+                record = data.copy()
+                # Use raw '代码' format from key
+                record["stock_code"] = code.split('.')[0] if '.' in code else code
+                # Support both 'stock_name' and 'stockName'
+                if "stockName" in record and "stock_name" not in record:
+                    record["stock_name"] = record["stockName"]
+                if "lastClose" in record and "preClose" not in record:
+                    record["preClose"] = record["lastClose"]
+                records.append(record)
+        else:
+            records = raw_data
+            
+        df = pd.DataFrame(records)
         
         # Rename columns according to mapping
         rename_dict = {k: v for k, v in FIELD_MAPPING.items() if k in df.columns}
