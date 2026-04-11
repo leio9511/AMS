@@ -60,3 +60,5 @@ coverage.xml
 .DS_Store
 cache/
 __pycache__/
+
+.sdlc_runs/
