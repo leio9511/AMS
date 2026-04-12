@@ -9,6 +9,14 @@ class QMTClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_fundamentals(self):
+        try:
+            resp = httpx.get(f"{self.base_url}/api/fundamentals")
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
     def get_full_tick(self, code_list=None):
         payload = {
             "method": "get_full_tick",
