@@ -37,6 +37,7 @@ def add_asset(asset, asset_type, amount, cost_basis, current_price, db_path=DEFA
     ''', (asset, asset_type, amount, cost_basis, current_price, unrealized_pnl, profit_pct))
     conn.commit()
     conn.close()
+    return get_asset(asset, db_path)
 
 def get_asset(asset, db_path=DEFAULT_DB_PATH):
     init_db(db_path)
@@ -51,6 +52,37 @@ def get_asset(asset, db_path=DEFAULT_DB_PATH):
         return dict(row)
     return None
 
+def update_asset(asset, current_price, db_path=DEFAULT_DB_PATH):
+    row = get_asset(asset, db_path)
+    if not row:
+        return None
+    
+    amount = row['amount']
+    cost_basis = row['cost_basis']
+    
+    unrealized_pnl = (current_price - cost_basis) * amount
+    profit_pct = ((current_price - cost_basis) / cost_basis) * 100 if cost_basis > 0 else 0
+    
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute('''
+        UPDATE portfolio 
+        SET current_price = ?, unrealized_pnl = ?, profit_pct = ?
+        WHERE asset = ?
+    ''', (current_price, unrealized_pnl, profit_pct, asset))
+    conn.commit()
+    conn.close()
+    return get_asset(asset, db_path)
+
+def remove_asset(asset, db_path=DEFAULT_DB_PATH):
+    init_db(db_path)
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM portfolio WHERE asset = ?', (asset,))
+    conn.commit()
+    conn.close()
+    return {"status": "success"}
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--action', choices=['get', 'add', 'update', 'remove'], required=True)
@@ -59,15 +91,25 @@ if __name__ == '__main__':
     parser.add_argument('--amount', type=float, default=0)
     parser.add_argument('--cost', type=float, default=0)
     parser.add_argument('--price', type=float, default=0)
+    parser.add_argument('--value', type=float, default=0, help="New value (current_price) for update")
     
     args = parser.parse_args()
     
     if args.action == 'add':
-        add_asset(args.asset, args.type, args.amount, args.cost, args.price)
-        print(json.dumps({"status": "success"}))
+        res = add_asset(args.asset, args.type, args.amount, args.cost, args.price)
+        print(json.dumps(res))
     elif args.action == 'get':
         res = get_asset(args.asset)
         if res:
             print(json.dumps(res))
         else:
             print(json.dumps({"error": "not found"}))
+    elif args.action == 'update':
+        res = update_asset(args.asset, args.value)
+        if res:
+            print(json.dumps(res))
+        else:
+            print(json.dumps({"error": "not found"}))
+    elif args.action == 'remove':
+        res = remove_asset(args.asset)
+        print(json.dumps(res))
