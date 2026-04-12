@@ -23,11 +23,17 @@ class CrystalFlyStrategy(StrategyBase):
     def on_tick(self, event):
         data = event.data
         code = data.get("code")
-        pe = data.get("pe")
+        price = data.get("lastPrice")
+        total_capital = data.get("total_capital")
+        net_profit = data.get("net_profit")
         
+        pe = None
+        if price is not None and total_capital is not None and net_profit is not None and net_profit > 0:
+            pe = (price * total_capital) / net_profit
+            
         if code and pe is not None:
             if self.check_fundamentals(pe):
-                print(f"SIGNAL: {code} passed fundamental screening (PE: {pe})")
+                print(f"SIGNAL: {code} passed fundamental screening (PE: {pe:.2f})")
 
     def on_timer(self, event):
         pass
