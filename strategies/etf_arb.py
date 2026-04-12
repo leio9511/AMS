@@ -24,7 +24,7 @@ class ETFArbStrategy(StrategyBase):
         data = event.data
         code = data.get("code")
         price = data.get("lastPrice") # QMT full_tick uses lastPrice
-        iopv = data.get("iopv", 1.0) 
+        iopv = data.get("iopv") 
         
         if price is not None and iopv is not None:
             premium = self.calculate_premium(price, iopv)

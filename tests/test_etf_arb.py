@@ -72,5 +72,20 @@ class TestETFArbStrategy(unittest.TestCase):
         # No exception should be raised, and no output should occur
         self.assertEqual(captured_output.getvalue(), "")
 
+    def test_etf_arb_ignores_missing_iopv(self):
+        self.strategy.start()
+        
+        captured_output = io.StringIO()
+        sys.stdout = captured_output
+        
+        # Test missing iopv
+        event = Event("eTick", {"code": "510300.SH", "lastPrice": 4.1})
+        self.engine.process(event)
+        
+        sys.stdout = sys.__stdout__
+        
+        # No output should occur
+        self.assertEqual(captured_output.getvalue(), "")
+
 if __name__ == '__main__':
     unittest.main()
