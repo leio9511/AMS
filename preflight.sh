@@ -26,7 +26,7 @@ fi
 
 # --- Contract Compliance Test ---
 echo "[$(date '+%H:%M:%S')] Running Contract Compliance Test..."
-pytest tests/test_data_source.py tests/test_portfolio.py tests/test_query_spread.py tests/test_run_screener.py tests/test_backup.py >> "$LOG_FILE" 2>&1
+pytest tests/test_data_source.py tests/test_portfolio.py tests/test_query_spread.py tests/test_run_screener.py tests/test_backup.py tests/test_deployment.py >> "$LOG_FILE" 2>&1
 TEST_EXIT_CODE=$?
 
 if [ $TEST_EXIT_CODE -ne 0 ]; then

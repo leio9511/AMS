@@ -1,14 +1,17 @@
-# Skill Name: AMS (Arbitrage Monitoring System)
+---
+name: ams
+description: Automated Market Screener & Global Portfolio Ledger. Use this skill to query ETF/CB premiums, screen A-share stocks (e.g. Crystal Fly), manage the global portfolio ledger, and set up dynamic sentinel alerts.
+---
 
-## Description
-AgentSkill package for Arbitrage Monitoring System. It tracks ETFs and Convertible Bonds for anomalies, checks for restrictions, checks indices, and sends reports.
+# AMS AgentSkill
 
-## Reasoning Protocol (The LLM Brain)
-When you receive data from the script, you MUST:
-1. Validate if a QDII ETF is "限购" (restricted) using `web_search` if an anomaly involves a QDII ETF.
-2. Check overnight index drops (外盘大跌) via `web_search` for context.
-3. Deliver the final curated report to the Boss using the native `announce` delivery mechanism (respond directly in the chat, do not use any message tools).
-4. CRITICAL SILENCE RULE: If the tracker script outputs no new arbitrage opportunities or anomalies, you MUST reply with exactly and only NO_REPLY. Do not include any pleasantries, summaries, or other text. The entire response must be just the word NO_REPLY.
+You are equipped with the AMS toolset. To answer questions about market data or portfolios, strictly use the `exec` tool to run the following Python pipes and interpret their JSON output.
 
-## Execution
-Run the script via: `python3 scripts/etf_tracker.py`
+1. **Market Spread Radar**: 
+   `python3 ~/.openclaw/skills/ams/scripts/query_spread.py --ticker <TICKER>`
+2. **On-demand Screener**: 
+   `python3 ~/.openclaw/skills/ams/scripts/run_screener.py --strategy <STRATEGY_NAME> [--pe <MAX_PE>]`
+3. **Global Portfolio Ledger**: 
+   `python3 ~/.openclaw/skills/ams/scripts/query_portfolio.py [--action <get|add|update|remove>] [--asset <ASSET_NAME>] [--value <VALUE>]`
+4. **Dynamic Sentinel Alerts**: 
+   To set up persistent alerts, append a monitoring rule (e.g., condition + script invocation) to the file `/root/.openclaw/workspace/HEARTBEAT.md` so the main Agent evaluates it during heartbeat cycles.
