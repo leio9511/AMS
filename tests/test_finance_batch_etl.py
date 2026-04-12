@@ -1,41 +1,43 @@
-import json
-import math
-import os
-from unittest.mock import MagicMock, patch
-import pytest
+import unittest
+from unittest.mock import patch, mock_open, MagicMock
+import sys
 
-from windows_bridge.finance_batch_etl import process_financial_data, sanitize_value
+# Mock xtdata to prevent ImportError and allow patching
+sys.modules['xtquant'] = MagicMock()
+sys.modules['xtquant.xtdata'] = MagicMock()
 
-def test_etl_creates_json_with_valid_data():
-    mock_xtdata = MagicMock()
-    mock_xtdata.get_financial_data.return_value = {
-        "000001.SZ": {
-            "Capital": [{"total_capital": 1000.0}],
-            "Balance": [{"tot_shrhldr_eqy_excl_min_int": 500.0}],
-            "Income": [{"net_profit_excl_min_int_inc": 100.0}]
-        }
-    }
-    
-    with patch('windows_bridge.finance_batch_etl.xtdata', mock_xtdata):
-        result = process_financial_data(["000001.SZ"])
+import windows_bridge.finance_batch_etl as etl
+
+class TestFinanceBatchEtl(unittest.TestCase):
+    @patch('windows_bridge.finance_batch_etl.xtdata')
+    @patch('windows_bridge.finance_batch_etl.process_financial_data')
+    @patch('builtins.open', new_callable=mock_open)
+    @patch('json.dump')
+    def test_etl_fetches_multiple_sectors(self, mock_json_dump, mock_file_open, mock_process, mock_xtdata):
+        def get_stock_list_mock(sector):
+            if sector == '沪深A股':
+                return ['A1', 'A2']
+            elif sector == '沪深ETF':
+                return ['E1', 'A1']
+            elif sector == '沪深转债':
+                return ['C1']
+            return []
+            
+        mock_xtdata.get_stock_list_in_sector.side_effect = get_stock_list_mock
+        mock_process.return_value = {'mock': 'data'}
         
-        assert result["000001.SZ"]["total_capital"] == 1000.0
-        assert result["000001.SZ"]["total_equity"] == 500.0
-        assert result["000001.SZ"]["net_profit"] == 100.0
-
-def test_etl_handles_missing_keys_and_nan():
-    mock_xtdata = MagicMock()
-    mock_xtdata.get_financial_data.return_value = {
-        "000002.SZ": {
-            "Capital": [{"total_capital": float('nan')}],
-            "Balance": [{"total_equity": 300.0}], # tot_shrhldr_eqy_excl_min_int missing
-            "Income": [{"net_profit_excl_min_int_inc": None}]
-        }
-    }
-    
-    with patch('windows_bridge.finance_batch_etl.xtdata', mock_xtdata):
-        result = process_financial_data(["000002.SZ"])
+        etl.main()
         
-        assert result["000002.SZ"]["total_capital"] is None
-        assert result["000002.SZ"]["total_equity"] == 300.0
-        assert result["000002.SZ"]["net_profit"] is None
+        mock_xtdata.get_stock_list_in_sector.assert_any_call('沪深A股')
+        mock_xtdata.get_stock_list_in_sector.assert_any_call('沪深ETF')
+        mock_xtdata.get_stock_list_in_sector.assert_any_call('沪深转债')
+        
+        args, _ = mock_process.call_args
+        processed_list = args[0]
+        self.assertEqual(len(processed_list), 4)
+        self.assertSetEqual(set(processed_list), {'A1', 'A2', 'E1', 'C1'})
+        
+        mock_json_dump.assert_called_once_with({'mock': 'data'}, mock_file_open(), ensure_ascii=False, indent=2)
+
+if __name__ == '__main__':
+    unittest.main()

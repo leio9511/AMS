@@ -77,7 +77,11 @@ def process_financial_data(stock_list):
 def main():
     if not xtdata:
         return
-    stock_list = xtdata.get_stock_list_in_sector('沪深A股')
+    a_shares = xtdata.get_stock_list_in_sector('沪深A股')
+    etfs = xtdata.get_stock_list_in_sector('沪深ETF')
+    cbs = xtdata.get_stock_list_in_sector('沪深转债')
+    
+    stock_list = list(set(a_shares + etfs + cbs))
     fundamentals = process_financial_data(stock_list)
     
     with open(OUTPUT_JSON_PATH, 'w', encoding='utf-8') as f:
