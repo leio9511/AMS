@@ -6,16 +6,25 @@ class TickGateway:
         self.qmt_client = qmt_client or QMTClient()
 
     def poll_once(self, engine, code_list=None):
-        tick_data = self.qmt_client.get_full_tick(code_list)
-        if isinstance(tick_data, dict):
-            # Assuming get_full_tick returns a dict: { "000001.SZ": { tick dict }, ... }
+        response = self.qmt_client.get_full_tick(code_list)
+        # Handle both raw dict or success-wrapped dict
+        if isinstance(response, dict):
+            tick_data = response.get("data", response) if response.get("status") == "success" else response
+            if not isinstance(tick_data, dict):
+                print(f"Gateway poll failed, unexpected data type: {type(tick_data)}")
+                return
+            
             for code, tick in tick_data.items():
-                # We might want to include the code inside the tick data or as a separate field
-                # PRD: "transforms the dictionary response into multiple Event objects pushed to the engine."
+                if code in ["status", "data"]: continue
                 data_payload = {"code": code}
-                data_payload.update(tick if isinstance(tick, dict) else {"data": tick})
+                if isinstance(tick, dict):
+                    data_payload.update(tick)
+                else:
+                    data_payload["data"] = tick
                 event = Event(type=EVENT_TICK, data=data_payload)
                 engine.process(event)
+        else:
+            print(f"Gateway poll failed: {response}")
 
 def poll_once(engine, code_list=None, qmt_client=None):
     """Convenience function as requested in PRD."""
