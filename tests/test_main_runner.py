@@ -50,6 +50,26 @@ def test_main_runner_calls_update_fundamentals():
          poll_idx = next(i for i, call in enumerate(calls) if "poll_once" in str(call))
          assert update_idx < poll_idx
 
+@patch('time.sleep', return_value=None)
+def test_main_runner_network_resilience(mock_sleep):
+    with patch("main_runner.TickGateway") as MockGateway, \
+         patch("main_runner.ETFArbStrategy"), \
+         patch("main_runner.ConvertibleBondStrategy"), \
+         patch("main_runner.CrystalFlyStrategy"), \
+         patch("main_runner.EventEngine"):
+         
+         mock_gateway = MockGateway.return_value
+         # Make it fail 2 times then succeed for update_fundamentals
+         mock_gateway.update_fundamentals.side_effect = [Exception("Network error 1"), Exception("Network error 2"), None]
+         # Make it fail 3 times (max) for poll_once
+         mock_gateway.poll_once.side_effect = [Exception("Poll error 1"), Exception("Poll error 2"), Exception("Poll error 3")]
+         
+         main_runner.main()
+         
+         assert mock_gateway.update_fundamentals.call_count == 3
+         assert mock_gateway.poll_once.call_count == 3
+         assert mock_sleep.call_count == 4 # 2 for update_fundamentals, 2 for poll_once
+
 def test_heartbeat_updated():
     with open("/root/.openclaw/workspace/HEARTBEAT.md", "r", encoding="utf-8") as f:
         content = f.read()

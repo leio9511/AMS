@@ -23,11 +23,33 @@ def main():
     crystal_fly.start()
 
     logger.info("Strategies started. Fetching fundamentals snapshot...")
-    gateway.update_fundamentals()
+    
+    import time
+    max_retries = 3
+    
+    for attempt in range(1, max_retries + 1):
+        try:
+            gateway.update_fundamentals()
+            break
+        except Exception as e:
+            logger.warning(f"Failed to update fundamentals (Attempt {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                time.sleep(2 ** attempt)
+            else:
+                logger.error("Max retries reached for update_fundamentals.")
     
     logger.info("Polling gateway once...")
-    gateway.poll_once(engine)
-    logger.info("Poll complete. Exiting cleanly.")
+    for attempt in range(1, max_retries + 1):
+        try:
+            gateway.poll_once(engine)
+            logger.info("Poll complete. Exiting cleanly.")
+            break
+        except Exception as e:
+            logger.warning(f"Failed to poll gateway (Attempt {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                time.sleep(2 ** attempt)
+            else:
+                logger.error("Max retries reached for poll_once.")
     
 if __name__ == "__main__":
     main()
