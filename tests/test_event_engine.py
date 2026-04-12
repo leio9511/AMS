@@ -1,8 +1,29 @@
-from engine.event_engine import EventEngine, Event, EVENT_TICK
+from engine.event_engine import EventEngine, Event, EVENT_TICK, EVENT_TIMER
 from engine.gateway import poll_once, TickGateway
 from unittest.mock import Mock, patch
 
-def test_event_engine_pub_sub():
+def test_event_creation():
+    assert EVENT_TICK == "eTick"
+    assert EVENT_TIMER == "eTimer"
+    
+    event = Event(type=EVENT_TICK, data={"price": 10})
+    assert event.type == EVENT_TICK
+    assert event.data == {"price": 10}
+
+def test_event_engine_register_unregister():
+    engine = EventEngine()
+    handler_called = []
+
+    def dummy_handler(event: Event):
+        handler_called.append(event.data)
+
+    engine.register(EVENT_TICK, dummy_handler)
+    assert dummy_handler in engine._handlers.get(EVENT_TICK, [])
+    
+    engine.unregister(EVENT_TICK, dummy_handler)
+    assert dummy_handler not in engine._handlers.get(EVENT_TICK, [])
+
+def test_event_engine_dispatch():
     engine = EventEngine()
     handler_called = []
 
@@ -15,20 +36,6 @@ def test_event_engine_pub_sub():
 
     assert len(handler_called) == 1
     assert handler_called[0] == {"price": 10}
-
-def test_event_engine_unregister():
-    engine = EventEngine()
-    handler_called = []
-
-    def dummy_handler(event: Event):
-        handler_called.append(event.data)
-
-    engine.register(EVENT_TICK, dummy_handler)
-    engine.unregister(EVENT_TICK, dummy_handler)
-    event = Event(type=EVENT_TICK, data={"price": 10})
-    engine.process(event)
-
-    assert len(handler_called) == 0
 
 @patch('scripts.qmt_client.QMTClient.get_full_tick')
 def test_gateway_poll_once(mock_get_full_tick):
