@@ -68,5 +68,41 @@ def test_poll_once_with_invalid_data(mock_get_full_tick):
     gateway = TickGateway()
     gateway.poll_once(engine)
 
-    # Should gracefully return early, emitting zero events.
-    assert len(received_events) == 0
+@patch('scripts.qmt_client.QMTClient.get_fundamentals')
+def test_update_fundamentals_success(mock_get_fundamentals):
+    mock_get_fundamentals.return_value = {
+        "status": "success",
+        "data": {
+            "510300.SH": {"iopv": 4.4, "pe": 15.0}
+        }
+    }
+    gateway = TickGateway()
+    gateway.update_fundamentals()
+    assert gateway.fundamentals_cache == {"510300.SH": {"iopv": 4.4, "pe": 15.0}}
+
+@patch('scripts.qmt_client.QMTClient.get_full_tick')
+def test_poll_once_merges_fundamentals_from_cache(mock_get_full_tick):
+    mock_get_full_tick.return_value = {
+        "status": "success",
+        "data": {
+            "510300.SH": {"lastPrice": 4.6}
+        }
+    }
+    
+    engine = EventEngine()
+    received_events = []
+
+    def handler(event: Event):
+        received_events.append(event.data)
+
+    engine.register(EVENT_TICK, handler)
+    
+    gateway = TickGateway()
+    gateway.fundamentals_cache = {
+        "510300.SH": {"iopv": 4.4, "pe": 15.0}
+    }
+    gateway.poll_once(engine)
+
+    assert len(received_events) == 1
+    assert {"code": "510300.SH", "lastPrice": 4.6, "iopv": 4.4, "pe": 15.0} in received_events
+
