@@ -22,7 +22,10 @@ def main():
     conv_bond.start()
     crystal_fly.start()
 
-    logger.info("Strategies started. Polling gateway once...")
+    logger.info("Strategies started. Fetching fundamentals snapshot...")
+    gateway.update_fundamentals()
+    
+    logger.info("Polling gateway once...")
     gateway.poll_once(engine)
     logger.info("Poll complete. Exiting cleanly.")
     

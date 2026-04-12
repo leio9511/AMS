@@ -27,7 +27,28 @@ def test_main_runner_initialization_and_poll():
          mock_conv_bond.start.assert_called_once()
          mock_crystal_fly.start.assert_called_once()
          
+         mock_gateway.update_fundamentals.assert_called_once()
          mock_gateway.poll_once.assert_called_once()
+
+def test_main_runner_calls_update_fundamentals():
+    with patch("main_runner.TickGateway") as MockGateway, \
+         patch("main_runner.ETFArbStrategy"), \
+         patch("main_runner.ConvertibleBondStrategy"), \
+         patch("main_runner.CrystalFlyStrategy"), \
+         patch("main_runner.EventEngine"):
+         
+         mock_gateway = MockGateway.return_value
+         
+         main_runner.main()
+         
+         mock_gateway.update_fundamentals.assert_called_once()
+         mock_gateway.poll_once.assert_called_once()
+         
+         # Assert order
+         calls = mock_gateway.mock_calls
+         update_idx = next(i for i, call in enumerate(calls) if "update_fundamentals" in str(call))
+         poll_idx = next(i for i, call in enumerate(calls) if "poll_once" in str(call))
+         assert update_idx < poll_idx
 
 def test_heartbeat_updated():
     with open("/root/.openclaw/workspace/HEARTBEAT.md", "r", encoding="utf-8") as f:
