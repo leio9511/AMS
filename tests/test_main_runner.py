@@ -28,3 +28,10 @@ def test_main_runner_initialization_and_poll():
          mock_crystal_fly.start.assert_called_once()
          
          mock_gateway.poll_once.assert_called_once()
+
+def test_heartbeat_updated():
+    with open("/root/.openclaw/workspace/HEARTBEAT.md", "r", encoding="utf-8") as f:
+        content = f.read()
+    assert "## AMS 2.0 Agentic Integration (09:15 AM & 15:30 PM UTC+8)" in content
+    assert "Execute `python3 /root/.openclaw/workspace/projects/AMS/main_runner.py`" in content
+
