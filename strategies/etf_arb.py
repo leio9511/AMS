@@ -23,12 +23,13 @@ class ETFArbStrategy(StrategyBase):
     def on_tick(self, event):
         data = event.data
         code = data.get("code")
-        price = data.get("price")
-        iopv = data.get("iopv", 1.0) # Assume default 1.0 if not provided for simpler testing or require it
+        price = data.get("lastPrice") # QMT full_tick uses lastPrice
+        iopv = data.get("iopv", 1.0) 
+        
         if price is not None and iopv is not None:
             premium = self.calculate_premium(price, iopv)
             if premium > 0.02:
-                print(f"SIGNAL: {code} premium is {premium*100:.2f}% (> 2%)")
+                print(f"!!! SIGNAL: {code} premium is {premium*100:.2f}% (> 2%)")
 
     def on_timer(self, event):
         pass
