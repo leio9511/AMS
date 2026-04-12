@@ -42,7 +42,7 @@ def process_financial_data(stock_list):
             
             total_capital = None
             if capital_data is not None and not capital_data.empty:
-                # If it's a DataFrame, get value from first row. Handle both Dict/List and DataFrame shapes.
+                # If it is a DataFrame, get value from first row. Handle both Dict/List and DataFrame shapes.
                 try:
                     total_capital = capital_data.iloc[-1]['total_capital'] if hasattr(capital_data, 'iloc') else capital_data[0].get('total_capital')
                 except (KeyError, IndexError):
