@@ -45,3 +45,32 @@ def test_adapter_handles_empty_response():
     
     for expected_col in FIELD_MAPPING.values():
         assert expected_col in df.columns
+
+def test_get_stock_zh_a_spot_em_filters_hk():
+    mock_client = MagicMock()
+    mock_client.get_full_tick.return_value = {
+        "000001.SZ": {"lastPrice": 10.5},
+        "00700.HK": {"lastPrice": 300.0}
+    }
+    
+    adapter = QMTDataAdapter(mock_client)
+    df = adapter.get_stock_zh_a_spot_em()
+    
+    assert len(df) == 1
+    assert df.iloc[0]["代码"] == "000001"
+
+def test_get_stock_hk_spot_em():
+    mock_client = MagicMock()
+    mock_client.get_full_tick.return_value = {
+        "000001.SZ": {"lastPrice": 10.5},
+        "00700.HK": {"lastPrice": 300.0, "stockName": "Tencent"}
+    }
+    
+    adapter = QMTDataAdapter(mock_client)
+    df = adapter.get_stock_hk_spot_em()
+    
+    assert len(df) == 1
+    assert df.iloc[0]["代码"] == "00700"
+    assert df.iloc[0]["名称"] == "Tencent"
+    for expected_col in FIELD_MAPPING.values():
+        assert expected_col in df.columns

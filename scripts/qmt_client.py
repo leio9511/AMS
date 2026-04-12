@@ -9,7 +9,15 @@ class QMTClient:
         resp.raise_for_status()
         return resp.json()
 
-    def get_full_tick(self):
-        resp = httpx.get(f"{self.base_url}/api/bulk_quote")
+    def get_full_tick(self, code_list=None):
+        payload = {
+            "method": "get_full_tick",
+            "args": [code_list] if code_list else [],
+            "kwargs": {}
+        }
+        resp = httpx.post(f"{self.base_url}/api/xtdata_call", json=payload)
         resp.raise_for_status()
-        return resp.json()
+        res_json = resp.json()
+        if res_json.get("status") == "success":
+            return res_json.get("data")
+        return res_json  # or handle error
