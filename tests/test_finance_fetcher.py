@@ -6,10 +6,10 @@ import pandas as pd
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from finance_fetcher import fetch_fundamental_data
+from scripts.finance_fetcher import fetch_fundamental_data
 
 class TestFinanceFetcher(unittest.TestCase):
-    @patch('finance_fetcher.ak.stock_zh_a_spot_em')
+    @patch('scripts.finance_fetcher.ak.stock_zh_a_spot_em')
     def test_fetch_fundamental_data_columns(self, mock_ak):
         mock_ak.return_value = pd.DataFrame({
             '代码': ['600000', '600004'],
@@ -22,7 +22,7 @@ class TestFinanceFetcher(unittest.TestCase):
         self.assertIn('市盈率-动态', df.columns)
         self.assertIn('总市值', df.columns)
         
-    @patch('finance_fetcher.ak.stock_zh_a_spot_em')
+    @patch('scripts.finance_fetcher.ak.stock_zh_a_spot_em')
     def test_fetch_fundamental_data_authenticity(self, mock_ak):
         mock_ak.return_value = pd.DataFrame({
             '代码': ['600000', '600004', '000001'],

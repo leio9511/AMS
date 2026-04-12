@@ -2,7 +2,7 @@ import pytest
 import pandas as pd
 from scripts.adapter import qmt_to_akshare
 from scripts.finance_fetcher import fetch_fundamental_data
-from scripts.pilot_stock_radar import phase1_filter
+from legacy_scripts.pilot_stock_radar import phase1_filter
 from unittest.mock import patch, MagicMock
 
 def test_qmt_to_akshare_mapping():
@@ -64,9 +64,9 @@ def test_fetch_fundamental_data(mock_spot_em):
     pe_values = df['市盈率-动态'].dropna().head(50)
     assert pe_values.nunique() > 1, "PE values are uniform, indicating hardcoded fake data!"
 
-@patch('scripts.pilot_stock_radar.qmt_client.get_full_tick')
-@patch('scripts.pilot_stock_radar.fetch_fundamental_data')
-@patch('scripts.pilot_stock_radar.ak.index_component_sw')
+@patch('legacy_scripts.pilot_stock_radar.qmt_client.get_full_tick')
+@patch('legacy_scripts.pilot_stock_radar.fetch_fundamental_data')
+@patch('legacy_scripts.pilot_stock_radar.ak.index_component_sw')
 def test_phase1_filter_integration(mock_sw, mock_finance, mock_qmt):
     # This test verifies that pilot_stock_radar.phase1_filter correctly merges
     # dynamic data from both QMT and Fundamental sources.

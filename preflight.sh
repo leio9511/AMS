@@ -12,7 +12,7 @@ LOG_FILE="$PROJECT_DIR/build_preflight.log"
 echo "[$(date '+%H:%M:%S')] Starting Smart Preflight Checks..."
 
 cd "$PROJECT_DIR" || exit 1
-python3 -m py_compile scripts/adapter.py scripts/pilot_stock_radar.py tests/test_data_source.py > "$LOG_FILE" 2>&1
+python3 -m py_compile scripts/adapter.py legacy_scripts/pilot_stock_radar.py tests/test_data_source.py > "$LOG_FILE" 2>&1
 EXIT_CODE=$?
 
 if [ $EXIT_CODE -ne 0 ]; then
