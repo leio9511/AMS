@@ -34,5 +34,24 @@ def get_fundamentals():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+ALLOWED_METHODS = {"get_full_tick", "get_market_data", "get_instrument_detail"}
+
+@app.post('/api/xtdata_call')
+async def xtdata_call(request: dict):
+    method = request.get('method')
+    args = request.get('args', [])
+    kwargs = request.get('kwargs', {})
+    
+    if method not in ALLOWED_METHODS:
+        raise HTTPException(status_code=403, detail="Method not allowed")
+        
+    try:
+        from xtquant import xtdata
+        func = getattr(xtdata, method)
+        res = func(*args, **kwargs)
+        return {"status": "success", "data": res}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 if __name__ == '__main__':
     uvicorn.run(app, host='0.0.0.0', port=8000)

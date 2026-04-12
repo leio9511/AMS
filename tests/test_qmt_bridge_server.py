@@ -43,3 +43,32 @@ def test_get_fundamentals_file_malformed(tmp_path, monkeypatch):
     response = client.get('/api/fundamentals')
     assert response.status_code == 500
     assert response.json() == {"detail": "fundamentals.json is malformed"}
+
+def test_xtdata_call_success(monkeypatch):
+    class MockXtData:
+        @staticmethod
+        def get_full_tick(args_list):
+            return {"000001.SZ": {"lastPrice": 10.5}}
+    
+    import sys
+    import types
+    mock_xtquant = types.ModuleType('xtquant')
+    mock_xtquant.xtdata = MockXtData
+    sys.modules['xtquant'] = mock_xtquant
+    
+    payload = {
+        "method": "get_full_tick",
+        "args": [["000001.SZ"]]
+    }
+    response = client.post('/api/xtdata_call', json=payload)
+    assert response.status_code == 200
+    assert response.json() == {"status": "success", "data": {"000001.SZ": {"lastPrice": 10.5}}}
+    
+def test_xtdata_call_forbidden():
+    payload = {
+        "method": "os.system",
+        "args": ["rm -rf /"]
+    }
+    response = client.post('/api/xtdata_call', json=payload)
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Method not allowed"}

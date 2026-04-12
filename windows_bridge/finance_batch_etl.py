@@ -41,18 +41,30 @@ def process_financial_data(stock_list):
             income_data = stock_data.get('Income', [])
             
             total_capital = None
-            if capital_data and len(capital_data) > 0:
-                total_capital = capital_data[0].get('total_capital')
+            if capital_data is not None and not capital_data.empty:
+                # If it's a DataFrame, get value from first row. Handle both Dict/List and DataFrame shapes.
+                try:
+                    total_capital = capital_data.iloc[-1]['total_capital'] if hasattr(capital_data, 'iloc') else capital_data[0].get('total_capital')
+                except (KeyError, IndexError):
+                    total_capital = None
             
             total_equity = None
-            if balance_data and len(balance_data) > 0:
-                total_equity = balance_data[0].get('tot_shrhldr_eqy_excl_min_int')
-                if total_equity is None or (isinstance(total_equity, float) and math.isnan(total_equity)):
-                    total_equity = balance_data[0].get('total_equity')
+            if balance_data is not None and not balance_data.empty:
+                try:
+                    row = balance_data.iloc[-1] if hasattr(balance_data, 'iloc') else balance_data[0]
+                    total_equity = row.get('tot_shrhldr_eqy_excl_min_int') if isinstance(row, dict) else row.get('tot_shrhldr_eqy_excl_min_int')
+                    if total_equity is None or (isinstance(total_equity, float) and math.isnan(total_equity)):
+                        total_equity = row.get('total_equity')
+                except (KeyError, IndexError):
+                    total_equity = None
             
             net_profit = None
-            if income_data and len(income_data) > 0:
-                net_profit = income_data[0].get('net_profit_excl_min_int_inc')
+            if income_data is not None and not income_data.empty:
+                try:
+                    row = income_data.iloc[-1] if hasattr(income_data, 'iloc') else income_data[0]
+                    net_profit = row.get('net_profit_excl_min_int_inc') if isinstance(row, dict) else row.get('net_profit_excl_min_int_inc')
+                except (KeyError, IndexError):
+                    net_profit = None
                 
             results[stock] = {
                 'total_capital': sanitize_value(total_capital),
