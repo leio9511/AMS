@@ -12,14 +12,14 @@ The `preflight.sh` script in the AMS project currently hardcodes the list of Pyt
 - **Scope**: Modifying `/root/.openclaw/workspace/projects/AMS/preflight.sh`.
 - **Behavior**: 
   - Syntax check: Scan the entire project for all `.py` files (excluding hidden directories or `__pycache__`) and verify syntax.
-  - Test runner: Run `pytest` pointing to the `tests/` directory and `windows_bridge/tests/` directory (if it exists) to dynamically discover all `test_*.py` files.
+  - Test runner: Run `pytest` pointing explicitly to the `tests/` directory and `windows_bridge/tests/` directory (if it exists). Do not run tests in `scripts/spikes/`, `scripts/experiments/`, or `legacy_prototypes/`.
   - Implement silent-on-success and verbose-on-failure behavior, tracking the number of passed tests.
 
 ## 3. Architecture & Technical Strategy (架构设计与技术路线)
 - **Target File**: `/root/.openclaw/workspace/projects/AMS/preflight.sh`
 - **Technical Strategy**:
   - Adopt the `TOTAL_PASSED` tracking pattern from the `leio-sdlc` preflight script.
-  - Use `find . -name "*.py" ... | xargs python3 -m py_compile` for the global syntax check.
+  - Use `find . -name "*.py" ... -print0 | xargs -0 python3 -m py_compile` for the global syntax check.
   - Use `pytest tests/ windows_bridge/tests/` (or simply allow `pytest` to automatically discover everything from the root, ignoring non-test code) for unit tests.
   - Preserve the log-extracting logic (`grep -iE -A 10 -B 2 ...`) for token optimization during failures.
 
@@ -30,10 +30,10 @@ The `preflight.sh` script in the AMS project currently hardcodes the list of Pyt
   - **When** `./preflight.sh` is executed
   - **Then** It exits with code 0 and reports the total number of test suites passed.
 
-- **Scenario 2: Preflight catches a new unlisted test failure**
-  - **Given** A failing test file is added to a new directory like `windows_bridge/tests/test_fail.py`
+- **Scenario 2: Preflight catches a new test failure in a designated tests directory**
+  - **Given** A failing test file is added to a recognized directory like `windows_bridge/tests/test_fail.py`
   - **When** `./preflight.sh` is executed
-  - **Then** It automatically discovers the failing test, outputs the failure log segment, and exits with a non-zero code.
+  - **Then** It automatically discovers the failing test within the valid directory, outputs the failure log segment, and exits with a non-zero code.
 
 ## 5. Overall Test Strategy & Quality Goal (测试策略与质量目标)
 - **Quality Goal**: The script must remain POSIX-compliant bash. Ensure error outputs are cleanly truncated to avoid blowing up the LLM context window.
@@ -60,5 +60,5 @@ fi
 ```
 - **Bash snippet to be used inside `preflight.sh` for global syntax check**:
 ```bash
-find . -name "*.py" -not -path "*/\.*" -not -path "*/__pycache__/*" -not -path "*/docs/*" | xargs python3 -m py_compile > "$LOG_FILE" 2>&1
+find . -name "*.py" -not -path "*/\.*" -not -path "*/__pycache__/*" -not -path "*/docs/*" -print0 | xargs -0 python3 -m py_compile > "$LOG_FILE" 2>&1
 ```
