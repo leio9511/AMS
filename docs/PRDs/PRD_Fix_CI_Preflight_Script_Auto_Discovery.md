@@ -8,19 +8,24 @@ Affected_Projects: [AMS]
 The `preflight.sh` script in the AMS project currently hardcodes the list of Python files to be syntax-checked (`python3 -m py_compile ...`) and the list of test files to be run (`pytest tests/test_...`). When the SDLC agent introduces new modules or test directories (e.g., `windows_bridge/tests/`), `preflight.sh` ignores them, leading to false negatives during CI validation and blocking PR progress. The script needs to be refactored to automatically discover and run all Python files and test suites.
 
 ## 2. Requirements & User Stories (需求定义)
-- **Goal**: Refactor `preflight.sh` to use dynamic file discovery instead of hardcoded lists.
-- **Scope**: Modifying `/root/.openclaw/workspace/projects/AMS/preflight.sh`.
+- **Goal**: Refactor `preflight.sh` to use dynamic file discovery instead of hardcoded lists. Establish strict project boundaries for test files using `pytest.ini` and architecture documentation.
+- **Scope**: 
+  - Modifying `/root/.openclaw/workspace/projects/AMS/preflight.sh`
+  - Creating `/root/.openclaw/workspace/projects/AMS/pytest.ini`
+  - Modifying `/root/.openclaw/workspace/projects/AMS/BEST_PRACTICES.md`
 - **Behavior**: 
   - Syntax check: Scan the entire project for all `.py` files (excluding hidden directories or `__pycache__`) and verify syntax.
-  - Test runner: Run `pytest` pointing explicitly to the `tests/` directory and `windows_bridge/tests/` directory (if it exists). Do not run tests in `scripts/spikes/`, `scripts/experiments/`, or `legacy_prototypes/`.
+  - Test runner: Run `pytest` with no arguments, relying entirely on a new `pytest.ini` configuration file to strictly restrict test discovery to the `tests/` and `windows_bridge/tests/` directories.
   - Implement silent-on-success and verbose-on-failure behavior, tracking the number of passed tests.
 
 ## 3. Architecture & Technical Strategy (架构设计与技术路线)
-- **Target File**: `/root/.openclaw/workspace/projects/AMS/preflight.sh`
+- **Target File**: `/root/.openclaw/workspace/projects/AMS/preflight.sh`, `/root/.openclaw/workspace/projects/AMS/pytest.ini`, `/root/.openclaw/workspace/projects/AMS/BEST_PRACTICES.md`
 - **Technical Strategy**:
+  - Create a `pytest.ini` at the project root to enforce `testpaths = tests windows_bridge/tests`. This provides tool-level strict boundaries.
+  - Update `BEST_PRACTICES.md` to document the strict separation of test code and production code, forbidding tests inside `scripts/`, `legacy_prototypes/`, etc.
   - Adopt the `TOTAL_PASSED` tracking pattern from the `leio-sdlc` preflight script.
   - Use `find . -name "*.py" ... -print0 | xargs -0 python3 -m py_compile` for the global syntax check.
-  - Use `pytest tests/ windows_bridge/tests/` (or simply allow `pytest` to automatically discover everything from the root, ignoring non-test code) for unit tests.
+  - Use a simple `pytest >> "$LOG_FILE" 2>&1` for unit tests, letting `pytest.ini` handle the discovery constraints.
   - Preserve the log-extracting logic (`grep -iE -A 10 -B 2 ...`) for token optimization during failures.
 
 ## 4. Acceptance Criteria (BDD 黑盒验收标准)
@@ -40,6 +45,8 @@ The `preflight.sh` script in the AMS project currently hardcodes the list of Pyt
 
 ## 6. Framework Modifications (框架防篡改声明)
 - `/root/.openclaw/workspace/projects/AMS/preflight.sh` (Authorized for full rewrite)
+- `/root/.openclaw/workspace/projects/AMS/pytest.ini` (Authorized for creation)
+- `/root/.openclaw/workspace/projects/AMS/BEST_PRACTICES.md` (Authorized for modification)
 
 ## 7. Hardcoded Content (硬编码内容)
 ### Exact Text Replacements:
@@ -61,4 +68,11 @@ fi
 - **Bash snippet to be used inside `preflight.sh` for global syntax check**:
 ```bash
 find . -name "*.py" -not -path "*/\.*" -not -path "*/__pycache__/*" -not -path "*/docs/*" -print0 | xargs -0 python3 -m py_compile > "$LOG_FILE" 2>&1
+```
+- **Content for `pytest.ini`**:
+```ini
+[pytest]
+testpaths =
+    tests
+    windows_bridge/tests
 ```
