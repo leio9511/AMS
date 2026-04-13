@@ -21,7 +21,7 @@ Currently, AMS relies on manual data downloads in the QMT graphical client. When
   - We will create `bootstrap_data.py` which uses `xtquant.xtdata` to download full history (sector data, financial data for A-shares, ETFs, CBs).
   - We will create `daily_sync.py` to trigger `download_sector_data()` and `download_financial_data()` asynchronously. Since `xtquant` downloads in the background and lacks a synchronous callback for financial data, the script will use a robust **Polling with Timeout** mechanism (e.g., monitoring the `datadir` for file modification timestamps or size stabilization over a few seconds, with a maximum timeout) instead of a blind `time.sleep()`.
 - **Linux Side (OpenClaw Orchestration)**:
-  - We will add `trigger_daily_etl.py` locally in OpenClaw. This script uses `paramiko` to SSH into the Windows node, run `daily_sync.py`, and immediately followed by `finance_batch_etl.py` to rebuild the `fundamentals.json` file.
+  - We will add `trigger_daily_etl.py` locally in OpenClaw. This script uses `paramiko` to SSH into the Windows node, run `daily_sync.py` remotely, and immediately followed by executing `finance_batch_etl.py` **remotely on the Windows node** (e.g., `python C:\Users\Administrator\Desktop\AMS\finance_batch_etl.py`) to rebuild the `fundamentals.json` file. Do NOT run the ETL script locally on Linux.
 - **Scheduling**:
   - `deploy.sh` will be updated to register an OpenClaw cron job named `ams_daily_data_sync` running at `5 8 * * 1-5`. It will use the exact same `jq` + `for` loop idempotent logic we established in ISSUE-1110.
 
@@ -40,7 +40,7 @@ Currently, AMS relies on manual data downloads in the QMT graphical client. When
 - **Scenario 3: Daily ETL Trigger Execution**
   - **Given** The OpenClaw scheduler triggers `trigger_daily_etl.py`
   - **When** The script runs
-  - **Then** It successfully connects to Windows via SSH, runs `daily_sync.py`, runs `finance_batch_etl.py`, and logs the completion.
+  - **Then** It successfully connects to Windows via SSH, runs `daily_sync.py` remotely, executes `finance_batch_etl.py` remotely on the Windows node, and logs the completion.
 
 ## 5. Overall Test Strategy & Quality Goal (测试策略与质量目标)
 - **Test Strategy**:
