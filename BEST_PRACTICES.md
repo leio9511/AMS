@@ -22,3 +22,6 @@ from qmt_client import QMTClient  # Implicit, ambiguous, breaks when run from di
 ## 3. Strict Root Rule
 **NO NEW PYTHON IMPLEMENTATION FILES SHALL BE PLACED IN THE ROOT `AMS/` DIRECTORY.** 
 All new `.py` files must be placed in `scripts/`, `tests/`, or another designated subdirectory unless there is an explicit, documented justification (e.g., a top-level runner or configuration script that absolutely requires it). This prevents structural chaos and import path collisions.
+
+## 4. Test Boundaries
+Strict separation of test code and production code is enforced. Tests must NOT be placed inside directories like `scripts/` or `legacy_prototypes/`. The `pytest.ini` file at the root acts as the source of truth for test boundaries, dynamically restricting test discovery to designated folders (e.g., `tests/`, `windows_bridge/tests/`).
