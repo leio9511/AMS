@@ -26,6 +26,15 @@ echo "Deploying Windows bridge/ETL scripts to QMT node..."
 python3 deploy_to_windows.py
 
 # 4. Execute the disaster recovery OpenClaw native cron registration
+# Remove ALL existing jobs with the same name to prevent duplicates
+EXISTING_JOB_IDS=$(openclaw cron list --json | jq -r '.jobs[] | select(.name == "ams_ledger_backup") | .id')
+for JOB_ID in $EXISTING_JOB_IDS; do
+    if [ -n "$JOB_ID" ]; then
+        echo "Removing existing ams_ledger_backup cron job: $JOB_ID"
+        openclaw cron rm "$JOB_ID"
+    fi
+done
+
 echo "Registering backup_ledger cron job..."
 openclaw cron add --name "ams_ledger_backup" --cron "0 1 * * *" --message "Execute \`python3 ~/.openclaw/skills/ams/scripts/backup_ledger.py\`. Parse the JSON output, summarize the backup status, and report the daily portfolio snapshot to this channel."
 
