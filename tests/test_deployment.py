@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 
 def test_deploy_sh_syntax():
@@ -20,3 +21,40 @@ def test_skill_md_content():
     assert "run_screener.py" in content, "SKILL.md missing run_screener.py instruction"
     assert "query_portfolio.py" in content, "SKILL.md missing query_portfolio.py instruction"
     assert "HEARTBEAT.md" in content, "SKILL.md missing heartbeat instruction"
+
+
+def test_deploy_sh_cron_schedule():
+    """Test Case 6: Verify deploy.sh has ams_daily_data_sync cron expression '5 8 * * 1-5'."""
+    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../deploy.sh'))
+    assert os.path.exists(script_path), "deploy.sh not found"
+    
+    with open(script_path, 'r') as f:
+        content = f.read()
+    
+    # Verify ams_daily_data_sync cron job is registered with correct schedule
+    assert 'ams_daily_data_sync' in content, "Missing ams_daily_data_sync cron job registration"
+    
+    # Check for the correct cron expression (5 8 * * 1-5 = 08:05 on weekdays Mon-Fri)
+    # The cron expression should be: --cron "5 8 * * 1-5"
+    cron_pattern = r'--cron\s+["\']5 8 \* \* 1-5["\']'
+    assert re.search(cron_pattern, content), "Missing correct cron expression '5 8 * * 1-5' for ams_daily_data_sync"
+    
+    # Verify the cron job references trigger_daily_etl.py
+    assert 'trigger_daily_etl.py' in content, "Missing reference to trigger_daily_etl.py in cron message"
+
+
+def test_deploy_sh_idempotent_removal():
+    """Test Case 7: Verify deploy.sh has idempotent removal logic using jq."""
+    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../deploy.sh'))
+    assert os.path.exists(script_path), "deploy.sh not found"
+    
+    with open(script_path, 'r') as f:
+        content = f.read()
+    
+    # Verify ams_daily_data_sync has idempotent removal logic
+    # Look for EXISTING_SYNC_IDS variable and openclaw cron list --json | jq pattern
+    assert 'EXISTING_SYNC_IDS' in content, "Missing EXISTING_SYNC_IDS variable for ams_daily_data_sync"
+    assert 'openclaw cron list --json' in content, "Missing 'openclaw cron list --json' for job lookup"
+    assert 'jq' in content, "Missing jq command for parsing cron job list"
+    assert '.jobs[] | select(.name == "ams_daily_data_sync")' in content, "Missing jq filter for ams_daily_data_sync"
+    assert 'openclaw cron rm' in content, "Missing 'openclaw cron rm' for removing existing jobs"

@@ -45,6 +45,53 @@ class MockStderr:
 class TestTriggerDailyETL:
     """Test suite for trigger_daily_etl.py"""
 
+    def test_trigger_daily_etl_import(self):
+        """Test Case 1: Verify the module can be imported without errors."""
+        import importlib
+        import scripts.trigger_daily_etl as tde_module
+        importlib.reload(tde_module)
+        
+        # Verify the module has the required functions and constants
+        assert hasattr(tde_module, 'trigger_daily_etl'), "Missing trigger_daily_etl function"
+        assert hasattr(tde_module, 'WINDOWS_HOST'), "Missing WINDOWS_HOST constant"
+        assert hasattr(tde_module, 'WINDOWS_USER'), "Missing WINDOWS_USER constant"
+        assert hasattr(tde_module, 'DAILY_SYNC_CMD'), "Missing DAILY_SYNC_CMD constant"
+        assert hasattr(tde_module, 'FINANCE_ETL_CMD'), "Missing FINANCE_ETL_CMD constant"
+
+    def test_trigger_daily_etl_output_fields(self):
+        """Test Case 5: Verify output JSON has all 4 required fields."""
+        import importlib
+        import scripts.trigger_daily_etl as tde_module
+        importlib.reload(tde_module)
+        
+        # Create a minimal mock that returns valid response
+        def mock_exec_command(self, cmd):
+            channel = MockChannel(exit_status=0)
+            return (MagicMock(),
+                    MockStdout(b'OK', channel),
+                    MockStderr(b'', channel))
+        
+        mock_ssh_instance = MagicMock()
+        mock_ssh_instance.exec_command = mock_exec_command
+        mock_ssh_instance.close = MagicMock()
+        
+        with patch.object(tde_module.paramiko.SSHClient, '__init__', return_value=None):
+            with patch.object(tde_module.paramiko.SSHClient, 'set_missing_host_key_policy'):
+                with patch.object(tde_module.paramiko.SSHClient, 'connect'):
+                    with patch.object(tde_module.paramiko.SSHClient, 'close', mock_ssh_instance.close):
+                        with patch.object(tde_module.paramiko.SSHClient, 'exec_command', mock_ssh_instance.exec_command):
+                            with patch.object(tde_module.paramiko.SSHClient, '__call__', return_value=mock_ssh_instance):
+                                result = tde_module.trigger_daily_etl()
+        
+        # Verify all 4 required fields are present
+        assert "status" in result, "Missing 'status' field in output"
+        assert "daily_sync_output" in result, "Missing 'daily_sync_output' field in output"
+        assert "etl_output" in result, "Missing 'etl_output' field in output"
+        assert "errors" in result, "Missing 'errors' field in output"
+        
+        # Verify errors is a list
+        assert isinstance(result["errors"], list), "errors should be a list"
+
     def test_trigger_daily_etl_successful_execution(self):
         """Test Case 1: Mock paramiko SSHClient to simulate successful execution
         of both daily_sync.py and finance_batch_etl.py.
@@ -94,7 +141,7 @@ class TestTriggerDailyETL:
         assert 'daily_sync' in exec_calls[0]
         assert 'finance_batch_etl' in exec_calls[1]
 
-    def test_trigger_daily_etl_ssh_connection_failure(self):
+    def test_trigger_daily_etl_connection_failure(self):
         """Test Case 2: Mock paramiko to raise an exception on connect.
         Assert JSON output has status 'failed' and errors list contains
         the connection error message."""
@@ -119,7 +166,7 @@ class TestTriggerDailyETL:
         assert len(result["errors"]) > 0
         assert any("Connection refused" in err or "connect" in err.lower() for err in result["errors"])
 
-    def test_trigger_daily_etl_daily_sync_failure(self):
+    def test_trigger_daily_etl_daily_sync_fails(self):
         """Test Case 3: Mock paramiko so daily_sync.py returns non-zero exit.
         Assert JSON output has status 'partial' and errors includes the failure reason."""
 
@@ -161,7 +208,7 @@ class TestTriggerDailyETL:
         assert any("daily_sync.py failed" in err for err in result["errors"])
         assert result["etl_output"] == "ETL completed"
 
-    def test_trigger_daily_etl_etl_failure(self):
+    def test_trigger_daily_etl_etl_fails(self):
         """Test Case 4: Mock paramiko so daily_sync succeeds but
         finance_batch_etl.py returns non-zero exit.
         Assert status 'partial' with appropriate error."""
