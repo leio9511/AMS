@@ -28,10 +28,11 @@ def wait_for_download(timeout=600):
     if xtdata is None:
         return
     logger.info("Waiting for data downloads to complete...")
-    # Attempt to locate datadir
-    datadir = getattr(xtdata, 'data_dir', None)
-    if not datadir:
-        # Fallback to default QMT paths or just wait a fixed time
+    try:
+        datadir = xtdata.data_dir
+        if not datadir:
+            datadir = r"C:\qmt\userdata_mini\datadir"
+    except AttributeError:
         datadir = r"C:\qmt\userdata_mini\datadir"
         
     if not os.path.exists(datadir):

@@ -64,8 +64,12 @@ def main(data_dir=None, timeout=300):
         sys.exit(1)
         
     if data_dir is None:
-        # Default xtdata path heuristic or pass explicitly
-        data_dir = getattr(xtdata, 'data_dir', 'C:\\xtdata')
+        try:
+            data_dir = xtdata.data_dir
+            if not data_dir:
+                data_dir = r"C:\qmt\userdata_mini\datadir"
+        except AttributeError:
+            data_dir = r"C:\qmt\userdata_mini\datadir"
         
     logging.info("Starting sector data download...")
     xtdata.download_sector_data()

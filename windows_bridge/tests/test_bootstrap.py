@@ -43,5 +43,18 @@ class TestBootstrapData(unittest.TestCase):
         mock_wait.assert_not_called()
 
 
+    @patch('bootstrap_data.os.path.exists', return_value=False)
+    @patch('bootstrap_data.time.sleep')
+    def test_bootstrap_fallback_path(self, mock_sleep, mock_exists):
+        import bootstrap_data
+        
+        # Create a mock xtdata without data_dir
+        mock_xtdata = MagicMock(spec=[])
+        
+        with patch('bootstrap_data.xtdata', mock_xtdata):
+            bootstrap_data.wait_for_download(timeout=1)
+            
+        mock_exists.assert_called_with(r"C:\qmt\userdata_mini\datadir")
+
 if __name__ == '__main__':
     unittest.main()

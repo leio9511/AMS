@@ -50,5 +50,21 @@ class TestDailySync(unittest.TestCase):
                 )
                 self.assertFalse(success)
 
+    @patch('daily_sync.xtdata')
+    def test_daily_sync_fallback_path(self, mock_xtdata):
+        # Delete data_dir attribute from mock if it exists
+        if hasattr(mock_xtdata, 'data_dir'):
+            delattr(mock_xtdata, 'data_dir')
+            
+        with patch('daily_sync.xtdata', mock_xtdata):
+            with patch('daily_sync.xtdata.download_sector_data'):
+                with patch('daily_sync.xtdata.download_financial_data'):
+                    with patch('daily_sync.wait_for_data_stabilization', return_value=True) as mock_wait:
+                        with patch('sys.exit'):
+                            import daily_sync
+                            daily_sync.main(data_dir=None)
+                            
+        mock_wait.assert_called_with(r"C:\qmt\userdata_mini\datadir", timeout=300)
+
 if __name__ == '__main__':
     unittest.main()
