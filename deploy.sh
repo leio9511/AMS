@@ -38,4 +38,16 @@ done
 echo "Registering backup_ledger cron job..."
 openclaw cron add --name "ams_ledger_backup" --cron "0 1 * * *" --message "Execute \`python3 ~/.openclaw/skills/ams/scripts/backup_ledger.py\`. Parse the JSON output, summarize the backup status, and report the daily portfolio snapshot to this channel."
 
+# Register daily data sync & ETL cron job
+EXISTING_SYNC_IDS=$(openclaw cron list --json | jq -r '.jobs[] | select(.name == "ams_daily_data_sync") | .id')
+for JOB_ID in $EXISTING_SYNC_IDS; do
+    if [ -n "$JOB_ID" ]; then
+        echo "Removing existing ams_daily_data_sync cron job: $JOB_ID"
+        openclaw cron rm "$JOB_ID"
+    fi
+done
+
+echo "Registering ams_daily_data_sync cron job..."
+openclaw cron add --name "ams_daily_data_sync" --cron "5 8 * * 1-5" --message "Execute \`python3 ~/.openclaw/skills/ams/scripts/trigger_daily_etl.py\`. Parse the JSON output and report the data sync status to the Boss."
+
 echo "✅ Skill deployed successfully. Run 'openclaw gateway restart' if it doesn't hot-reload."
