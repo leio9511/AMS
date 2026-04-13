@@ -3,8 +3,6 @@
 # STANDARD AGENTIC PREFLIGHT SCRIPT TEMPLATE
 # ==========================================
 # Rule: Token-Optimized CI (Silent on Success, Verbose on Failure)
-# Usage: Copy this to the root of any new project as `preflight.sh`
-# and modify the "RUN_COMMAND" section for the specific tech stack.
 
 PROJECT_DIR=$(dirname "$0")
 LOG_FILE="$PROJECT_DIR/build_preflight.log"
@@ -12,13 +10,19 @@ LOG_FILE="$PROJECT_DIR/build_preflight.log"
 echo "[$(date '+%H:%M:%S')] Starting Smart Preflight Checks..."
 
 cd "$PROJECT_DIR" || exit 1
-python3 -m py_compile scripts/adapter.py legacy_scripts/pilot_stock_radar.py tests/test_data_source.py scripts/query_spread.py tests/test_query_spread.py scripts/run_screener.py tests/test_run_screener.py scripts/backup_ledger.py tests/test_backup.py > "$LOG_FILE" 2>&1
+
+# --- Global Syntax Check ---
+find . -name "*.py" -not -path "*/\.*" -not -path "*/__pycache__/*" -not -path "*/docs/*" -print0 | xargs -0 python3 -m py_compile > "$LOG_FILE" 2>&1
 EXIT_CODE=$?
 
 if [ $EXIT_CODE -ne 0 ]; then
     echo "❌ PREFLIGHT FAILED (Exit Code: $EXIT_CODE)!"
     echo "=== ERROR DETAILS (Extracting relevant logs to save tokens) ==="
-    grep -iE -A 10 -B 2 "error:|exception|failed|unresolved|expecting|traceback" "$LOG_FILE" | head -n 50
+    if grep -iE -A 10 -B 2 "error:|exception|failed|unresolved|expecting|traceback|❌" "$LOG_FILE" | head -n 50; then
+        :
+    else
+        tail -n 50 "$LOG_FILE"
+    fi
     echo "==============================================================="
     echo "Please fix the code above to pass the preflight gate."
     exit $EXIT_CODE
@@ -26,17 +30,27 @@ fi
 
 # --- Contract Compliance Test ---
 echo "[$(date '+%H:%M:%S')] Running Contract Compliance Test..."
-pytest tests/test_data_source.py tests/test_portfolio.py tests/test_query_spread.py tests/test_run_screener.py tests/test_backup.py tests/test_deployment.py >> "$LOG_FILE" 2>&1
-TEST_EXIT_CODE=$?
+pytest >> "$LOG_FILE" 2>&1
+EXIT_CODE=$?
 
-if [ $TEST_EXIT_CODE -ne 0 ]; then
-    echo "❌ CONTRACT COMPLIANCE TEST FAILED (Exit Code: $TEST_EXIT_CODE)!"
-    echo "=== ERROR DETAILS ==="
-    cat "$LOG_FILE"
-    echo "====================="
-    exit $TEST_EXIT_CODE
+if [ $EXIT_CODE -ne 0 ]; then
+    echo "❌ PREFLIGHT FAILED (Exit Code: $EXIT_CODE)!"
+    echo "=== ERROR DETAILS (Extracting relevant logs to save tokens) ==="
+    if grep -iE -A 10 -B 2 "error:|exception|failed|unresolved|expecting|traceback|❌" "$LOG_FILE" | head -n 50; then
+        :
+    else
+        tail -n 50 "$LOG_FILE"
+    fi
+    echo "==============================================================="
+    echo "Please fix the code above to pass the preflight gate."
+    exit $EXIT_CODE
 fi
 
-echo "✅ PREFLIGHT SUCCESS: Code compiled and all Unit/Probe tests passed."
+TOTAL_PASSED=$(grep -oE '[0-9]+ passed' "$LOG_FILE" | awk '{print $1}' | head -n 1)
+if [ -z "$TOTAL_PASSED" ]; then
+    TOTAL_PASSED="0"
+fi
+
+echo "✅ PREFLIGHT SUCCESS: Code compiled and $TOTAL_PASSED tests passed."
 rm -f "$LOG_FILE"
 exit 0
