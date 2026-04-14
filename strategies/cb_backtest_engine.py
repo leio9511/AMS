@@ -5,11 +5,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 class CBBacktestEngine:
-    def __init__(self, data: pd.DataFrame, max_holdings: int = 20, friction_cost: float = 0.001, benchmark_returns: pd.Series = None):
+    def __init__(self, data: pd.DataFrame, max_holdings: int = 20, friction_cost: float = 0.001, benchmark_returns: pd.Series = None, take_profit_pct: float = None):
         self.data = data.copy()
         self.max_holdings = max_holdings
         self.friction_cost = friction_cost
         self.benchmark_returns = benchmark_returns
+        self.take_profit_pct = take_profit_pct
         
         # Ensure date is datetime
         self.data['date'] = pd.to_datetime(self.data['date'])
@@ -30,27 +31,84 @@ class CBBacktestEngine:
         rebalance_dates = df_dates.groupby('week')['date'].max().values
         
         portfolio_nav = 1.0
-        current_holdings = {} # symbol -> weight
+        current_holdings = {} # symbol -> {"weight": weight, "cost_price": price}
+        cash_weight = 0.0
         nav_history = []
         
-        # For simplicity, calculate daily returns of all bonds
-        df['ret'] = df.groupby('symbol')['close'].pct_change()
+        # We need previous close to calculate daily return for take-profit
+        df['prev_close'] = df.groupby('symbol')['close'].shift(1)
         
         for idx, date in enumerate(unique_dates):
             day_data = df[df['date'] == date]
             
-            # 1. Update NAV based on current holdings' returns
+            # 1. Update NAV and handle Intraday Take-Profit
             daily_return = 0.0
+            
             if current_holdings:
-                for sym, weight in current_holdings.items():
+                new_holdings = {}
+                for sym, info in current_holdings.items():
+                    # ... (rest of the loop)
+                    weight = info['weight']
+                    cost_price = info['cost_price']
+                    
                     sym_data = day_data[day_data['symbol'] == sym]
                     if not sym_data.empty:
-                        ret = sym_data.iloc[0]['ret']
-                        if not np.isnan(ret):
+                        row = sym_data.iloc[0]
+                        close = row['close']
+                        high = row.get('high', close) # fallback to close if high missing
+                        prev_close = row['prev_close']
+                        
+                        # Check Take Profit
+                        if self.take_profit_pct is not None and high >= cost_price * (1 + self.take_profit_pct):
+                            # Trigger!
+                            limit_price = cost_price * (1 + self.take_profit_pct)
+                            # Return from yesterday's close to limit price
+                            if not np.isnan(prev_close) and prev_close > 0:
+                                ret_tp = (limit_price / prev_close) - 1
+                            else:
+                                ret_tp = 0.0 # Should not happen on hold
+                                
+                            daily_return += weight * ret_tp
+                            # Proceeds move to cash (minus friction for selling)
+                            # The value at time of sell: weight * (1 + ret_tp)
+                            sell_value = weight * (1 + ret_tp) * (1 - self.friction_cost / 2.0)
+                            cash_weight += sell_value
+                        else:
+                            # Still holding
+                            if not np.isnan(prev_close) and prev_close > 0:
+                                ret = (close / prev_close) - 1
+                            else:
+                                ret = 0.0
+                                
                             daily_return += weight * ret
+                            # Weight drifts
+                            new_weight = weight * (1 + ret)
+                            new_holdings[sym] = {"weight": new_weight, "cost_price": cost_price}
+                
+                # Update portfolio NAV
                 portfolio_nav *= (1 + daily_return)
                 
-            nav_history.append({'date': date, 'nav': portfolio_nav, 'daily_return': daily_return, 'holdings': list(current_holdings.keys())})
+                # Normalize weights and cash relative to new NAV
+                # sum(new_holdings.weights) + cash_weight should equal (1 + daily_return)
+                # We want the weights for the start of the NEXT day to sum to 1.0
+                factor = 1.0 / (1 + daily_return)
+                for sym in new_holdings:
+                    new_holdings[sym]['weight'] *= factor
+                cash_weight *= factor
+                
+                current_holdings = new_holdings
+            else:
+                # Even if no holdings, cash still exists and its relative weight stays 1.0
+                if cash_weight > 0:
+                    pass # stays at 1.0 of portfolio if everything is cash
+
+            nav_history.append({
+                'date': date, 
+                'nav': portfolio_nav, 
+                'daily_return': daily_return, 
+                'holdings': list(current_holdings.keys()),
+                'cash_weight': cash_weight
+            })
             
             # 2. Rebalance if it's a rebalance date
             if date in rebalance_dates:
@@ -58,9 +116,8 @@ class CBBacktestEngine:
                 candidates = day_data.copy()
                 
                 # Exclude risky bonds or scale < 0.5B (allow customization via parameter or use 30M for test)
-                # If scale < 30M, exclude
                 if 'outstanding_scale' in candidates.columns:
-                    candidates = candidates[candidates['outstanding_scale'] >= 0.3] # Assume scale in 100M, 0.3 = 30M
+                    candidates = candidates[candidates['outstanding_scale'] >= 0.3]
                 
                 if 'is_risky' in candidates.columns:
                     candidates = candidates[~candidates['is_risky']]
@@ -75,7 +132,7 @@ class CBBacktestEngine:
                     candidates['rank_premium'] = candidates['premium_rate'].rank(ascending=True)
                     
                     if 'turnover' in candidates.columns:
-                        candidates['rank_turnover'] = candidates['turnover'].rank(ascending=False) # higher turnover = lower rank val for subtraction
+                        candidates['rank_turnover'] = candidates['turnover'].rank(ascending=False)
                         candidates['score'] = candidates['rank_price'] + candidates['rank_premium'] - candidates['rank_turnover']
                     else:
                         candidates['score'] = candidates['rank_price'] + candidates['rank_premium']
@@ -83,23 +140,38 @@ class CBBacktestEngine:
                     candidates = candidates.sort_values('score', ascending=True)
                     
                     target_symbols = candidates.head(self.max_holdings)['symbol'].tolist()
-                    target_weight = 1.0 / len(target_symbols) if target_symbols else 0.0
                     
-                    new_holdings = {sym: target_weight for sym in target_symbols}
+                    # Total available weight (invested + cash)
+                    # sum(current_holdings.weight) + cash_weight is 1.0 here because we normalized
+                    total_weight = 1.0 
+                    
+                    target_weight = total_weight / len(target_symbols) if target_symbols else 0.0
                     
                     # Calculate turnover to deduct costs
+                    # new_holdings_dict for turnover calculation
+                    new_target_holdings = {sym: target_weight for sym in target_symbols}
+                    
                     turnover = 0.0
-                    all_syms = set(current_holdings.keys()).union(set(new_holdings.keys()))
+                    # For turnover, we compare current weights (drifts) to target weights
+                    all_syms = set(current_holdings.keys()).union(set(new_target_holdings.keys()))
                     for sym in all_syms:
-                        old_w = current_holdings.get(sym, 0.0)
-                        new_w = new_holdings.get(sym, 0.0)
+                        old_w = current_holdings.get(sym, {}).get('weight', 0.0)
+                        new_w = new_target_holdings.get(sym, 0.0)
                         turnover += abs(new_w - old_w)
-                        
-                    # Cost is applied on the change
-                    cost = (turnover / 2.0) * self.friction_cost # total traded weight * cost
+                    
+                    # Also include cash being deployed?
+                    # If we have 20% cash and buy new bonds, turnover accounts for it.
+                    
+                    cost = (turnover / 2.0) * self.friction_cost
                     portfolio_nav *= (1 - cost)
                     
-                    current_holdings = new_holdings
+                    # Reset cash and set new holdings
+                    cash_weight = 0.0
+                    current_holdings = {}
+                    for sym in target_symbols:
+                        sym_price = day_data[day_data['symbol'] == sym]['close'].values[0]
+                        current_holdings[sym] = {"weight": target_weight, "cost_price": sym_price}
+
 
         self.nav_history = pd.DataFrame(nav_history)
         return self.generate_tear_sheet()
