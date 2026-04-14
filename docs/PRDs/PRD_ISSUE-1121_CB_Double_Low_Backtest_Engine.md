@@ -14,7 +14,9 @@ The existing convertible bond (CB) rotation strategies suffer from "survivorship
 - **Goal 4 (Execution)**: Implement a weekly rotation logic (e.g., rebalance every Friday at close or Monday at open) to simulate realistic trading and minimize friction costs. Calculate metrics including Alpha against the CSI Convertible Bond Index (000832).
 
 ## 3. Architecture & Technical Strategy (架构设计与技术路线)
-- **Data Layer (`cb_data_loader.py`)**: A script designed to run on the Windows QMT node (or fetch via SSH). It uses `xtdata.download_history_data2` to pull all CBs, calculates daily premium rates, handles missing values, and saves a flattened historical dataset (e.g., Parquet or JSON).
+- **Data Layer (`cb_data_loader.py`)**: A script designed to run on the Windows QMT node (or fetch via SSH). It uses `xtdata.download_history_data2` to pull all CBs. 
+  - **Historical Premium & Scale Resolution**: Since QMT's `xtdata` OHLCV does not contain Point-in-Time (PiT) Corporate Action data (forced redemption dates, exact historical conversion prices, or daily outstanding scale), the script MUST integrate with an external data source like `Akshare` (`ak.bond_cb_jsl` / `ak.bond_zh_hs_cov_daily` or similar historical valuation APIs) to fetch the accurate historical conversion prices, scale, and forced-redemption announcement dates.
+  - The script will merge QMT's accurate pricing with the external fundamental timeline to reconstruct the PiT daily premium rates (`close / (100 / pit_conversion_price * stock_close) - 1`) and save a flattened historical dataset (e.g., Parquet or JSON).
 - **Backtest Layer (`cb_backtest_engine.py`)**: A Python-based vectorized or iterative backtest engine.
   - *Scoring*: `Rank(Price) + Rank(Premium) - Rank(Turnover)`
   - *Rebalancing*: Resample data to weekly (`W-FRI`). Generate target weights.
