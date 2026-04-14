@@ -36,9 +36,29 @@ def fetch_cb_history(symbols: Optional[List[str]] = None, save_path: Optional[st
                 
             df_val = df_val.rename(columns={
                 '日期': 'date',
-                '收盘价': 'close',
                 '转股溢价率': 'premium_rate'
             })
+            
+            # fetch OHLC for high price
+            prefix = 'sh' if sym.startswith('11') else 'sz'
+            full_sym = prefix + sym
+            try:
+                df_daily = ak.bond_zh_hs_cov_daily(symbol=full_sym)
+                if df_daily is not None and not df_daily.empty:
+                    df_daily['date'] = df_daily['date'].astype(str)
+                    df_val['date'] = df_val['date'].astype(str)
+                    
+                    df_val = pd.merge(df_val, df_daily[['date', 'close', 'high']], on='date', how='left')
+                    if '收盘价' in df_val.columns:
+                        df_val['close'] = df_val['close'].fillna(df_val['收盘价'])
+                    df_val['high'] = df_val['high'].fillna(df_val['close'])
+                else:
+                    df_val = df_val.rename(columns={'收盘价': 'close'})
+                    df_val['high'] = df_val['close']
+            except Exception as e_daily:
+                logger.warning(f"Error fetching daily data for {sym}: {e_daily}")
+                df_val = df_val.rename(columns={'收盘价': 'close'})
+                df_val['high'] = df_val['close']
             
             # fill static scale
             scale = None
@@ -52,16 +72,17 @@ def fetch_cb_history(symbols: Optional[List[str]] = None, save_path: Optional[st
             
             # Ensure proper typing
             df_val['close'] = pd.to_numeric(df_val['close'], errors='coerce')
+            df_val['high'] = pd.to_numeric(df_val['high'], errors='coerce')
             df_val['premium_rate'] = pd.to_numeric(df_val['premium_rate'], errors='coerce')
             
-            all_data.append(df_val[['date', 'symbol', 'close', 'premium_rate', 'outstanding_scale']])
+            all_data.append(df_val[['date', 'symbol', 'close', 'high', 'premium_rate', 'outstanding_scale']])
             
         except Exception as e:
             logger.warning(f"Error fetching data for {sym}: {e}")
             continue
             
     if not all_data:
-        return pd.DataFrame(columns=['date', 'symbol', 'close', 'premium_rate', 'outstanding_scale'])
+        return pd.DataFrame(columns=['date', 'symbol', 'close', 'high', 'premium_rate', 'outstanding_scale'])
         
     final_df = pd.concat(all_data, ignore_index=True)
     final_df['date'] = pd.to_datetime(final_df['date'])
