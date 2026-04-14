@@ -50,7 +50,7 @@ class CBBacktestEngine:
                             daily_return += weight * ret
                 portfolio_nav *= (1 + daily_return)
                 
-            nav_history.append({'date': date, 'nav': portfolio_nav, 'daily_return': daily_return})
+            nav_history.append({'date': date, 'nav': portfolio_nav, 'daily_return': daily_return, 'holdings': list(current_holdings.keys())})
             
             # 2. Rebalance if it's a rebalance date
             if date in rebalance_dates:

@@ -4,7 +4,7 @@ import numpy as np
 from strategies.cb_backtest_engine import CBBacktestEngine
 
 def generate_mock_data():
-    dates = pd.date_range(start='2023-01-02', periods=10, freq='B') # Starts on Monday
+    dates = pd.date_range(start='2023-01-02', periods=15, freq='B') # Starts on Monday
     data = []
     
     for i, date in enumerate(dates):
@@ -37,17 +37,30 @@ def generate_mock_data():
 
 def test_risk_filtering():
     df = generate_mock_data()
-    # Rebalance happens on Fridays (i=4 is Friday, 2023-01-06)
+    # Rebalance happens on Fridays (i=4 is Friday, 2023-01-06, i=9 is 2023-01-13)
     # Bond 2 should be excluded because scale < 0.3
-    # Bond 1 should be excluded on the second rebalance because is_risky = True
+    # Bond 1 should be excluded on the second rebalance because is_risky = True starting i=5
     
     engine = CBBacktestEngine(df, max_holdings=5, friction_cost=0.0)
     engine.run()
     
-    # We can inspect current_holdings internally, or by observing the code behavior.
-    # To be precise, let's inject a mock or just test the engine outputs.
-    # The simplest is to ensure the tear sheet runs and keys exist.
-    assert True
+    nav_df = engine.nav_history
+    
+    all_holdings_ever = set()
+    for h_list in nav_df['holdings']:
+        all_holdings_ever.update(h_list)
+        
+    # Bond 2 should NEVER be in holdings
+    assert '110002' not in all_holdings_ever, "Bond 2 should be filtered out due to small scale"
+    
+    # Bond 1 should be in the holdings in week 1
+    holdings_week1 = nav_df[nav_df['date'] == '2023-01-09']['holdings'].values[0]
+    assert '110001' in holdings_week1, "Bond 1 should be present in week 1"
+    
+    # Bond 1 should NOT be in the holdings in week 3 (after second rebalance on 2023-01-13)
+    holdings_week3 = nav_df[nav_df['date'] == '2023-01-16']['holdings'].values[0]
+    assert '110001' not in holdings_week3, "Bond 1 should be filtered out in week 3 due to is_risky"
+
 
 def test_weekly_rotation_costs():
     df = generate_mock_data()
