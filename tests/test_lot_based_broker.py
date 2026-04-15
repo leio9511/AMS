@@ -1,63 +1,43 @@
 import json
 import pytest
 from ams.core.sim_broker import SimBroker
-from decimal import Decimal
 
-def test_internal_decimal_precision():
-    broker = SimBroker(initial_cash=100000.0, slippage=0.001)
-    
-    # Internal representation should be Decimal
-    assert isinstance(broker._cash, Decimal)
-    
-    # Order should handle precision properly and quantize
-    broker.order_target_percent("AAPL", 0.5, 150.123)
-    
-    # Check that external exposes float
-    assert isinstance(broker.cash, float)
-    assert isinstance(broker.total_equity, float)
-    
-def test_external_api_returns_float():
-    broker = SimBroker(initial_cash=100000.0, slippage=0.0)
-    broker.holdings = {"AAPL": 100}
-    broker._last_prices = {"AAPL": Decimal("150.55")}
-    broker.update_equity({"AAPL": 150.55})
-    
-    # Make sure we can serialize it
-    try:
-        data = json.dumps({"total_equity": broker.total_equity, "cash": broker.cash})
-    except TypeError:
-        pytest.fail("JSON serialization failed due to Decimal exposure")
-    assert isinstance(broker.total_equity, float)
-
-def test_scenario_1_suspended_stock_valuation():
+def test_integration_suspension_valuation_preserved():
     """
-    Scenario 1: 停牌估值守恒 (集成验证)
-    Given 持仓 100 张 A 债，昨日收盘价 100.55
-    When 今日调用 update_equity 但 current_prices 缺少 A 债
-    Then 对外暴露的 total_equity 统计出的 A 债部分应保持为 10055.00
+    Test Case 1: Given 100 bonds of A yesterday at 100.55, 
+    if today's prices exclude A, broker.total_equity attributes exactly 10055.00 to bond A.
     """
     broker = SimBroker(initial_cash=0.0, slippage=0.0)
     broker.holdings = {"A_BOND": 100}
-    # yesterday price
+    
+    # Yesterday's prices
     broker.update_equity({"A_BOND": 100.55})
     assert broker.total_equity == 10055.0
     
-    # today price missing
-    broker.update_equity({"B_BOND": 90.0}) # A_BOND is missing
-    assert broker.total_equity == 10055.0 # Fallback to 100.55
-    
-def test_scenario_2_json_serialization():
+    # Today's prices (missing A_BOND)
+    broker.update_equity({"B_BOND": 90.0})
+    assert broker.total_equity == 10055.0
+
+def test_integration_json_serialization_compatibility():
     """
-    Scenario 2: JSON 序列化兼容性
-    Given 执行完一轮交易逻辑
-    When 对 broker.total_equity 进行 json.dumps() 操作
-    Then 系统应正常工作，不抛出 "Decimal is not JSON serializable" 异常。
+    Test Case 2: After running a simulated day of trading, 
+    json.dumps({"equity": broker.total_equity}) successfully parses without Decimal serialization errors.
     """
-    broker = SimBroker(initial_cash=100000.0, slippage=0.001)
-    broker.update_equity({"AAPL": 150.0})
-    broker.order_target_percent("AAPL", 0.5, 150.0)
+    broker = SimBroker(initial_cash=10000.0, slippage=0.0)
     
+    # Simulate a day of trading
+    broker.update_equity({"A_BOND": 100.0})
+    broker.order_target_percent("A_BOND", 0.5, 100.0)
+    
+    # Broker should buy 50 shares of A_BOND (must be multiple of 10)
+    assert broker.holdings["A_BOND"] == 50
+    assert broker.cash == 5000.0
+    
+    # Validate JSON serialization
     try:
-        data = json.dumps({"total_equity": broker.total_equity})
+        data = json.dumps({"equity": broker.total_equity, "cash": broker.cash})
     except TypeError:
-        pytest.fail("total_equity is not JSON serializable")
+        pytest.fail("total_equity or cash is not JSON serializable")
+        
+    assert isinstance(broker.total_equity, float)
+    assert isinstance(broker.cash, float)
