@@ -1,36 +1,43 @@
-import unittest
-import sys
-import io
-from engine.event_engine import EventEngine, Event
-from strategies.convertible_bond import ConvertibleBondStrategy
+import pytest
+import pandas as pd
+from ams.core.cb_rotation_strategy import CBRotationStrategy
 
-class TestConvertibleBondStrategy(unittest.TestCase):
-    def setUp(self):
-        self.engine = EventEngine()
-        self.strategy = ConvertibleBondStrategy(self.engine)
+def test_cb_rotation_filters_st_bonds():
+    data = pd.DataFrame({
+        'ticker': ['CB1', 'CB2', 'CB3'],
+        'price': [100, 110, 105],
+        'premium': [10, 15, 5],
+        'is_st': [False, True, False]
+    })
+    strategy = CBRotationStrategy(top_n=2)
+    portfolio = strategy.generate_target_portfolio(None, data)
+    assert 'CB2' not in portfolio
+    assert 'CB1' in portfolio
+    assert 'CB3' in portfolio
 
-    def test_convertible_bond_logic(self):
-        premium = self.strategy.calculate_premium(110.0, 100.0)
-        self.assertAlmostEqual(premium, 0.10)
-        
-        discount = self.strategy.calculate_premium(90.0, 100.0)
-        self.assertAlmostEqual(discount, -0.10)
+def test_cb_rotation_applies_stop_loss():
+    data = pd.DataFrame({
+        'ticker': ['CB1', 'CB2'],
+        'price': [100, 110],
+        'premium': [10, 15],
+        'is_st': [False, False],
+        'daily_return': [-0.05, -0.09]
+    })
+    strategy = CBRotationStrategy(top_n=2)
+    portfolio = strategy.generate_target_portfolio(None, data)
+    assert 'CB2' not in portfolio
+    assert 'CB1' in portfolio
 
-        self.assertTrue(self.strategy.check_discount(-0.01))
-        self.assertFalse(self.strategy.check_discount(0.01))
-
-    def test_cb_event_dispatch(self):
-        self.strategy.start()
-        
-        captured_output = io.StringIO()
-        sys.stdout = captured_output
-        
-        event = Event("eTick", {"code": "113050.SH", "premium": -0.01})
-        self.engine.process(event)
-        
-        sys.stdout = sys.__stdout__
-        output = captured_output.getvalue()
-        self.assertIn("SIGNAL: CB 113050.SH discount is -1.00% (<= -0.8%)", output)
-
-if __name__ == '__main__':
-    unittest.main()
+def test_cb_rotation_calculates_double_low():
+    data = pd.DataFrame({
+        'ticker': ['CB1', 'CB2', 'CB3'],
+        'price': [100, 120, 105],
+        'premium': [10, 5, 20],
+        'is_st': [False, False, False]
+    })
+    # Double lows: CB1=110, CB2=125, CB3=125
+    strategy = CBRotationStrategy(top_n=1)
+    portfolio = strategy.generate_target_portfolio(None, data)
+    assert 'CB1' in portfolio
+    assert 'CB2' not in portfolio
+    assert 'CB3' not in portfolio
