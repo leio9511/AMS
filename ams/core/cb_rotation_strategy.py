@@ -41,7 +41,9 @@ class CBRotationStrategy(BaseStrategy):
             df = df[df['daily_return'] > -0.08]
 
         # Liquidity threshold (amount/turnover >= 10,000,000)
-        if amount_col in df.columns:
+        # Note: In backtesting with some data sources, volume/amount might be missing.
+        # If the column exists, we apply the filter.
+        if amount_col in df.columns and not df[amount_col].isna().all():
             df = df[df[amount_col] >= self.liquidity_threshold]
 
         if df.empty:
