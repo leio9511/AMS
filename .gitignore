@@ -62,3 +62,4 @@ cache/
 __pycache__/
 
 .sdlc_runs/
+data/
