@@ -95,8 +95,15 @@ class BacktestRunner:
         
         return {
             'Total Return': total_return,
-            'Max Drawdown': max_drawdown
+            'Max Drawdown': max_drawdown,
+            'Final Equity': final_equity
         }
+
+    def print_report(self, df_equity):
+        metrics = self.calculate_metrics(df_equity)
+        print(f"Total Return: {metrics['Total Return']:.4%}")
+        print(f"Max Drawdown: {metrics['Max Drawdown']:.4%}")
+        print(f"Final Equity: {metrics.get('Final Equity', 0.0):.2f}")
 
 if __name__ == "__main__":
     from ams.core.history_datafeed import HistoryDataFeed
