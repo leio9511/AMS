@@ -1,26 +1,29 @@
-import unittest
-from engine.event_engine import EventEngine
-from strategies.base_strategy import StrategyBase
+import pytest
+from ams.core.base import BaseStrategy, BaseDataFeed, BaseBroker
 
-class TestStrategyBase(unittest.TestCase):
-    def test_strategy_initialization(self):
-        engine = EventEngine()
-        strategy = StrategyBase(engine=engine, strategy_name="TestStrategy")
-        self.assertEqual(strategy.strategy_name, "TestStrategy")
-        self.assertFalse(strategy.active)
-        self.assertEqual(strategy.engine, engine)
+def test_base_strategy_instantiation_fails_without_methods():
+    with pytest.raises(TypeError):
+        class IncompleteStrategy(BaseStrategy):
+            pass
+        IncompleteStrategy()
 
-    def test_strategy_start_stop(self):
-        engine = EventEngine()
-        strategy = StrategyBase(engine=engine)
-        
-        self.assertFalse(strategy.active)
-        
-        strategy.start()
-        self.assertTrue(strategy.active)
-        
-        strategy.stop()
-        self.assertFalse(strategy.active)
+    with pytest.raises(TypeError):
+        BaseStrategy()
 
-if __name__ == '__main__':
-    unittest.main()
+def test_base_datafeed_instantiation_fails_without_methods():
+    with pytest.raises(TypeError):
+        class IncompleteDataFeed(BaseDataFeed):
+            pass
+        IncompleteDataFeed()
+
+    with pytest.raises(TypeError):
+        BaseDataFeed()
+
+def test_base_broker_instantiation_fails_without_methods():
+    with pytest.raises(TypeError):
+        class IncompleteBroker(BaseBroker):
+            pass
+        IncompleteBroker()
+
+    with pytest.raises(TypeError):
+        BaseBroker()
