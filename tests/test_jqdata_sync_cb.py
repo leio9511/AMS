@@ -14,10 +14,14 @@ def test_jqdata_successful_sync(mock_jqdatasdk):
     # Mock auth success
     mock_jqdatasdk.auth.return_value = None
     
-    # Mock bond list
+    # Mock bond list (for get_all_securities and run_query)
     import pandas as pd
     mock_df_bonds = pd.DataFrame({"code": ["110059.XSHG"]})
+    # Setting index to mimic get_all_securities behavior if script uses it
+    mock_df_bonds.index = ["110059.XSHG"]
+    
     mock_jqdatasdk.finance.run_query.return_value = mock_df_bonds
+    mock_jqdatasdk.get_all_securities.return_value = mock_df_bonds
     
     # Mock get_price
     mock_df_price = pd.DataFrame({
