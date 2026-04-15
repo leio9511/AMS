@@ -12,14 +12,14 @@ class MockDataFeed:
 
 class MockBroker:
     def __init__(self):
-        self.holdings = {'CB1': 50000.0, 'CB2': 50000.0}
+        self.holdings = {'CB1': 500, 'CB2': 500}
         self.total_equity = 100000.0
         self.orders = []
         
-    def order_target_percent(self, ticker, percent):
+    def order_target_percent(self, ticker, percent, price=None):
         self.orders.append((ticker, percent))
 
-    def update_equity(self):
+    def update_equity(self, current_prices=None):
         pass
 
 class MockStrategy:

@@ -17,6 +17,15 @@ class BacktestRunner:
             if data_slice.empty:
                 continue
             
+            # Extract current prices
+            current_prices = {}
+            price_col = 'close_price' if 'close_price' in data_slice.columns else 'price' if 'price' in data_slice.columns else 'close'
+            if price_col in data_slice.columns and 'ticker' in data_slice.columns:
+                for _, row in data_slice.iterrows():
+                    current_prices[row['ticker']] = row[price_col]
+            
+            self.broker.update_equity(current_prices)
+            
             # Simple context object
             class Context:
                 pass
@@ -42,24 +51,27 @@ class BacktestRunner:
                 # Sell missing symbols or significantly decreased weights
                 for ticker in current_holdings:
                     if ticker not in target_portfolio:
-                        self.broker.order_target_percent(ticker, 0.0)
+                        # order_target_percent expects a price now!
+                        self.broker.order_target_percent(ticker, 0.0, price=current_prices.get(ticker))
                     else:
-                        current_weight = self.broker.holdings.get(ticker, 0.0) / total_equity if total_equity > 0 else 0.0
+                        current_value = self.broker.holdings.get(ticker, 0) * current_prices.get(ticker, 0.0)
+                        current_weight = current_value / total_equity if total_equity > 0 else 0.0
                         target_weight = target_portfolio[ticker]
                         if current_weight - target_weight > 0.005:
-                            self.broker.order_target_percent(ticker, target_weight)
+                            self.broker.order_target_percent(ticker, target_weight, price=current_prices.get(ticker))
                 
                 # Buy new symbols or significantly increased weights
                 for ticker, target_weight in target_portfolio.items():
                     if ticker not in current_holdings:
-                        self.broker.order_target_percent(ticker, target_weight)
+                        self.broker.order_target_percent(ticker, target_weight, price=current_prices.get(ticker))
                     else:
-                        current_weight = self.broker.holdings.get(ticker, 0.0) / total_equity if total_equity > 0 else 0.0
+                        current_value = self.broker.holdings.get(ticker, 0) * current_prices.get(ticker, 0.0)
+                        current_weight = current_value / total_equity if total_equity > 0 else 0.0
                         if target_weight - current_weight > 0.005:
-                            self.broker.order_target_percent(ticker, target_weight)
+                            self.broker.order_target_percent(ticker, target_weight, price=current_prices.get(ticker))
 
             
-            self.broker.update_equity()
+            self.broker.update_equity(current_prices)
             self.equity_curve.append({
                 'date': date,
                 'equity': self.broker.total_equity
@@ -92,7 +104,7 @@ if __name__ == "__main__":
     from ams.core.cb_rotation_strategy import CBRotationStrategy
     
     feed = HistoryDataFeed("data/cb_history_factors.csv")
-    broker = SimBroker(initial_cash=100000.0)
+    broker = SimBroker(initial_cash=4000000.0)
     strategy = CBRotationStrategy()
     
     runner = BacktestRunner(feed, broker, strategy)
@@ -101,5 +113,7 @@ if __name__ == "__main__":
     df_equity = runner.run("2025-01-06", "2025-02-06")
     
     metrics = runner.calculate_metrics(df_equity)
+    final_equity = df_equity['equity'].iloc[-1] if not df_equity.empty else 4000000.0
     print(f"Total Return: {metrics['Total Return']:.4%}")
     print(f"Max Drawdown: {metrics['Max Drawdown']:.4%}")
+    print(f"Final Equity: {final_equity:.2f}")

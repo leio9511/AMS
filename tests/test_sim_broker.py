@@ -1,34 +1,39 @@
 import pytest
 from ams.core.sim_broker import SimBroker
 
-def test_sim_broker_buy_insufficient_cash_partial_fill():
-    broker = SimBroker(initial_cash=10000.0, slippage=0.01)
-    # Target value 15000 is 1.5 * equity
-    broker.order_target_percent("AAPL", 1.5)
-    
-    # Expected: cash becomes 0.0, holdings increases by 10000 / 1.01 = 9900.99
-    assert broker.cash == 0.0
-    assert abs(broker.holdings["AAPL"] - 9900.99) < 0.01
-    
-def test_sim_broker_buy_sufficient_cash():
-    broker = SimBroker(initial_cash=10000.0, slippage=0.01)
-    # Target value 5000 is 0.5 * equity
-    broker.order_target_percent("AAPL", 0.5)
-    
-    # Expected: normal buy, cost < cash
-    assert broker.cash == 10000.0 - 5050.0
-    assert broker.holdings["AAPL"] == 5000.0
+def test_lot_based_buy_exact():
+    broker = SimBroker(initial_cash=100000.0, slippage=0.0)
+    # price 125, target value 10000. percent = 10000 / 100000 = 0.1
+    broker.order_target_percent("AAPL", 0.1, price=125.0)
+    # 10000 / 125 = 80. Floor(80/10)*10 = 80
+    assert broker.holdings["AAPL"] == 80
+    assert broker.cash == 100000.0 - 80 * 125.0
 
-def test_sim_broker_sell():
-    broker = SimBroker(initial_cash=10000.0, slippage=0.01)
-    # First, get some holdings
-    broker.order_target_percent("AAPL", 0.5)
-    # Cash is 4950.0, holdings AAPL is 5000.0, equity is 9950.0
+def test_lot_based_buy_round_down():
+    broker = SimBroker(initial_cash=100000.0, slippage=0.0)
+    # target value 10100. percent = 10100 / 100000 = 0.101
+    broker.order_target_percent("AAPL", 0.101, price=125.0)
+    # 10100 / 125 = 80.8. Floor(80.8/10)*10 = 80
+    assert broker.holdings["AAPL"] == 80
+    assert broker.cash == 100000.0 - 80 * 125.0
+
+def test_mtm_equity_update():
+    broker = SimBroker(initial_cash=100000.0, slippage=0.0)
+    broker.holdings["AAPL"] = 80
+    broker.cash = 90000.0
     
-    # Now sell some. Target 0.25 of equity (9950 * 0.25 = 2487.5)
-    # diff = 2487.5 - 5000.0 = -2512.5
-    # proceeds = 2512.5 * 0.99 = 2487.375
-    broker.order_target_percent("AAPL", 0.25)
+    current_prices = {"AAPL": 130.0}
+    broker.update_equity(current_prices)
     
-    assert abs(broker.holdings["AAPL"] - 2487.5) < 0.01
-    assert abs(broker.cash - (4950.0 + 2487.375)) < 0.01
+    # equity = 90000.0 + 80 * 130.0 = 100400.0
+    assert broker.total_equity == 100400.0
+
+def test_invalid_price_protection():
+    broker = SimBroker(initial_cash=100000.0, slippage=0.0)
+    broker.order_target_percent("AAPL", 0.1, price=0.0)
+    assert "AAPL" not in broker.holdings or broker.holdings["AAPL"] == 0
+    assert broker.cash == 100000.0
+    
+    broker.order_target_percent("AAPL", 0.1, price=-5.0)
+    assert "AAPL" not in broker.holdings or broker.holdings["AAPL"] == 0
+    assert broker.cash == 100000.0

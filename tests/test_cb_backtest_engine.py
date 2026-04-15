@@ -7,12 +7,12 @@ from ams.core.base import BaseStrategy
 
 def test_sim_broker_deducts_funds_correctly():
     broker = SimBroker(initial_cash=100000.0, slippage=0.001)
-    broker.order_target_percent('AAPL', 0.5)
+    broker.order_target_percent('AAPL', 0.5, price=100.0)
     
     assert 'AAPL' in broker.holdings
-    assert broker.holdings['AAPL'] == 50000.0
+    assert broker.holdings['AAPL'] == 500
     
-    # 50000 + 50000 * 0.001 slippage = 50050 cost
+    # 500 * 100 + 500 * 100 * 0.001 slippage = 50050 cost
     assert broker.cash == pytest.approx(49950.0)
 
 def test_history_datafeed_returns_correct_slice():
@@ -55,4 +55,6 @@ def test_backtest_runner_clock_ticks_correctly():
     assert len(strategy.call_dates) == 2
     assert strategy.call_dates[0] == pd.Timestamp('2024-01-01')
     assert strategy.call_dates[1] == pd.Timestamp('2024-01-02')
-    assert broker.holdings['AAPL'] == 10000.0
+    # 10% of 100000 = 10000. 10000 / 150 = 66.66 -> floor to 60 lots.
+    # So 60 shares.
+    assert broker.holdings['AAPL'] == 60
