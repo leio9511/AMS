@@ -3,10 +3,11 @@ import numpy as np
 from ams.core.base import BaseStrategy
 
 class CBRotationStrategy(BaseStrategy):
-    def __init__(self, top_n=20, liquidity_threshold=10000000, weight_per_position=0.05):
+    def __init__(self, top_n=20, liquidity_threshold=10000000, weight_per_position=0.05, stop_loss_threshold=-0.08):
         self.top_n = top_n
         self.liquidity_threshold = liquidity_threshold
         self.weight_per_position = weight_per_position
+        self.stop_loss_threshold = stop_loss_threshold
 
     def on_bar(self, context, data):
         pass
@@ -32,13 +33,35 @@ class CBRotationStrategy(BaseStrategy):
         if 'suspended' in df.columns:
             df = df[~df['suspended']]
 
-        # ST filter
+        # Filter 1: Forced Redemption
+        if 'is_redeemed' in df.columns:
+            df = df[~df['is_redeemed']]
+
+        # Filter 2: ST Guard
         if 'is_st' in df.columns:
             df = df[~df['is_st']]
 
-        # Stop loss logic (from older tests)
-        if 'daily_return' in df.columns:
-            df = df[df['daily_return'] > -0.08]
+        # Filter 3: Intraday Stop-Loss
+        # Calculate daily return if context has daily_return (previous close)
+        if hasattr(context, 'daily_return') and isinstance(context.daily_return, dict):
+            # context.daily_return contains previous_close
+            current_holdings = getattr(context, 'holdings', [])
+            
+            def check_stop_loss(row):
+                ticker = row['ticker']
+                if ticker in current_holdings and ticker in context.daily_return:
+                    prev_close = context.daily_return[ticker]
+                    current_price = row[price_col]
+                    if prev_close > 0:
+                        daily_ret = (current_price - prev_close) / prev_close
+                        if daily_ret <= self.stop_loss_threshold:
+                            return False # Filter out
+                return True # Keep
+                
+            df = df[df.apply(check_stop_loss, axis=1)]
+        elif 'daily_return' in df.columns:
+            # Fallback for older tests that provide daily_return directly in the dataframe
+            df = df[df['daily_return'] > self.stop_loss_threshold]
 
         # Liquidity threshold (amount/turnover >= 10,000,000)
         # Note: In backtesting with some data sources, volume/amount might be missing.
