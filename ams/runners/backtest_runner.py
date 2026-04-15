@@ -11,6 +11,7 @@ class BacktestRunner:
 
     def run(self, start_date, end_date):
         dates = pd.date_range(start_date, end_date)
+        previous_close = {}
         for date in dates:
             data_slice = self.data_feed.get_data(None, date)
             if data_slice.empty:
@@ -21,18 +22,42 @@ class BacktestRunner:
                 pass
             context = Context()
             
+            # Enrich context with previous close as daily_return (as requested by PR-001)
+            context.daily_return = previous_close
+            context.holdings = list(self.broker.holdings.keys())
+            
+            # Update previous_close for next day
+            price_col = 'close_price' if 'close_price' in data_slice.columns else 'price' if 'price' in data_slice.columns else 'close'
+            if price_col in data_slice.columns and 'ticker' in data_slice.columns:
+                for _, row in data_slice.iterrows():
+                    previous_close[row['ticker']] = row[price_col]
+            
             # Assuming strategy generate_target_portfolio returns dict {ticker: percent}
             target_portfolio = self.strategy.generate_target_portfolio(context, data_slice)
             
-            # Need to sell things not in target portfolio
             if target_portfolio is not None:
                 current_holdings = list(self.broker.holdings.keys())
+                total_equity = self.broker.total_equity
+                
+                # Sell missing symbols or significantly decreased weights
                 for ticker in current_holdings:
                     if ticker not in target_portfolio:
                         self.broker.order_target_percent(ticker, 0.0)
+                    else:
+                        current_weight = self.broker.holdings.get(ticker, 0.0) / total_equity if total_equity > 0 else 0.0
+                        target_weight = target_portfolio[ticker]
+                        if current_weight - target_weight > 0.005:
+                            self.broker.order_target_percent(ticker, target_weight)
                 
-                for ticker, percent in target_portfolio.items():
-                    self.broker.order_target_percent(ticker, percent)
+                # Buy new symbols or significantly increased weights
+                for ticker, target_weight in target_portfolio.items():
+                    if ticker not in current_holdings:
+                        self.broker.order_target_percent(ticker, target_weight)
+                    else:
+                        current_weight = self.broker.holdings.get(ticker, 0.0) / total_equity if total_equity > 0 else 0.0
+                        if target_weight - current_weight > 0.005:
+                            self.broker.order_target_percent(ticker, target_weight)
+
             
             self.broker.update_equity()
             self.equity_curve.append({
