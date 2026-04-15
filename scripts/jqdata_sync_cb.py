@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import jqdatasdk
 
-def sync_cb_data(start_date="2020-01-01", end_date="2024-01-01"):
+def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     user = os.environ.get("JQDATA_USER")
     pwd = os.environ.get("JQDATA_PWD")
     
@@ -15,15 +15,12 @@ def sync_cb_data(start_date="2020-01-01", end_date="2024-01-01"):
         raise RuntimeError(f"JQData auth failed: {e}")
         
     # Fetch all convertible bonds
-    q = jqdatasdk.query(jqdatasdk.finance.BOND_BASIC_INFO).filter(
-        jqdatasdk.finance.BOND_BASIC_INFO.bond_type_id == '703013' # 可转债
-    )
-    df_bonds = jqdatasdk.finance.run_query(q)
+    df_bonds = jqdatasdk.get_all_securities(['conbond'])
     
     if df_bonds.empty:
         raise ValueError("No convertible bonds found")
         
-    tickers = df_bonds['code'].tolist()
+    tickers = df_bonds.index.tolist()
     
     # Fetch price data
     df_price = jqdatasdk.get_price(tickers, start_date=start_date, end_date=end_date, frequency='daily', fields=['open', 'high', 'low', 'close', 'volume'])
