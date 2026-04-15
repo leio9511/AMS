@@ -20,11 +20,16 @@ class SimBroker(BaseBroker):
         
         if diff > 0: # Buy
             cost = diff * (1 + self.slippage)
-            self.cash -= cost
-            self.holdings[ticker] = target_value
+            if cost > self.cash:
+                actual_diff = self.cash / (1 + self.slippage)
+                self.cash = 0.0
+                self.holdings[ticker] = current_value + actual_diff
+            else:
+                self.cash -= cost
+                self.holdings[ticker] = current_value + diff
         elif diff < 0: # Sell
             proceeds = abs(diff) * (1 - self.slippage)
             self.cash += proceeds
-            self.holdings[ticker] = target_value
+            self.holdings[ticker] = current_value + diff
         
         self.update_equity()

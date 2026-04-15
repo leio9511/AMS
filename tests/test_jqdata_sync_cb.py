@@ -16,7 +16,7 @@ def test_jqdata_successful_sync(mock_jqdatasdk):
     
     # Mock bond list (for get_all_securities and run_query)
     import pandas as pd
-    mock_df_bonds = pd.DataFrame({"code": ["110059.XSHG"]})
+    mock_df_bonds = pd.DataFrame({"code": ["110059.XSHG"], "end_date": [pd.NaT]})
     # Setting index to mimic get_all_securities behavior if script uses it
     mock_df_bonds.index = ["110059.XSHG"]
     
