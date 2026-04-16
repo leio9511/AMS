@@ -3,6 +3,14 @@ import pandas as pd
 import jqdatasdk
 
 def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
+    output_path = "data/cb_history_factors.csv"
+    bak_path = "data/cb_history_factors.csv.bak"
+    
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    if os.path.exists(output_path):
+        import shutil
+        shutil.copy2(output_path, bak_path)
+
     user = os.environ.get("JQDATA_USER")
     pwd = os.environ.get("JQDATA_PWD")
 
@@ -110,14 +118,6 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     validator = CBDataValidator()
     
     tmp_path = "data/cb_history_factors.csv.tmp"
-    output_path = "data/cb_history_factors.csv"
-    bak_path = "data/cb_history_factors.csv.bak"
-    
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
-    if os.path.exists(output_path):
-        import shutil
-        shutil.copy2(output_path, bak_path)
     
     df.to_csv(tmp_path, index=False)
     
@@ -132,7 +132,7 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
         os.replace(tmp_path, output_path)
         print(f"Successfully synced data to {output_path}")
     else:
-        print(f"Validation failed for {tmp_path}, keeping old file.")
+        print(f"[DataContractViolation] Validation failed for {tmp_path}, keeping old file.")
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
