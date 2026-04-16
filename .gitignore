@@ -63,3 +63,6 @@ __pycache__/
 
 .sdlc_runs/
 data/
+
+.sdlc_repo.lock
+.sdlc_lock_manifest.json
