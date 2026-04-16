@@ -39,7 +39,9 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     df["is_redeemed"] = False
 
     # Write to data/cb_history_factors.csv
-    df.to_csv("data/cb_history_factors.csv", index=False)
+    output_path = "data/cb_history_factors.csv"
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    df.to_csv(output_path, index=False)
 
 if __name__ == "__main__":
     sync_cb_data()
