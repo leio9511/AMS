@@ -15,6 +15,9 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
     @patch('scripts.jqdata_sync_cb.jqdatasdk')
     @patch('ams.validators.cb_data_validator.CBDataValidator')
     def test_fetch_real_premium_rate(self, mock_validator, mock_jq):
+        # Setup env vars for logic
+        os.environ['JQDATA_USER'] = 'test'
+        os.environ['JQDATA_PWD'] = 'test'
         # Setup mocks
         mock_jq.auth.return_value = None
         mock_jq.get_all_securities.return_value = pd.DataFrame(index=[self.ticker])
@@ -70,6 +73,9 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
     @patch('scripts.jqdata_sync_cb.jqdatasdk')
     @patch('ams.validators.cb_data_validator.CBDataValidator')
     def test_fetch_st_status(self, mock_validator, mock_jq):
+        # Setup env vars for logic
+        os.environ['JQDATA_USER'] = 'test'
+        os.environ['JQDATA_PWD'] = 'test'
         # Similar setup but focusing on is_st
         mock_jq.auth.return_value = None
         mock_jq.get_all_securities.return_value = pd.DataFrame(index=[self.ticker])
@@ -106,6 +112,9 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
     @patch('scripts.jqdata_sync_cb.jqdatasdk')
     @patch('ams.validators.cb_data_validator.CBDataValidator')
     def test_redemption_logic(self, mock_validator, mock_jq):
+        # Setup env vars for logic
+        os.environ['JQDATA_USER'] = 'test'
+        os.environ['JQDATA_PWD'] = 'test'
         mock_jq.auth.return_value = None
         mock_jq.get_all_securities.return_value = pd.DataFrame(index=[self.ticker])
         

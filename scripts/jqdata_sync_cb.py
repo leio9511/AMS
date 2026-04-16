@@ -133,6 +133,7 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
         print(f"Successfully synced data to {output_path}")
     else:
         print(f"[DataContractViolation] Validation failed for {tmp_path}, keeping old file.")
+        # Ensure cleanup even if validation fails
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
