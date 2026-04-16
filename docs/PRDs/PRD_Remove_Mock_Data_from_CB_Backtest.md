@@ -17,17 +17,17 @@ Context_Workdir: /root/projects/AMS
 目标模块: `scripts/jqdata_sync_cb.py`
 
 **技术实现路径：**
-1. **溢价率 (premium_rate)**：
-   - 使用 `jqdatasdk.finance.run_query` 查询 `finance.CCB_DAILY_PRICE` 表。
-   - 提取 `convert_premium_rate` 字段，并将其除以 100（转换为小数格式，与 `CBRotationStrategy` 约定一致）。
-2. **ST 状态 (is_st)**：
-   - 通过转债代码映射到正股代码。
-   - 使用 `jqdatasdk.get_extras('is_st', ...)` 获取正股在回测区间内每一天的真实 ST 状态。
-3. **强赎状态 (is_redeemed)**：
-   - 查询 `finance.CCB_CALL`（强赎公告表）。
-   - **判定逻辑**：如果当前回测日期 `>=` 某转债的 `pub_date`（公告日）且当前日期 `<` `delisting_date`（退市日），则标记 `is_redeemed = True`。这确保了策略在公告发出的第一天就能做出反应。
-4. **正股代码 (underlying_ticker)**：
-   - 从 Mock 的 "000001.XSHE" 替换为从聚宽转债基础信息表中查询到的真实正股关联代码。
+1. **真实因子回填 (JQData Queries)**：
+   - **溢价率 (premium_rate)**：使用 `jqdatasdk.finance.run_query` 查询 `finance.CCB_DAILY_PRICE` 表，提取 `convert_premium_rate` 字段并除以 100（转换为小数）。
+   - **ST 状态 (is_st)**：映射转债至正股代码，使用 `jqdatasdk.get_extras('is_st', ...)` 获取历史状态。必须使用向量化（Vectorized）查询，严禁循环请求。
+   - **强赎状态 (is_redeemed)**：查询 `finance.CCB_CALL`。判定逻辑：`date >= pub_date` 且 `date < delisting_date`（杜绝未来函数）。
+   - **正股代码 (underlying_ticker)**：从转债基础信息表拉取真实关联代码。
+
+2. **数据安全写入流程 (集成 1144 成果)**：
+   - **原子写入**：脚本写入文件时，严禁直接覆盖原文件。必须先写入临时文件（如 `data/cb_history_factors.csv.tmp`）。
+   - **强制校验 (Circuit Breaker)**：在完成数据处理后，必须实例化并调用 `ams.validators.cb_data_validator.CBDataValidator` 对新生成的 DataFrame 进行校验。
+   - **原子替换**：只有当 `validator.validate_dataframe(df)` 返回 `True` 时，才调用 `os.replace()` 将临时文件替换为正式的 `data/cb_history_factors.csv`。
+   - **自动快照**：脚本启动初期，自动将旧的 `.csv` 备份为 `.bak`。
 
 ## 4. Acceptance Criteria (BDD 黑盒验收标准)
 - **Scenario 1: 数据真实性校验**
@@ -35,10 +35,11 @@ Context_Workdir: /root/projects/AMS
   - **When** 检查生成的 `data/cb_history_factors.csv` 文件
   - **Then** `premium_rate` 字段应为非零浮点数，且随日期动态变化。
   - **Then** `is_st` 和 `is_redeemed` 字段在历史上的特定风险时段应出现 `True` 值。
-- **Scenario 2: 回测逻辑对齐**
-  - **Given** 使用更新后的数据集运行 `BacktestRunner`
-  - **When** 观察双低策略的选股排序
-  - **Then** 排序结果应严格遵循 `close + premium_rate * 100` 的逻辑，而非仅仅按 `close` 排序。
+- **Scenario 2: 数据安检门拦截测试**
+  - **Given** 故意注入一个带 NaN 的异常数据或不合法的溢价率
+  - **When** 运行同步脚本
+  - **Then** 脚本应被 Validator 拦截，并在日志中输出 `[DataContractViolation]`。
+  - **Then** 正式的 `cb_history_factors.csv` 文件应保持原样，不被脏数据污染。
 
 ## 5. Overall Test Strategy & Quality Goal (测试策略与质量目标)
 - **数据完整性测试**：增加针对 `jqdata_sync_cb.py` 的回归测试，验证联表查询后的 DataFrame 是否存在意外的空值（NaN），尤其是 Join 之后的日期对齐情况。
