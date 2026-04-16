@@ -5,7 +5,7 @@
 
 ### Phase 1 Roadmap (Backtest Implementation)
 - [x] **Architecture Base**: Implement Base classes (`BaseStrategy`, `BaseDataFeed`, `BaseBroker`) and `BacktestRunner` (Completed via SDLC PR-001, PR-002, PR-003).
-- [ ] **PRD 1 (ISSUE-1134)**: HistoryDataFeed Implementation for CB Backtesting.
+- [x] **PRD 1 (ISSUE-1134)**: HistoryDataFeed Implementation for CB Backtesting.
 - [ ] **PRD 2 (ISSUE-1135)**: Base Double-Low Strategy & Backtest Loop (Solves baseline for ISSUE-1131).
 - [ ] **PRD 3 (ISSUE-1136)**: Risk Control Implementation (Force Redemption, ST, -8% Stop-Loss. Solves ISSUE-1127).
 
