@@ -14,20 +14,27 @@ Context_Workdir: /root/projects/AMS
 3. **消除未来函数**：数据获取逻辑必须模拟“实盘可获得性”。例如，强赎状态必须基于“公告日期”而非“退市日期”进行判定。
 
 ## 3. Architecture & Technical Strategy (架构设计与技术路线)
-目标模块: `scripts/jqdata_sync_cb.py`
+目标模块: 
+1. `scripts/jqdata_sync_cb.py` (ETL 提取转换层)
+2. `scripts/data_validator.py` (独立的数据质量校验网关)
 
 **技术实现路径：**
-1. **溢价率 (premium_rate)**：
-   - 使用 `jqdatasdk.finance.run_query` 查询 `finance.CCB_DAILY_PRICE` 表。
-   - 提取 `convert_premium_rate` 字段，并将其除以 100（转换为小数格式，与 `CBRotationStrategy` 约定一致）。
-2. **ST 状态 (is_st)**：
-   - 通过转债代码映射到正股代码。
-   - 使用 `jqdatasdk.get_extras('is_st', ...)` 获取正股在回测区间内每一天的真实 ST 状态。
-3. **强赎状态 (is_redeemed)**：
-   - 查询 `finance.CCB_CALL`（强赎公告表）。
-   - **判定逻辑**：如果当前回测日期 `>=` 某转债的 `pub_date`（公告日）且当前日期 `<` `delisting_date`（退市日），则标记 `is_redeemed = True`。这确保了策略在公告发出的第一天就能做出反应。
-4. **正股代码 (underlying_ticker)**：
-   - 从 Mock 的 "000001.XSHE" 替换为从聚宽转债基础信息表中查询到的真实正股关联代码。
+1. **数据因子计算提取 (ETL)**：
+   - **溢价率**：查 `finance.CCB_DAILY_PRICE`，提取 `convert_premium_rate` / 100。
+   - **ST 状态**：查映射正股的 `is_st` 状态（强制批量 Vectorized 提取防限流）。
+   - **强赎状态**：查 `finance.CCB_CALL`，规则：`date >= pub_date` 且 `date < delisting_date`。
+   - **支持时间窗与增量**：脚本应支持 `--start_date` 和 `--end_date` 参数，未指定时从现有 CSV 最后日期自动续接。
+
+2. **独立的数据校验组件 (Data Contract Validator)**：
+   - 创建 `scripts/data_validator.py`，作为“数据契约（Data Contract）”的强制校验层。
+   - **校验规则 (Rules)**：不允许日期跳空或NaN、溢价率范围必须在 `[-100, 1000]` 之间、价格必须 `> 0`、布尔值不可为空。
+   - 它可以被 ETL 脚本作为函数调用（作为写入前的拦截器），也可以通过命令行独立运行（用于巡检已有 CSV 的健康度）。
+
+3. **防御性 IO (原子写入与快照)**：
+   - 脚本启动时，自动将 `data/cb_history_factors.csv` 备份为 `.bak`。
+   - ETL 生成新 DataFrame 后，先写到 `.tmp` 临时文件。
+   - 调用 `data_validator.py` 扫描该 `.tmp` 文件。
+   - **只有 Validator 返回 True，才使用 `os.replace` (原子操作) 将 `.tmp` 覆盖为正式的 `.csv`。** 如果报错，则丢弃临时文件并告警。
 
 ## 4. Acceptance Criteria (BDD 黑盒验收标准)
 - **Scenario 1: 数据真实性校验**
@@ -41,8 +48,9 @@ Context_Workdir: /root/projects/AMS
   - **Then** 排序结果应严格遵循 `close + premium_rate * 100` 的逻辑，而非仅仅按 `close` 排序。
 
 ## 5. Overall Test Strategy & Quality Goal (测试策略与质量目标)
-- **数据完整性测试**：增加针对 `jqdata_sync_cb.py` 的回归测试，验证联表查询后的 DataFrame 是否存在意外的空值（NaN），尤其是 Join 之后的日期对齐情况。
-- **一致性校验**：抽样 3-5 只转债在特定日期的溢价率和 ST 状态，手动对比聚宽官网数据，确保 ETL 逻辑无偏。
+- **Data Contract 测试 (数据契约)**：使用独立的 `data_validator.py` 扫描生成的历史数据，确保“无 NaN 漏水”、“因子值域无溢出”。
+- **原子性测试**：编写单元测试模拟 `to_csv` 阶段抛出异常，断言原生的 `.csv` 文件内容和权限未遭到任何篡改（Shadow Writing 验证）。
+- **一致性校验**：抽样 3-5 只转债在特定日期的溢价率和 ST 状态，对比聚宽官网数据，确保逻辑无偏。
 
 ## 6. Framework Modifications (框架防篡改声明)
 - 无。仅修改业务脚本 `scripts/jqdata_sync_cb.py`。
