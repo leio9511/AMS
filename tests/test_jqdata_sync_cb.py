@@ -23,6 +23,25 @@ def test_jqdata_successful_sync(mock_jqdatasdk):
     mock_jqdatasdk.finance.run_query.return_value = mock_df_bonds
     mock_jqdatasdk.get_all_securities.return_value = mock_df_bonds
     
+    # Mock security info
+    mock_info = MagicMock()
+    mock_info.parent = "000001.XSHE"
+    mock_jqdatasdk.get_security_info.return_value = mock_info
+    
+    # Mock bond.run_query
+    mock_jqdatasdk.bond.run_query.side_effect = [
+        pd.DataFrame({'code': ["110059.XSHG"], 'delist_Date': ['2025-12-31']}), # df_bonds_info
+        pd.DataFrame({'date': ['2020-01-02'], 'code': ["110059.XSHG"], 'convert_premium_rate': [10.0]}) # df_premium
+    ]
+    
+    # Mock get_extras (is_st)
+    mock_jqdatasdk.get_extras.return_value = pd.DataFrame({"000001.XSHE": [False]}, index=pd.to_datetime(['2020-01-02']))
+
+    # Mock query attributes
+    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+    
     # Mock get_price
     mock_df_price = pd.DataFrame({
         "time": ["2020-01-02"],
