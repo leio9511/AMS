@@ -58,3 +58,40 @@ def test_requirements_file_exists():
     with open(req_path, "r") as f:
         content = f.read()
     assert "pandera>=0.20.0" in content
+
+def test_cli_valid_csv(tmp_path):
+    import subprocess
+    import sys
+    csv_file = tmp_path / "valid.csv"
+    df = pd.DataFrame({
+        "ticker": ["110001"],
+        "date": ["2023-01-01"],
+        "close": [105.0],
+        "premium_rate": [15.0],
+        "is_st": [False],
+        "is_redeemed": [False]
+    })
+    df.to_csv(csv_file, index=False)
+    
+    script_path = os.path.join(os.path.dirname(__file__), "..", "ams", "validators", "cb_data_validator.py")
+    result = subprocess.run([sys.executable, script_path, "--csv", str(csv_file)], capture_output=True, text=True)
+    assert result.returncode == 0
+
+def test_cli_invalid_csv(tmp_path):
+    import subprocess
+    import sys
+    csv_file = tmp_path / "invalid.csv"
+    df = pd.DataFrame({
+        "ticker": ["110001"],
+        "date": ["2023-01-01"],
+        "close": [105.0],
+        "premium_rate": [float("nan")],
+        "is_st": [False],
+        "is_redeemed": [False]
+    })
+    df.to_csv(csv_file, index=False)
+    
+    script_path = os.path.join(os.path.dirname(__file__), "..", "ams", "validators", "cb_data_validator.py")
+    result = subprocess.run([sys.executable, script_path, "--csv", str(csv_file)], capture_output=True, text=True)
+    assert result.returncode == 1
+    assert "[DataContractViolation] Validation failed due to SchemaError:" in result.stdout
