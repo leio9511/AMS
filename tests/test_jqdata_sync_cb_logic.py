@@ -117,7 +117,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
 
     @patch('scripts.jqdata_sync_cb.jqdatasdk')
     @patch('ams.validators.cb_data_validator.CBDataValidator')
-    def test_redemption_logic(self, mock_validator, mock_jq):
+    def test_pit_redemption_logic_active(self, mock_validator, mock_jq):
         # Setup env vars for logic
         os.environ['JQDATA_USER'] = 'test'
         os.environ['JQDATA_PWD'] = 'test'
@@ -131,12 +131,11 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         
         # Mock finance query attributes
         mock_jq.finance.CCB_CALL.code.in_.return_value = True
-        mock_jq.finance.run_query.return_value = pd.DataFrame({'code': [self.ticker], 'pub_date': ['2024-01-05'], 'delisting_date': ['2024-01-12']})
+        mock_jq.finance.run_query.return_value = pd.DataFrame({'code': [self.ticker], 'pub_date': ['2024-04-01'], 'delisting_date': ['2024-04-30']})
         price_data = pd.DataFrame({
-            'open': [100.0, 100.0], 'high': [101.0, 101.0], 'low': [99.0, 99.0], 'close': [100.0, 100.0], 'volume': [1000, 1000],
+            'open': [100.0], 'high': [101.0], 'low': [99.0], 'close': [100.0], 'volume': [1000],
         }, index=pd.MultiIndex.from_tuples([
-            (pd.to_datetime('2024-01-03'), self.ticker),
-            (pd.to_datetime('2024-01-10'), self.ticker)
+            (pd.to_datetime('2024-04-05'), self.ticker)
         ], names=['time', 'code']))
         mock_jq.get_price.return_value = price_data
         
@@ -145,23 +144,147 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         mock_jq.get_security_info.return_value = mock_info
         
         mock_jq.bond.run_query.side_effect = [
-            pd.DataFrame({'code': [self.ticker], 'delist_Date': ['2024-01-10']}), # delist on 10th
+            pd.DataFrame({'code': [self.ticker], 'delist_Date': ['2024-04-30']}),
             pd.DataFrame({
-                'date': ['2024-01-03', '2024-01-10'], 
-                'code': [self.ticker, self.ticker], 
-                'convert_premium_rate': [10.0, 10.0]
+                'date': ['2024-04-05'], 
+                'code': [self.ticker], 
+                'convert_premium_rate': [10.0]
             })
         ]
         
-        mock_jq.get_extras.return_value = pd.DataFrame({self.underlying: [False, False]}, index=pd.to_datetime(['2024-01-03', '2024-01-10']))
+        mock_jq.get_extras.return_value = pd.DataFrame({self.underlying: [False]}, index=pd.to_datetime(['2024-04-05']))
         mock_validator.return_value.validate_dataframe.return_value = True
         
-        sync_cb_data("2024-01-01", "2024-01-10")
+        sync_cb_data("2024-04-01", "2024-04-10")
         
         df = pd.read_csv("data/cb_history_factors.csv")
-        # is_redeemed should be True on the 10th
-        self.assertFalse(df[df['date'] == '2024-01-03']['is_redeemed'].iloc[0])
-        self.assertTrue(df[df['date'] == '2024-01-10']['is_redeemed'].iloc[0])
+        self.assertTrue(df[df['date'] == '2024-04-05']['is_redeemed'].iloc[0])
+
+    @patch('scripts.jqdata_sync_cb.jqdatasdk')
+    @patch('ams.validators.cb_data_validator.CBDataValidator')
+    def test_pit_redemption_logic_before_announcement(self, mock_validator, mock_jq):
+        os.environ['JQDATA_USER'] = 'test'
+        os.environ['JQDATA_PWD'] = 'test'
+        mock_jq.auth.return_value = None
+        mock_jq.get_all_securities.return_value = pd.DataFrame(index=[self.ticker])
+        
+        mock_jq.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+        
+        mock_jq.finance.CCB_CALL.code.in_.return_value = True
+        mock_jq.finance.run_query.return_value = pd.DataFrame({'code': [self.ticker], 'pub_date': ['2024-04-01'], 'delisting_date': ['2024-04-30']})
+        price_data = pd.DataFrame({
+            'open': [100.0], 'high': [101.0], 'low': [99.0], 'close': [100.0], 'volume': [1000],
+        }, index=pd.MultiIndex.from_tuples([
+            (pd.to_datetime('2024-03-31'), self.ticker)
+        ], names=['time', 'code']))
+        mock_jq.get_price.return_value = price_data
+        
+        mock_info = MagicMock()
+        mock_info.parent = self.underlying
+        mock_jq.get_security_info.return_value = mock_info
+        
+        mock_jq.bond.run_query.side_effect = [
+            pd.DataFrame({'code': [self.ticker], 'delist_Date': ['2024-04-30']}),
+            pd.DataFrame({
+                'date': ['2024-03-31'], 
+                'code': [self.ticker], 
+                'convert_premium_rate': [10.0]
+            })
+        ]
+        
+        mock_jq.get_extras.return_value = pd.DataFrame({self.underlying: [False]}, index=pd.to_datetime(['2024-03-31']))
+        mock_validator.return_value.validate_dataframe.return_value = True
+        
+        sync_cb_data("2024-03-01", "2024-03-31")
+        
+        df = pd.read_csv("data/cb_history_factors.csv")
+        self.assertFalse(df[df['date'] == '2024-03-31']['is_redeemed'].iloc[0])
+
+    @patch('scripts.jqdata_sync_cb.jqdatasdk')
+    @patch('ams.validators.cb_data_validator.CBDataValidator')
+    def test_pit_redemption_logic_after_delisting(self, mock_validator, mock_jq):
+        os.environ['JQDATA_USER'] = 'test'
+        os.environ['JQDATA_PWD'] = 'test'
+        mock_jq.auth.return_value = None
+        mock_jq.get_all_securities.return_value = pd.DataFrame(index=[self.ticker])
+        
+        mock_jq.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+        
+        mock_jq.finance.CCB_CALL.code.in_.return_value = True
+        mock_jq.finance.run_query.return_value = pd.DataFrame({'code': [self.ticker], 'pub_date': ['2024-04-01'], 'delisting_date': ['2024-04-30']})
+        price_data = pd.DataFrame({
+            'open': [100.0], 'high': [101.0], 'low': [99.0], 'close': [100.0], 'volume': [1000],
+        }, index=pd.MultiIndex.from_tuples([
+            (pd.to_datetime('2024-05-01'), self.ticker)
+        ], names=['time', 'code']))
+        mock_jq.get_price.return_value = price_data
+        
+        mock_info = MagicMock()
+        mock_info.parent = self.underlying
+        mock_jq.get_security_info.return_value = mock_info
+        
+        mock_jq.bond.run_query.side_effect = [
+            pd.DataFrame({'code': [self.ticker], 'delist_Date': ['2024-04-30']}),
+            pd.DataFrame({
+                'date': ['2024-05-01'], 
+                'code': [self.ticker], 
+                'convert_premium_rate': [10.0]
+            })
+        ]
+        
+        mock_jq.get_extras.return_value = pd.DataFrame({self.underlying: [False]}, index=pd.to_datetime(['2024-05-01']))
+        mock_validator.return_value.validate_dataframe.return_value = True
+        
+        sync_cb_data("2024-05-01", "2024-05-05")
+        
+        df = pd.read_csv("data/cb_history_factors.csv")
+        self.assertFalse(df[df['date'] == '2024-05-01']['is_redeemed'].iloc[0])
+
+    @patch('scripts.jqdata_sync_cb.jqdatasdk')
+    @patch('ams.validators.cb_data_validator.CBDataValidator')
+    def test_no_announcement_defaults_false(self, mock_validator, mock_jq):
+        os.environ['JQDATA_USER'] = 'test'
+        os.environ['JQDATA_PWD'] = 'test'
+        mock_jq.auth.return_value = None
+        mock_jq.get_all_securities.return_value = pd.DataFrame(index=[self.ticker])
+        
+        mock_jq.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+        
+        mock_jq.finance.CCB_CALL.code.in_.return_value = True
+        mock_jq.finance.run_query.return_value = pd.DataFrame()
+        price_data = pd.DataFrame({
+            'open': [100.0], 'high': [101.0], 'low': [99.0], 'close': [100.0], 'volume': [1000],
+        }, index=pd.MultiIndex.from_tuples([
+            (pd.to_datetime('2024-04-05'), self.ticker)
+        ], names=['time', 'code']))
+        mock_jq.get_price.return_value = price_data
+        
+        mock_info = MagicMock()
+        mock_info.parent = self.underlying
+        mock_jq.get_security_info.return_value = mock_info
+        
+        mock_jq.bond.run_query.side_effect = [
+            pd.DataFrame({'code': [self.ticker], 'delist_Date': ['2024-04-30']}),
+            pd.DataFrame({
+                'date': ['2024-04-05'], 
+                'code': [self.ticker], 
+                'convert_premium_rate': [10.0]
+            })
+        ]
+        
+        mock_jq.get_extras.return_value = pd.DataFrame({self.underlying: [False]}, index=pd.to_datetime(['2024-04-05']))
+        mock_validator.return_value.validate_dataframe.return_value = True
+        
+        sync_cb_data("2024-04-01", "2024-04-10")
+        
+        df = pd.read_csv("data/cb_history_factors.csv")
+        self.assertFalse(df[df['date'] == '2024-04-05']['is_redeemed'].iloc[0])
 
 if __name__ == '__main__':
     unittest.main()
