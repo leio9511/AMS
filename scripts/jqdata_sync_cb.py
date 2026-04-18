@@ -97,14 +97,31 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     df['is_st'] = df['is_st'].fillna(False)
 
     # 4. Redemption Status
-    # Since CCB_CALL is missing, we use a fallback: is_redeemed = True if date >= delist_date
-    # Fetch delist dates from CONBOND_BASIC_INFO
-    bond_info = df_bonds_info[['code', 'delist_Date']]
-    bond_info.rename(columns={'code': 'ticker', 'delist_Date': 'delist_date'}, inplace=True)
-    bond_info['delist_date'] = pd.to_datetime(bond_info['delist_date'])
-    
-    df = pd.merge(df, bond_info, on='ticker', how='left')
-    df['is_redeemed'] = (df['date'] >= df['delist_date']) & df['delist_date'].notna()
+    try:
+        # Fetch redemption announcements from CCB_CALL
+        q_call = jqdatasdk.query(jqdatasdk.finance.CCB_CALL).filter(
+            jqdatasdk.finance.CCB_CALL.code.in_(tickers)
+        )
+        df_call = jqdatasdk.finance.run_query(q_call)
+        
+        if not df_call.empty and 'code' in df_call.columns and 'pub_date' in df_call.columns and 'delisting_date' in df_call.columns:
+            df_call = df_call[['code', 'pub_date', 'delisting_date']].copy()
+            df_call.rename(columns={'code': 'ticker'}, inplace=True)
+            df_call['pub_date'] = pd.to_datetime(df_call['pub_date'])
+            df_call['delisting_date'] = pd.to_datetime(df_call['delisting_date'])
+            
+            df_call = df_call.drop_duplicates(subset=['ticker'], keep='last')
+            
+            df = pd.merge(df, df_call, on='ticker', how='left')
+            df['is_redeemed'] = (df['date'] >= df['pub_date']) & (df['date'] < df['delisting_date'])
+        else:
+            df['is_redeemed'] = False
+    except Exception as e:
+        print(f"Warning: Failed to fetch CCB_CALL data: {e}")
+        df['is_redeemed'] = False
+
+    num_redeemed = df['is_redeemed'].sum()
+    print(f"Total redeemed records marked: {num_redeemed}")
     
     # Fill remaining NaNs
     df['premium_rate'] = df['premium_rate'].fillna(0.0)

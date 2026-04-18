@@ -28,6 +28,9 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
         
         # Mock price data
+        # Mock finance query attributes
+        mock_jq.finance.CCB_CALL.code.in_.return_value = True
+        mock_jq.finance.run_query.return_value = pd.DataFrame({'code': [self.ticker], 'pub_date': ['2024-01-05'], 'delisting_date': ['2024-01-12']})
         price_data = pd.DataFrame({
             'open': [100.0] * 5,
             'high': [101.0] * 5,
@@ -85,6 +88,9 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         mock_jq.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
         mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
         
+        # Mock finance query attributes
+        mock_jq.finance.CCB_CALL.code.in_.return_value = True
+        mock_jq.finance.run_query.return_value = pd.DataFrame({'code': [self.ticker], 'pub_date': ['2024-01-05'], 'delisting_date': ['2024-01-12']})
         price_data = pd.DataFrame({
             'open': [100.0], 'high': [101.0], 'low': [99.0], 'close': [100.0], 'volume': [1000],
         }, index=pd.MultiIndex.from_tuples([(pd.to_datetime('2024-01-03'), self.ticker)], names=['time', 'code']))
@@ -123,6 +129,9 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         mock_jq.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
         mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
         
+        # Mock finance query attributes
+        mock_jq.finance.CCB_CALL.code.in_.return_value = True
+        mock_jq.finance.run_query.return_value = pd.DataFrame({'code': [self.ticker], 'pub_date': ['2024-01-05'], 'delisting_date': ['2024-01-12']})
         price_data = pd.DataFrame({
             'open': [100.0, 100.0], 'high': [101.0, 101.0], 'low': [99.0, 99.0], 'close': [100.0, 100.0], 'volume': [1000, 1000],
         }, index=pd.MultiIndex.from_tuples([
