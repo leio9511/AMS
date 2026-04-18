@@ -21,9 +21,10 @@ Context_Workdir: /root/projects/AMS
    - 使用 `jqdatasdk.finance.run_query` 查询 `finance.CCB_CALL` 表。
    - 提取 `code`（转债代码）, `pub_date`（公告日期）, `delisting_date`（退市日期）。
 2. **逻辑修复**：
-   - 弃用基于 `CONBOND_BASIC_INFO` 里的 `delist_Date` 直接对比当前日期的逻辑。
-   - 将 `finance.CCB_CALL` 的数据与主 OHLCV 数据表进行 Left Join（按 ticker 和 date 对齐）。
-   - **判定公式**：标记所有满足 `date >= pub_date` 且 `date < delisting_date` 的行。
+   - **防御性数据预处理**：由于 `finance.CCB_CALL` 是事件级数据（单标的可能对应多条记录），必须先对其按 `ticker` 分组，提取每个标的的最早 `pub_date` 和对应的 `delisting_date`，防止 Left Join 时产生笛卡尔积导致数据行数爆炸。
+   - **原子化备份策略**：在执行最终 CSV 覆盖前，脚本必须自动检查并创建备份（如 `data/cb_history_factors.csv.bak`），确保高危修改可回滚。
+   - **属性广播关联**：将预处理后的强赎属性与主 OHLCV 数据表进行 Left Join（**仅按 ticker 关联属性，禁止按 date 关联**，以确保属性广播到全时间轴）。
+   - **判定公式**：对比每一行的 `date` 与关联到的 `pub_date` 及 `delisting_date`，标记所有满足 `date >= pub_date` 且 `date < delisting_date` 的行。
 3. **容错处理**：
    - 对于查询不到强赎公告的转债，默认 `is_redeemed = False`。
    - 确保日期格式统一（Pandas datetime64）。
@@ -72,6 +73,11 @@ data/cb_history_factors.csv
 # 满足以下条件即标记为 is_redeemed = True:
 (date >= pub_date) AND (date < delisting_date)
 # 其中 pub_date 和 delisting_date 均来自 finance.CCB_CALL 表
+```
+
+- **审计日志格式 (硬编码，禁止改动)**:
+```python
+"[AUDIT] Redemption records marked True: {} out of {} total rows"
 ```
 
 - **JQData Finance Table Schema (精确表名和字段)**:
