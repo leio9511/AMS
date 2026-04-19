@@ -1,12 +1,16 @@
 import math
 from decimal import Decimal, ROUND_HALF_UP
 from ams.core.base import BaseBroker
+from ams.core.order import Order, OrderDirection, OrderType, OrderStatus
+from ams.core.slippage import BaseSlippageModel
 
 class SimBroker(BaseBroker):
-    def __init__(self, initial_cash=4000000.0, slippage=0.001):
+    def __init__(self, initial_cash=4000000.0, slippage=0.001, slippage_model: BaseSlippageModel = None):
         self._cash = Decimal(str(initial_cash)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         self._initial_cash = float(initial_cash)
         self.slippage = Decimal(str(slippage))
+        self.slippage_model = slippage_model
+        self.order_book = [] # list of Order objects
         self.holdings = {} # ticker -> int (shares)
         self._total_equity = self._cash
         self._last_prices = {} # Fallback prices for suspended symbols
@@ -26,6 +30,66 @@ class SimBroker(BaseBroker):
     @property
     def initial_cash(self):
         return self._initial_cash
+
+    def submit_order(self, order: Order):
+        self.order_book.append(order)
+
+    def match_orders(self, bar_data: dict):
+        for order in self.order_book:
+            if order.status != OrderStatus.PENDING:
+                continue
+                
+            ticker = order.ticker
+            if ticker not in bar_data:
+                continue
+                
+            ticker_data = bar_data[ticker]
+            
+            if order.order_type == OrderType.LIMIT and order.direction == OrderDirection.SELL:
+                high_price = ticker_data.get('high', 0.0)
+                if high_price >= order.limit_price:
+                    execute_price = order.limit_price
+                    current_shares = self.holdings.get(ticker, 0)
+                    
+                    if current_shares >= order.quantity:
+                        proceeds = (Decimal(str(order.quantity)) * Decimal(str(execute_price))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                        self._cash += proceeds
+                        self.holdings[ticker] -= order.quantity
+                        if self.holdings[ticker] == 0:
+                            del self.holdings[ticker]
+                        order.status = OrderStatus.FILLED
+                    else:
+                        order.status = OrderStatus.REJECTED
+                        
+            elif order.order_type == OrderType.MARKET:
+                base_price = ticker_data.get('close', 0.0)
+                if self.slippage_model:
+                    execute_price = self.slippage_model.calculate_slippage(order, base_price)
+                else:
+                    if order.direction == OrderDirection.SELL:
+                        execute_price = base_price * (1 - float(self.slippage))
+                    else:
+                        execute_price = base_price * (1 + float(self.slippage))
+                        
+                if order.direction == OrderDirection.SELL:
+                    current_shares = self.holdings.get(ticker, 0)
+                    if current_shares >= order.quantity:
+                        proceeds = (Decimal(str(order.quantity)) * Decimal(str(execute_price))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                        self._cash += proceeds
+                        self.holdings[ticker] -= order.quantity
+                        if self.holdings[ticker] == 0:
+                            del self.holdings[ticker]
+                        order.status = OrderStatus.FILLED
+                    else:
+                        order.status = OrderStatus.REJECTED
+                elif order.direction == OrderDirection.BUY:
+                    cost = (Decimal(str(order.quantity)) * Decimal(str(execute_price))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                    if self._cash >= cost:
+                        self._cash -= cost
+                        self.holdings[ticker] = self.holdings.get(ticker, 0) + order.quantity
+                        order.status = OrderStatus.FILLED
+                    else:
+                        order.status = OrderStatus.REJECTED
 
     def update_equity(self, current_prices: dict):
         # Update last prices
