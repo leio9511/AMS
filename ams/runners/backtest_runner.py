@@ -60,7 +60,6 @@ class BacktestRunner:
             # The Strategy is now responsible for generating Orders!
             self.strategy.generate_target_portfolio(context, data_slice)
             
-            self.broker.update_equity(current_prices)
             self.equity_curve.append({
                 'date': date,
                 'equity': self.broker.total_equity

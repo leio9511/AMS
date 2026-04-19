@@ -127,3 +127,62 @@ def test_final_report_format(capsys):
     assert "Max Drawdown: 0.0000%" in output
     assert "Final Equity: 4100000.00" in output
 
+
+def test_runner_event_flow_delegation():
+    # Mock data
+    data = []
+    dates = pd.date_range("2024-01-01", "2024-01-02")
+    tickers = ["CB1"]
+    
+    for date in dates:
+        for ticker in tickers:
+            data.append({
+                'date': date,
+                'ticker': ticker,
+                'close_price': 100,
+                'high_price': 105,
+                'low_price': 95,
+                'open_price': 98
+            })
+            
+    df = pd.DataFrame(data)
+    feed = HistoryDataFeed(data=df)
+    
+    class MockBroker(SimBroker):
+        def __init__(self):
+            super().__init__()
+            self.match_orders_called = False
+            self.update_equity_called = False
+            
+        def match_orders(self, daily_data):
+            self.match_orders_called = True
+            # Verify data format passed to match_orders
+            assert "CB1" in daily_data
+            assert 'high' in daily_data["CB1"]
+            assert 'close' in daily_data["CB1"]
+            super().match_orders(daily_data)
+            
+        def update_equity(self, current_prices=None):
+            self.update_equity_called = True
+            super().update_equity(current_prices)
+            
+    broker = MockBroker()
+    
+    class MockStrategy:
+        def __init__(self):
+            self.generate_target_portfolio_called = False
+            
+        def generate_target_portfolio(self, context, data_slice):
+            self.generate_target_portfolio_called = True
+            
+    strategy = MockStrategy()
+    runner = BacktestRunner(feed, broker, strategy)
+    
+    # Check that runner doesn't have its own match logic
+    assert not hasattr(runner, 'match_order')
+    
+    runner.run("2024-01-01", "2024-01-02")
+    
+    assert broker.match_orders_called, "Runner should call broker.match_orders"
+    assert broker.update_equity_called, "Runner should call broker.update_equity"
+    assert strategy.generate_target_portfolio_called, "Runner should call strategy.generate_target_portfolio"
