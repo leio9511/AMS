@@ -43,8 +43,17 @@ def test_backtest_runner_clock_ticks_correctly():
             pass
         def generate_target_portfolio(self, context, data):
             if not data.empty:
-                 self.call_dates.append(data.iloc[0]['date'])
-                 return {'AAPL': 0.1}
+                self.call_dates.append(data.iloc[0]['date'])
+                # Call PMS logic
+                self.order_target_percent(
+                    broker=context.broker,
+                    ticker='AAPL',
+                    target_percent=0.1,
+                    current_price=data.iloc[0]['price'],
+                    current_equity=context.broker.total_equity,
+                    current_shares=context.broker.holdings.get('AAPL', 0)
+                )
+                return {'AAPL': 0.1}
             return {}
 
     strategy = MockStrategy()
@@ -55,6 +64,5 @@ def test_backtest_runner_clock_ticks_correctly():
     assert len(strategy.call_dates) == 2
     assert strategy.call_dates[0] == pd.Timestamp('2024-01-01')
     assert strategy.call_dates[1] == pd.Timestamp('2024-01-02')
-    # 10% of 100000 = 10000. 10000 / 150 = 66.66 -> floor to 60 lots.
-    # So 60 shares.
+    # Order submitted on day 1 is filled on day 2.
     assert broker.holdings['AAPL'] == 60
