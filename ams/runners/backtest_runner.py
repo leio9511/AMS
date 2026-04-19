@@ -41,27 +41,35 @@ class BacktestRunner:
                 for _, row in data_slice.iterrows():
                     previous_close[row['ticker']] = row[price_col]
             
-            # Create daily_data for match_orders
-            daily_data = {}
-            for _, row in data_slice.iterrows():
-                ticker_data = {}
-                for col in row.index:
-                    ticker_data[col] = row[col]
-                # Ensure 'close' is available for match_orders
-                if 'close' not in ticker_data and 'close_price' in ticker_data:
-                    ticker_data['close'] = ticker_data['close_price']
-                elif 'close' not in ticker_data and 'price' in ticker_data:
-                    ticker_data['close'] = ticker_data['price']
-                daily_data[row['ticker']] = ticker_data
+            # Assuming strategy generate_target_portfolio returns dict {ticker: percent}
+            target_portfolio = self.strategy.generate_target_portfolio(context, data_slice)
+            
+            if target_portfolio is not None:
+                current_holdings = list(self.broker.holdings.keys())
+                total_equity = self.broker.total_equity
                 
-            self.broker.match_orders(daily_data)
-            
-            context.broker = self.broker
-            context.current_prices = current_prices
-            context.date = date
-            
-            # The strategy evaluates new state and issues new Orders for the next step.
-            self.strategy.generate_target_portfolio(context, data_slice)
+                # Sell missing symbols or significantly decreased weights
+                for ticker in current_holdings:
+                    if ticker not in target_portfolio:
+                        # order_target_percent expects a price now!
+                        self.broker.order_target_percent(ticker, 0.0, price=current_prices.get(ticker))
+                    else:
+                        current_value = self.broker.holdings.get(ticker, 0) * current_prices.get(ticker, 0.0)
+                        current_weight = current_value / total_equity if total_equity > 0 else 0.0
+                        target_weight = target_portfolio[ticker]
+                        if current_weight - target_weight > 0.005:
+                            self.broker.order_target_percent(ticker, target_weight, price=current_prices.get(ticker))
+                
+                # Buy new symbols or significantly increased weights
+                for ticker, target_weight in target_portfolio.items():
+                    if ticker not in current_holdings:
+                        self.broker.order_target_percent(ticker, target_weight, price=current_prices.get(ticker))
+                    else:
+                        current_value = self.broker.holdings.get(ticker, 0) * current_prices.get(ticker, 0.0)
+                        current_weight = current_value / total_equity if total_equity > 0 else 0.0
+                        if target_weight - current_weight > 0.005:
+                            self.broker.order_target_percent(ticker, target_weight, price=current_prices.get(ticker))
+
             
             self.broker.update_equity(current_prices)
             self.equity_curve.append({
