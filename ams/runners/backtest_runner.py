@@ -60,11 +60,8 @@ class BacktestRunner:
             context.current_prices = current_prices
             context.date = date
             
-            # The strategy should now internally translate target allocations into Orders
-            # and submit them to the broker. It can still return the target_portfolio.
-            target_portfolio = self.strategy.generate_target_portfolio(context, data_slice)
-            
-
+            # The strategy evaluates new state and issues new Orders for the next step.
+            self.strategy.generate_target_portfolio(context, data_slice)
             
             self.broker.update_equity(current_prices)
             self.equity_curve.append({
