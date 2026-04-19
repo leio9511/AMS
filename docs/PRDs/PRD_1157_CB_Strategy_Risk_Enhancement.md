@@ -6,51 +6,51 @@ Context_Workdir: /root/projects/AMS
 # PRD: 1157_CB_Strategy_Risk_Enhancement
 
 ## 1. Context & Problem (业务背景与核心痛点)
-当前 AMS 2.0 (Event-Driven Architecture) 已完成第一阶段历史回测引擎的搭建。现有的双低轮动策略 (`CBRotationStrategy`) 在回测中已实现基础打分与周频/日频调仓机制。然而，在推进到实盘接管前，必须解决回测在应对极端风险和细节模拟上的失真问题：
-1. **盘中止盈缺失**：目前仅有单日 -8% 的绝对止损机制，缺少对盘中冲高（Take-Profit）及时锁定利润的机制，导致收益回撤过大。
-2. **调仓频率与中途退出资金的再分配机制不明确**：当策略以周频 (`weekly`) 运行时，如果在周三发生了止损或止盈退出，系统目前的处理方式不具备可配置性，需要支持“持币等周末（Hold in Cash）”与“立刻递补（Immediate Replenishment）”两种模式。
-3. **退市/极度暴雷事件惩罚模拟不足**：当遇到可转债强制退市或极度暴雷（例如单日跌幅或归零）时，目前的框架对模拟券商（`SimBroker`）缺乏科学的滑点惩罚机制。强行在券商层写入业务退市逻辑会破坏架构通用性（Leaky Abstraction）。
+当前 AMS 2.0 (Event-Driven Architecture) 已完成第一阶段历史回测引擎的搭建。在实盘接管前，需解决以下回测失真与功能缺失问题：
+1. **盘中止盈与限价单缺失**：真实交易中，止盈是下发带有触发价的条件单（Take-Profit Order）或限价单（Limit Order）。目前的框架仅支持按收盘价进行“目标权重调仓”，缺少日内最高价（`high`）触及止盈价时精准结算锁定利润的机制。
+2. **调仓频率与中途退出资金的再分配机制不明确**：当策略以周频运行时，中途风控退出的资金需要可配的“持币等周末”或“立刻打分递补”机制。
+3. **极度暴雷事件滑点惩罚不足**：退市等极度流动性枯竭事件，直接按收盘价结算会致回测虚高，需要解耦的滑点减值模型。
 
 ## 2. Requirements & User Stories (需求定义)
-1. **参数化止盈机制 (Take-Profit Threshold)**：`CBRotationStrategy` 需新增 `take_profit_threshold` 参数，当日内最高价达到止盈线时，将其调出当日的目标持仓，实现回测日内止盈卖出。
-2. **参数化调仓频率与资金再分配 (Rebalance Config & Fund Reinvestment)**：
-   - 新增 `rebalance_period` 参数，支持 `daily` (每日调仓打分) 和 `weekly` (仅每周五调仓打分)。
-   - 新增 `reinvest_on_risk_exit` 配置开关：当策略为周频时，若因风控（止盈/止损）导致仓位空缺，该配置若为 `False`，空缺权重趴在现金；若为 `True`，则立刻在当日日终触发打分递补。
-3. **滑点模型注入 (SlippageModel Injection)**：设计一套独立的滑点模型抽象，以依赖注入的方式传入 `SimBroker`，以解耦底层的通用撮合与上层的风控惩罚。
+1. **真实日内止盈撮合 (Take-Profit Order Support)**：支持策略配置 `take_profit_threshold`。回测运行器（Runner）与模拟券商（SimBroker）需联合支持“日内触价止盈”行为：若当日 `high` 触及成本价 * (1 + 阈值)，则必须按止盈价（Limit Price）进行撮合卖出，而非按收盘价卖出。
+2. **参数化调仓频率与资金再分配 (Rebalance Config & Fund Reinvestment)**：支持 `rebalance_period` (`daily`/`weekly`) 与 `reinvest_on_risk_exit`（True/False）控制周频策略中途退出资金的处理。
+3. **滑点模型注入 (SlippageModel Injection)**：抽象独立的滑点模型注入 `SimBroker`，在订单结算时获取滑点后的真实成交价，避免券商层硬编码业务退市逻辑。
 
 ## 3. Architecture & Technical Strategy (架构设计与技术路线)
+- **Order Management & SimBroker Upgrade (`ams/core/sim_broker.py` & `ams/runners/backtest_runner.py`)**:
+  - `BacktestRunner` 在进入每日收盘 `generate_target_portfolio` 前，需先执行一次**日内风控撮合 (Intraday Match)**。
+  - 获取当日最高价 `high`，若持仓标的 `high >= 持仓成本价 * (1 + take_profit_threshold)`，则通知 `SimBroker` 触发止盈。
+  - `SimBroker` 执行平仓时，**成交价强制锁定为止盈触发价**（即 `持仓成本价 * (1 + 阈值)`），而非收盘价，从而完美分离信号层（策略不用管怎么卖）与执行层（券商真实模拟触价成交）。
 - **CBRotationStrategy (`ams/core/cb_rotation_strategy.py`)**: 
-  - 构造函数增加 `take_profit_threshold`（默认 0.10 等），`rebalance_period`（默认 'daily'），`reinvest_on_risk_exit`（默认 False）。
-  - 在 `generate_target_portfolio` 函数中分离“风控拦截”和“常规打分轮动”。
-  - 风控拦截每天执行：若触及止损（计算逻辑已存在）或止盈（若日最高价 `high` 存在，判断 `(high - previous_close) / previous_close >= take_profit_threshold`），则在当日剔除该标的。
-  - 常规打分轮动：判断是否是调仓日。如果是日频，每天打分；如果是周频且当天不是周五，仅在 `reinvest_on_risk_exit == True` 且目标仓位数不足 `top_n` 时才重新打分，否则沿用上一日的最终打分名录。
-- **SlippageModel Injection (`ams/core/slippage.py` & `ams/core/sim_broker.py`)**:
-  - 新建模块 `ams/core/slippage.py`，定义 `BaseSlippageModel` 以及派生类 `ExtremeRiskSlippageModel`。
-  - `SimBroker` 构造函数新增可选参数 `slippage_model: BaseSlippageModel = None`。
-  - `SimBroker` 在处理 `order_target_percent` 结算获取成交价时，调用 `slippage_model.get_trade_price(ticker, current_price, direction, context)` 获取滑点后的实际成交价。从而避免在 `SimBroker` 内部硬编码退市等业务逻辑，严格遵循关注点分离（Separation of Concerns）。
+  - 不在策略信号层偷看 `high` 来做止盈。
+  - 构造函数增加 `rebalance_period`（默认 'daily'），`reinvest_on_risk_exit`（默认 False），以及传递给框架的 `take_profit_threshold`。
+  - 仅负责基于收盘数据的常规打分与周频/日频节奏控制。
+- **SlippageModel Injection (`ams/core/slippage.py`)**:
+  - 新建模块定义 `BaseSlippageModel` 与 `ExtremeRiskSlippageModel`，注入到 `SimBroker` 中，用于结算时调整价格。
 
 ## 4. Acceptance Criteria (BDD 黑盒验收标准)
 
-- **Scenario 1: 触发日内止盈 (Intraday Take-Profit)**
-  - **Given** 策略配置 `take_profit_threshold = 0.10`，且持仓包含标的A。
-  - **When** 标的A的当日行情中，最高价相对于前收盘价涨幅 >= 10%。
-  - **Then** 策略生成的 `target_portfolio` 剔除标的A。
+- **Scenario 1: 真实触价止盈 (Limit Price Execution)**
+  - **Given** 策略配置 `take_profit_threshold = 0.10`，持仓A成本100元，当日最高价112元，收盘价102元。
+  - **When** 框架进入当日回测。
+  - **Then** `SimBroker` 在日内撮合阶段触发平仓，该笔卖出单的成交价必须为 `110元`（触发价），而不是收盘价102元，锁定日内利润。
 
 - **Scenario 2: 周频调仓下的持币观望配置 (Weekly Hold in Cash)**
-  - **Given** 策略配置为 `rebalance_period='weekly'` 且 `reinvest_on_risk_exit=False`。当前为周三（非调仓日），持仓数等于目标数。
-  - **When** 一只标的触发风控被移除。
-  - **Then** `target_portfolio` 总权重下移，不再触发新的标的买入打分，资金保留在账户中。
+  - **Given** `rebalance_period='weekly'`, `reinvest_on_risk_exit=False`，非周五。
+  - **When** 某标的触发止损平仓。
+  - **Then** 日终策略计算目标仓位时，不新增买入指令，平仓资金保留在现金池中。
 
 - **Scenario 3: 基于独立滑点模型的惩罚成交 (Slippage Injection)**
-  - **Given** 一个初始化并注入了 `ExtremeRiskSlippageModel`（设置了 50% 减值）的 `SimBroker`，且标的处于极端退市风险名单中。
-  - **When** 发起针对该标的的卖出平仓指令。
-  - **Then** 最终平仓结算价为 `current_price * 0.5`，体现出独立的滑点模型成功介入结算过程，而未污染基础券商。
+  - **Given** `SimBroker` 注入了设置 50% 减值的极端滑点模型，遭遇退市标的卖出。
+  - **When** 发出卖出指令。
+  - **Then** 结算价应用模型返回值，体现出 50% 的巨幅折损。
 
 ## 5. Overall Test Strategy & Quality Goal (测试策略与质量目标)
-- **Unit Test (策略逻辑)**: 针对 `CBRotationStrategy` 提供包含和不包含 `high` 字段的数据帧，模拟连续多日的事件流。验证在周频模式下，触发止损/止盈后的持币现象是否符合预期。
-- **Unit Test (滑点模型注入)**: 构建一个 `DummySlippageModel`，注入 `SimBroker`。测试买入卖出时，`SimBroker` 是否正确调用了注入对象的计算接口并按照返回值结算资金。
+- **Unit Test (日内撮合)**: 验证 `BacktestRunner` 和 `SimBroker` 能否基于给定的 `high` 触发止盈，并断言结算的现金额是否按 Limit Price 累加，绝不能按 Close Price。
+- **Unit Test (策略控制与注入)**: 验证周频休眠逻辑；构建 `DummySlippageModel` 测试 `SimBroker` 价格扣减机制。
 
 ## 6. Framework Modifications (框架防篡改声明)
+- `/root/projects/AMS/ams/runners/backtest_runner.py`
 - `/root/projects/AMS/ams/core/cb_rotation_strategy.py`
 - `/root/projects/AMS/ams/core/sim_broker.py`
 - `/root/projects/AMS/ams/core/slippage.py` (New File)
@@ -58,9 +58,8 @@ Context_Workdir: /root/projects/AMS
 ---
 
 ## Appendix: Architecture Evolution Trace (架构演进与审查追踪)
-- **v1.0**: 初始草案，试图直接在 `SimBroker` 中增加黑名单以模拟退市惩罚。
-- **Audit Rejection (v1.0)**: 被 Auditor 驳回。理由为违反 Separation of Concerns，在基础设施层耦合业务黑名单引发 Leaky Abstraction，且缺乏底层回滚策略。
-- **v2.0 Revision Rationale**: 引入依赖注入（Dependency Injection），抽象出独立的 `SlippageModel` 并注入 `SimBroker`，确保基础券商代码的纯洁性，将业务级退市判定下移到独立的风控/滑点组件中。
+- **v1.0/v2.0**: 试图在策略打分阶段利用 `high` 剔除目标权重来模拟止盈，被 Auditor 驳回（Look-ahead Bias / Signal-Execution Coupling）。
+- **v3.0 Revision Rationale**: 采纳真实限价单逻辑，将日内触价判断移入执行层（Runner & Broker的日内撮合阶段），严格按照 Limit Price 计算止盈收益，彻底解耦策略信号与订单执行。
 
 ---
 
