@@ -70,11 +70,18 @@ def test_take_profit_limit_order_generation():
     strategy = CBRotationStrategy(top_n=1, take_profit_threshold=0.1)
     broker = SimBroker(initial_cash=100000.0)
     
+    # Initialize some holdings so that SSoT position has quantity for the TP order
+    from decimal import Decimal
+    broker.holdings['CB1'] = 20
+    broker.avg_prices['CB1'] = Decimal('100.0')
+    broker._cash = Decimal('98000.0')
+    broker.update_equity({'CB1': 100.0})
+    
     class Context:
         def __init__(self):
             self.broker = broker
             self.current_date = pd.Timestamp('2024-01-01')
-            self.holdings = []
+            self.holdings = ['CB1']
             self.current_prices = {'CB1': 100.0}
             
     context = Context()
@@ -86,7 +93,7 @@ def test_take_profit_limit_order_generation():
     
     strategy.generate_target_portfolio(context, df)
     
-    # We expect 2 orders: 1 Market BUY, 1 Limit SELL
+    # We expect 2 orders: 1 Market BUY (to reach target weight of 5%, ~50 shares, 50-20=30), 1 Limit SELL (for the 20 held shares)
     assert len(broker.order_book) == 2
     
     buy_order = broker.order_book[0]
@@ -95,12 +102,13 @@ def test_take_profit_limit_order_generation():
     assert buy_order.direction == OrderDirection.BUY
     assert buy_order.order_type == OrderType.MARKET
     assert buy_order.ticker == 'CB1'
+    assert buy_order.quantity == 30
     
     assert sell_order.direction == OrderDirection.SELL
     assert sell_order.order_type == OrderType.LIMIT
     import math
     assert math.isclose(sell_order.limit_price, 110.0) # 100 * 1.1
-    assert sell_order.quantity == buy_order.quantity
+    assert sell_order.quantity == 20 # SSoT quantity
 
 def test_weekly_rebalance_sleep():
     strategy = CBRotationStrategy(top_n=1, rebalance_period='weekly', reinvest_on_risk_exit=False)

@@ -194,43 +194,49 @@ class CBRotationStrategy(BaseStrategy):
 
             # Take Profit Mechanism
             if self.take_profit_threshold is not None:
+                from decimal import Decimal
+                tp_thresh_dec = Decimal(str(self.take_profit_threshold))
                 for ticker in target_portfolio:
                     current_price = current_prices.get(ticker)
                     if not current_price:
                         continue
                         
-                    intraday_tp = current_price * (1 + self.take_profit_threshold)
+                    current_price_dec = Decimal(str(current_price))
+                    intraday_tp = current_price_dec * (Decimal('1') + tp_thresh_dec)
                     
-                    cost_tp = float('inf')
+                    cost_tp = None
                     avg_price = None
+                    position = {}
                     if hasattr(broker, 'get_position'):
                         position = broker.get_position(ticker)
-                        if position and position.get('avg_price'):
-                            avg_price = float(position['avg_price'])
-                            cost_tp = avg_price * (1 + self.take_profit_threshold)
+                        if position and position.get('avg_price') is not None:
+                            avg_price = position['avg_price']
+                            if isinstance(avg_price, (int, float, str)):
+                                avg_price = Decimal(str(avg_price))
+                            cost_tp = avg_price * (Decimal('1') + tp_thresh_dec)
                             
                     tp_price = None
                     if self.tp_mode == TP_MODE_INTRADAY:
                         tp_price = intraday_tp
                     elif self.tp_mode == TP_MODE_POSITION:
-                        # If we just bought, we might not have a position/avg_price yet, fallback to intraday
-                        tp_price = cost_tp if avg_price else intraday_tp
+                        tp_price = cost_tp if cost_tp is not None else intraday_tp
                     elif self.tp_mode == TP_MODE_BOTH:
-                        tp_price = min(cost_tp if avg_price else float('inf'), intraday_tp)
+                        if cost_tp is not None:
+                            tp_price = min(cost_tp, intraday_tp)
+                        else:
+                            tp_price = intraday_tp
                         
-                    if tp_price and tp_price != float('inf'):
-                        # Estimate holding quantity (current shares + what we just bought)
-                        # The limit order should sell whatever we expect to hold
-                        expected_weight = target_portfolio.get(ticker, 0)
-                        expected_val = current_equity * expected_weight
-                        expected_shares = int(expected_val / current_price / 10) * 10
-                        if expected_shares > 0:
+                    if tp_price is not None:
+                        # Rely on Broker's SSoT position data for quantity
+                        ssot_qty = int(position.get('quantity', 0)) if position else 0
+                        
+                        if ssot_qty > 0:
                             tp_order = Order(
                                 ticker=ticker,
                                 direction=OrderDirection.SELL,
-                                quantity=expected_shares,
+                                quantity=ssot_qty,
                                 order_type=OrderType.LIMIT,
-                                limit_price=tp_price,
+                                limit_price=float(tp_price), # Order class typing uses float
                                 effective_date=str(current_date.date()) if hasattr(current_date, 'date') else str(current_date) if current_date else None
                             )
                             broker.submit_order(tp_order)

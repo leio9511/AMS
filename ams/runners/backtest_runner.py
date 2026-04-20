@@ -29,8 +29,11 @@ class BacktestRunner:
                     'open': row.get('open_price', row.get('open', row.get('close_price', row.get('close', 0.0))))
                 }
 
+            # Convert date to string to ensure correct comparison for day-order lifecycle
+            date_str = str(date.date()) if hasattr(date, 'date') else str(date)
+            
             # 1. Broker matching
-            self.broker.match_orders(daily_data, current_date=date)
+            self.broker.match_orders(daily_data, current_date=date_str)
             
             # Extract current prices for equity update
             current_prices = {}
