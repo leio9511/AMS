@@ -2,6 +2,7 @@ import json
 import pytest
 from ams.core.sim_broker import SimBroker
 from decimal import Decimal
+from ams.core.order import Order, OrderDirection, OrderType
 
 def test_internal_decimal_precision():
     broker = SimBroker(initial_cash=100000.0, slippage=0.001)
@@ -61,3 +62,39 @@ def test_scenario_2_json_serialization():
         data = json.dumps({"total_equity": broker.total_equity})
     except TypeError:
         pytest.fail("total_equity is not JSON serializable")
+
+def test_broker_infinite_precision():
+    broker = SimBroker(initial_cash=100000.0, slippage=0.0)
+    
+    # Sequence of buys with decimals
+    # Buy 1: 100 shares @ 103.456
+    order1 = Order("TSLA", OrderDirection.BUY, 100, OrderType.MARKET, 0.0)
+    broker.submit_order(order1)
+    broker.match_orders({"TSLA": {"close": 103.456}})
+    
+    # Buy 2: 200 shares @ 105.123
+    order2 = Order("TSLA", OrderDirection.BUY, 200, OrderType.MARKET, 0.0)
+    broker.submit_order(order2)
+    broker.match_orders({"TSLA": {"close": 105.123}})
+    
+    pos = broker.get_position("TSLA")
+    
+    # Manual calculation
+    # (100 * 103.456 + 200 * 105.123) / 300 = 104.567333...
+    manual_avg = (Decimal("100") * Decimal("103.456") + Decimal("200") * Decimal("105.123")) / Decimal("300")
+    
+    assert pos["avg_price"] == manual_avg
+    assert isinstance(pos["avg_price"], Decimal)
+    assert pos["quantity"] == 300
+
+def test_broker_get_position_interface():
+    broker = SimBroker(initial_cash=100000.0, slippage=0.0)
+    broker.order_target_percent("AAPL", 0.1, 150.0) # approx 10000 / 150 = 66 shares, rounded to 60 shares
+    
+    pos = broker.get_position("AAPL")
+    assert "ticker" in pos
+    assert "quantity" in pos
+    assert "avg_price" in pos
+    assert pos["ticker"] == "AAPL"
+    assert isinstance(pos["avg_price"], Decimal)
+    assert pos["avg_price"] == Decimal("150.0")

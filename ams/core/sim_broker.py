@@ -12,6 +12,7 @@ class SimBroker(BaseBroker):
         self.slippage_model = slippage_model
         self.order_book = [] # list of Order objects
         self.holdings = {} # ticker -> int (shares)
+        self.avg_prices = {} # ticker -> Decimal (average price)
         self._total_equity = self._cash
         self._last_prices = {} # Fallback prices for suspended symbols
 
@@ -30,6 +31,15 @@ class SimBroker(BaseBroker):
     @property
     def initial_cash(self):
         return self._initial_cash
+
+    def get_position(self, ticker: str) -> dict:
+        qty = self.holdings.get(ticker, 0)
+        avg = self.avg_prices.get(ticker, Decimal('0.00'))
+        return {
+            "ticker": ticker,
+            "quantity": qty,
+            "avg_price": avg
+        }
 
     def submit_order(self, order: Order):
         self.order_book.append(order)
@@ -57,6 +67,7 @@ class SimBroker(BaseBroker):
                         self.holdings[ticker] -= order.quantity
                         if self.holdings[ticker] == 0:
                             del self.holdings[ticker]
+                            self.avg_prices.pop(ticker, None)
                         order.status = OrderStatus.FILLED
                     else:
                         order.status = OrderStatus.REJECTED
@@ -79,6 +90,7 @@ class SimBroker(BaseBroker):
                         self.holdings[ticker] -= order.quantity
                         if self.holdings[ticker] == 0:
                             del self.holdings[ticker]
+                            self.avg_prices.pop(ticker, None)
                         order.status = OrderStatus.FILLED
                     else:
                         order.status = OrderStatus.REJECTED
@@ -86,6 +98,15 @@ class SimBroker(BaseBroker):
                     cost = (Decimal(str(order.quantity)) * Decimal(str(execute_price))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                     if self._cash >= cost:
                         self._cash -= cost
+                        
+                        old_qty = Decimal(str(self.holdings.get(ticker, 0)))
+                        old_avg = self.avg_prices.get(ticker, Decimal('0.00'))
+                        buy_qty = Decimal(str(order.quantity))
+                        buy_price = Decimal(str(execute_price))
+                        
+                        new_avg_price = (old_qty * old_avg + buy_qty * buy_price) / (old_qty + buy_qty)
+                        self.avg_prices[ticker] = new_avg_price
+                        
                         self.holdings[ticker] = self.holdings.get(ticker, 0) + order.quantity
                         order.status = OrderStatus.FILLED
                     else:
@@ -138,6 +159,15 @@ class SimBroker(BaseBroker):
             if actual_bought_shares > 0:
                 cost = (Decimal(str(actual_bought_shares)) * d_price * (Decimal('1') + self.slippage)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                 self._cash -= cost
+                
+                old_qty = Decimal(str(current_shares))
+                old_avg = self.avg_prices.get(ticker, Decimal('0.00'))
+                buy_qty = Decimal(str(actual_bought_shares))
+                buy_price = d_price * (Decimal('1') + self.slippage)
+                
+                new_avg_price = (old_qty * old_avg + buy_qty * buy_price) / (old_qty + buy_qty)
+                self.avg_prices[ticker] = new_avg_price
+                
                 self.holdings[ticker] = current_shares + actual_bought_shares
                 
         elif diff_value < 0: # Sell
@@ -150,3 +180,6 @@ class SimBroker(BaseBroker):
                 proceeds = (Decimal(str(actual_sold_shares)) * d_price * (Decimal('1') - self.slippage)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                 self._cash += proceeds
                 self.holdings[ticker] = current_shares - actual_sold_shares
+                if self.holdings[ticker] == 0:
+                    del self.holdings[ticker]
+                    self.avg_prices.pop(ticker, None)
