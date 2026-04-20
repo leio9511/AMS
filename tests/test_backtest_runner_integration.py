@@ -154,7 +154,7 @@ def test_runner_event_flow_delegation():
             self.match_orders_called = False
             self.update_equity_called = False
             
-        def match_orders(self, daily_data):
+        def match_orders(self, daily_data, **kwargs):
             self.match_orders_called = True
             # Verify data format passed to match_orders
             assert "CB1" in daily_data

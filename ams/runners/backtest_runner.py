@@ -30,7 +30,7 @@ class BacktestRunner:
                 }
 
             # 1. Broker matching
-            self.broker.match_orders(daily_data)
+            self.broker.match_orders(daily_data, current_date=date)
             
             # Extract current prices for equity update
             current_prices = {}

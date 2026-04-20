@@ -25,7 +25,7 @@ class MockBroker:
     def update_equity(self, current_prices=None):
         pass
 
-    def match_orders(self, daily_data):
+    def match_orders(self, daily_data, current_date=None):
         pass
 
 class MockStrategy(BaseStrategy):

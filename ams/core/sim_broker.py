@@ -44,7 +44,17 @@ class SimBroker(BaseBroker):
     def submit_order(self, order: Order):
         self.order_book.append(order)
 
-    def match_orders(self, bar_data: dict):
+    def _expire_old_orders(self, current_date: str):
+        if not current_date:
+            return
+        for order in self.order_book:
+            if order.status == OrderStatus.PENDING and order.effective_date:
+                if order.effective_date < current_date:
+                    order.status = OrderStatus.CANCELED
+
+    def match_orders(self, bar_data: dict, current_date: str = None):
+        self._expire_old_orders(current_date)
+        
         for order in self.order_book:
             if order.status != OrderStatus.PENDING:
                 continue

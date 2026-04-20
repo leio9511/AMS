@@ -1,5 +1,6 @@
 from enum import Enum
 from dataclasses import dataclass
+from typing import Optional
 
 class OrderDirection(Enum):
     BUY = "BUY"
@@ -23,3 +24,4 @@ class Order:
     order_type: OrderType
     limit_price: float
     status: OrderStatus = OrderStatus.PENDING
+    effective_date: Optional[str] = None
