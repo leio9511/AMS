@@ -5,8 +5,8 @@ description: Automated Market Screener & Global Portfolio Ledger. Use this skill
 
 # AMS AgentSkill
 
-# AMS Runbook & Governance
-**MANDATORY:** Currently in DEVELOPMENT stage. All invocations MUST use the workspace path: `/root/projects/AMS/`. DO NOT use runtime paths until the stage is switched to PRODUCTION.
+# AMS Runbook & Governance 
+**MANDATORY:** Currently in DEVELOPMENT stage. All invocations MUST use the workspace path: `/root/projects/AMS/`. DO NOT use runtime paths until the stage is switched to PRODUCTION. 
 
 You are equipped with the AMS toolset. To answer questions about market data or portfolios, strictly use the `exec` tool to run the following Python pipes and interpret their JSON output.
 

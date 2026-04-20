@@ -70,3 +70,10 @@ def test_deploy_sh_etl_sync():
     with open(script_path, 'r') as f:
         content = f.read()
     assert 'rsync -avh --delete "$SRC_DIR/etl/" "$DEST_SKILL_DIR/etl/"' in content, "deploy.sh missing etl/ rsync"
+
+def test_execute_bash_deploy_sh_dry_run():
+    """Test Case 3: Execution bash deploy.sh (dry-run)"""
+    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../deploy.sh'))
+    assert os.path.exists(script_path), "deploy.sh not found"
+    result = subprocess.run(['bash', '-n', script_path], capture_output=True, text=True)
+    assert result.returncode == 0, f"Execution bash deploy.sh failed: {result.stderr}"

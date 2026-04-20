@@ -21,9 +21,9 @@ mkdir -p "$DEST_SKILL_DIR/etl"
 mkdir -p "$DATA_DIR"
 
 # 2. Copy files using rsync
-rsync -avh --delete "$SRC_DIR/ams/" "$DEST_SKILL_DIR/ams/"
-rsync -avh --delete "$SRC_DIR/etl/" "$DEST_SKILL_DIR/etl/"
-cp "$SRC_DIR/SKILL.md" "$DEST_SKILL_DIR/SKILL.md"
+rsync -avh --delete "$SRC_DIR/ams/" "$DEST_SKILL_DIR/ams/" 
+rsync -avh --delete "$SRC_DIR/etl/" "$DEST_SKILL_DIR/etl/" 
+cp "$SRC_DIR/SKILL.md" "$DEST_SKILL_DIR/SKILL.md" 
 # Also copy remaining scripts just in case other things need them
 rsync -avh --delete "$SRC_DIR/scripts/" "$DEST_SKILL_DIR/scripts/"
 
@@ -57,3 +57,4 @@ echo "Registering ams_daily_data_sync cron job..."
 openclaw cron add --name "ams_daily_data_sync" --cron "5 8 * * 1-5" --message "Execute \`python3 ~/.openclaw/skills/ams/etl/trigger_daily_etl.py\`. Parse the JSON output and report the data sync status to the Boss." || true
 
 echo "✅ Skill deployed successfully. Run 'openclaw gateway restart' if it doesn't hot-reload."
+
