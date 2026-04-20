@@ -1,8 +1,11 @@
 import math
+import logging
 from decimal import Decimal, ROUND_HALF_UP
 from ams.core.base import BaseBroker
 from ams.core.order import Order, OrderDirection, OrderType, OrderStatus
 from ams.core.slippage import BaseSlippageModel
+
+logger = logging.getLogger(__name__)
 
 class SimBroker(BaseBroker):
     def __init__(self, initial_cash=4000000.0, slippage=0.001, slippage_model: BaseSlippageModel = None):
@@ -50,6 +53,8 @@ class SimBroker(BaseBroker):
         for order in self.order_book:
             if order.status == OrderStatus.PENDING and order.effective_date:
                 if order.effective_date < current_date:
+                    order_id = getattr(order, 'id', id(order))
+                    logger.info(f"Order {order_id} expired: PENDING -> CANCELED (original date: {order.effective_date})")
                     order.status = OrderStatus.CANCELED
 
     def match_orders(self, bar_data: dict, current_date: str = None):

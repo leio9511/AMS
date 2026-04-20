@@ -37,3 +37,29 @@ def test_invalid_price_protection():
     broker.order_target_percent("AAPL", 0.1, price=-5.0)
     assert "AAPL" not in broker.holdings or broker.holdings["AAPL"] == 0
     assert broker.cash == 100000.0
+
+import logging
+from ams.core.order import Order, OrderType, OrderDirection, OrderStatus
+
+def test_expire_old_orders_logging(caplog):
+    broker = SimBroker(initial_cash=100000.0, slippage=0.0)
+    order = Order(
+        ticker="AAPL",
+        order_type=OrderType.LIMIT,
+        direction=OrderDirection.BUY,
+        quantity=10,
+        limit_price=150.0,
+        effective_date="2023-01-01"
+    )
+    # Using dynamic id if missing
+    order_id = getattr(order, 'id', id(order))
+    broker.submit_order(order)
+    
+    with caplog.at_level(logging.INFO):
+        broker._expire_old_orders("2023-01-02")
+        
+    assert order.status == OrderStatus.CANCELED
+    assert "PENDING -> CANCELED" in caplog.text
+    assert str(order_id) in caplog.text
+    assert "2023-01-01" in caplog.text
+
