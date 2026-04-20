@@ -52,3 +52,11 @@ Before any ETL script (e.g., fetching historical quotes) saves data to disk, it 
 ## 3. Strict Point-in-Time (PiT) Adherence
 To prevent **Look-ahead Bias (未来函数)**, historical data must strictly reflect what was knowable at that exact second in history.
 - Example: A Convertible Bond's `is_redeemed` status must be triggered by its `pub_date` (Announcement Date), not its `delisting_date` (which is known weeks in advance).
+## 4. Directory Definitions
+
+To maintain architectural integrity, the repository strictly adheres to the following directory responsibilities:
+
+- `ams/`: Core Strategy, Runner, and Broker logic (Event-Driven).
+- `etl/`: Data acquisition and processing pipelines (Production). All ETL scripts reside here.
+- `data/`: Standardized CSV datasets.
+- `scripts/`: Legacy 1.0 scripts and experimental tools (Deprecated).

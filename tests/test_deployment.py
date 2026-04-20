@@ -58,3 +58,15 @@ def test_deploy_sh_idempotent_removal():
     assert 'jq' in content, "Missing jq command for parsing cron job list"
     assert '.jobs[] | select(.name == "ams_daily_data_sync")' in content, "Missing jq filter for ams_daily_data_sync"
     assert 'openclaw cron rm' in content, "Missing 'openclaw cron rm' for removing existing jobs"
+
+def test_skill_md_governance():
+    skill_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../SKILL.md'))
+    with open(skill_path, 'r') as f:
+        content = f.read()
+    assert "**MANDATORY:** Currently in DEVELOPMENT stage" in content, "SKILL.md missing Governance rule"
+
+def test_deploy_sh_etl_sync():
+    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../deploy.sh'))
+    with open(script_path, 'r') as f:
+        content = f.read()
+    assert 'rsync -avh --delete "$SRC_DIR/etl/" "$DEST_SKILL_DIR/etl/"' in content, "deploy.sh missing etl/ rsync"
