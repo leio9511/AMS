@@ -153,3 +153,79 @@ def test_weekly_rebalance_sleep():
     assert len(broker.order_book) == 1
     assert broker.order_book[0].direction == OrderDirection.SELL
     assert broker.order_book[0].ticker == 'CB1'
+
+from ams.core.cb_rotation_strategy import TP_MODE_POSITION, TP_MODE_INTRADAY, TP_MODE_BOTH
+
+def test_strategy_uses_broker_ssot_cost():
+    strategy = CBRotationStrategy(top_n=1, take_profit_threshold=0.1, tp_mode=TP_MODE_POSITION)
+    broker = SimBroker(initial_cash=100000.0)
+    
+    # Mock get_position to return an avg_price of 90.0
+    def mock_get_position(ticker):
+        return {'avg_price': 90.0, 'quantity': 100}
+    broker.get_position = mock_get_position
+    
+    class Context:
+        def __init__(self):
+            self.broker = broker
+            self.current_date = pd.Timestamp('2024-01-01')
+            self.holdings = ['CB1']
+            self.current_prices = {'CB1': 100.0}
+            
+    context = Context()
+    broker.holdings['CB1'] = 100
+    broker._cash = 0
+    broker.update_equity({'CB1': 100.0})
+    strategy.weight_per_position = 1.0
+    
+    df = pd.DataFrame([{
+        'ticker': 'CB1', 'close_price': 100.0, 'premium_rate': 0.1,
+        'volume': 10000, 'amount': 15000000, 'is_st': False, 'suspended': False
+    }])
+    
+    strategy.generate_target_portfolio(context, df)
+    
+    # We expect 1 Limit SELL order for TP because we already hold it
+    # Note: no buy order since weight is already near target
+    assert len(broker.order_book) == 1
+    
+    sell_order = broker.order_book[0]
+    assert sell_order.direction == OrderDirection.SELL
+    assert sell_order.order_type == OrderType.LIMIT
+    import math
+    assert math.isclose(sell_order.limit_price, 99.0) # 90.0 * 1.1 = 99.0
+
+def test_dual_mode_tp_min_logic():
+    strategy = CBRotationStrategy(top_n=1, take_profit_threshold=0.1, tp_mode=TP_MODE_BOTH)
+    broker = SimBroker(initial_cash=100000.0)
+    
+    # avg_price = 110.0 (cost_tp = 121.0), intraday_price = 100.0 (intraday_tp = 110.0)
+    # min should be 110.0
+    def mock_get_position(ticker):
+        return {'avg_price': 110.0, 'quantity': 100}
+    broker.get_position = mock_get_position
+    
+    class Context:
+        def __init__(self):
+            self.broker = broker
+            self.current_date = pd.Timestamp('2024-01-01')
+            self.holdings = ['CB1']
+            self.current_prices = {'CB1': 100.0}
+            
+    context = Context()
+    broker.holdings['CB1'] = 100
+    broker._cash = 0
+    broker.update_equity({'CB1': 100.0})
+    strategy.weight_per_position = 1.0
+    
+    df = pd.DataFrame([{
+        'ticker': 'CB1', 'close_price': 100.0, 'premium_rate': 0.1,
+        'volume': 10000, 'amount': 15000000, 'is_st': False, 'suspended': False
+    }])
+    
+    strategy.generate_target_portfolio(context, df)
+    
+    assert len(broker.order_book) == 1
+    sell_order = broker.order_book[0]
+    import math
+    assert math.isclose(sell_order.limit_price, 110.0) # min(121.0, 110.0)

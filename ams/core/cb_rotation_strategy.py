@@ -3,10 +3,17 @@ import numpy as np
 from ams.core.base import BaseStrategy
 from ams.core.order import Order, OrderDirection, OrderType
 
+
+TP_MODE_POSITION = "position"
+TP_MODE_INTRADAY = "intraday"
+TP_MODE_BOTH = "both"
+
 class CBRotationStrategy(BaseStrategy):
+
     def __init__(self, top_n=20, liquidity_threshold=10000000, weight_per_position=0.05, 
                  stop_loss_threshold=-0.08, take_profit_threshold=None,
-                 rebalance_period='daily', reinvest_on_risk_exit=True):
+                 rebalance_period='daily', reinvest_on_risk_exit=True,
+                 tp_mode=TP_MODE_POSITION):
         self.top_n = top_n
         self.liquidity_threshold = liquidity_threshold
         self.weight_per_position = weight_per_position
@@ -14,6 +21,7 @@ class CBRotationStrategy(BaseStrategy):
         self.take_profit_threshold = take_profit_threshold
         self.rebalance_period = rebalance_period
         self.reinvest_on_risk_exit = reinvest_on_risk_exit
+        self.tp_mode = tp_mode
         self.last_rebalance_date = None
 
     def on_bar(self, context, data):
@@ -182,18 +190,48 @@ class CBRotationStrategy(BaseStrategy):
                         current_shares=current_shares
                     )
                     
-                    # Take Profit Mechanism
-                    if buy_order and self.take_profit_threshold is not None:
-                        # Assuming execution price is roughly current_price for cost basis
-                        cost_price = current_prices.get(ticker)
-                        if cost_price:
-                            tp_price = cost_price * (1 + self.take_profit_threshold)
+                    pass
+
+            # Take Profit Mechanism
+            if self.take_profit_threshold is not None:
+                for ticker in target_portfolio:
+                    current_price = current_prices.get(ticker)
+                    if not current_price:
+                        continue
+                        
+                    intraday_tp = current_price * (1 + self.take_profit_threshold)
+                    
+                    cost_tp = float('inf')
+                    avg_price = None
+                    if hasattr(broker, 'get_position'):
+                        position = broker.get_position(ticker)
+                        if position and position.get('avg_price'):
+                            avg_price = float(position['avg_price'])
+                            cost_tp = avg_price * (1 + self.take_profit_threshold)
+                            
+                    tp_price = None
+                    if self.tp_mode == TP_MODE_INTRADAY:
+                        tp_price = intraday_tp
+                    elif self.tp_mode == TP_MODE_POSITION:
+                        # If we just bought, we might not have a position/avg_price yet, fallback to intraday
+                        tp_price = cost_tp if avg_price else intraday_tp
+                    elif self.tp_mode == TP_MODE_BOTH:
+                        tp_price = min(cost_tp if avg_price else float('inf'), intraday_tp)
+                        
+                    if tp_price and tp_price != float('inf'):
+                        # Estimate holding quantity (current shares + what we just bought)
+                        # The limit order should sell whatever we expect to hold
+                        expected_weight = target_portfolio.get(ticker, 0)
+                        expected_val = current_equity * expected_weight
+                        expected_shares = int(expected_val / current_price / 10) * 10
+                        if expected_shares > 0:
                             tp_order = Order(
                                 ticker=ticker,
                                 direction=OrderDirection.SELL,
-                                quantity=buy_order.quantity,
+                                quantity=expected_shares,
                                 order_type=OrderType.LIMIT,
-                                limit_price=tp_price
+                                limit_price=tp_price,
+                                effective_date=str(current_date.date()) if hasattr(current_date, 'date') else str(current_date) if current_date else None
                             )
                             broker.submit_order(tp_order)
 
