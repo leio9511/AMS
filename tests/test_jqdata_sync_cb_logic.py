@@ -3,7 +3,7 @@ from unittest.mock import patch, MagicMock
 import pandas as pd
 import numpy as np
 import os
-from scripts.jqdata_sync_cb import sync_cb_data
+from etl.jqdata_sync_cb import sync_cb_data
 
 class TestJQDataSyncCBLogic(unittest.TestCase):
     def setUp(self):
@@ -12,7 +12,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         self.ticker = "123456.XSHG"
         self.underlying = "600000.XSHG"
 
-    @patch('scripts.jqdata_sync_cb.jqdatasdk')
+    @patch('etl.jqdata_sync_cb.jqdatasdk')
     @patch('ams.validators.cb_data_validator.CBDataValidator')
     def test_fetch_real_premium_rate(self, mock_validator, mock_jq):
         # Setup env vars for logic
@@ -73,7 +73,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         self.assertEqual(df['premium_rate'].iloc[0], 0.1) # 10.0 / 100
         self.assertEqual(df['premium_rate'].iloc[4], 0.3) # 30.0 / 100
 
-    @patch('scripts.jqdata_sync_cb.jqdatasdk')
+    @patch('etl.jqdata_sync_cb.jqdatasdk')
     @patch('ams.validators.cb_data_validator.CBDataValidator')
     def test_fetch_st_status(self, mock_validator, mock_jq):
         # Setup env vars for logic
@@ -115,7 +115,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         df = pd.read_csv("data/cb_history_factors.csv")
         self.assertTrue(df['is_st'].iloc[0])
 
-    @patch('scripts.jqdata_sync_cb.jqdatasdk')
+    @patch('etl.jqdata_sync_cb.jqdatasdk')
     @patch('ams.validators.cb_data_validator.CBDataValidator')
     def test_pit_redemption_logic_active(self, mock_validator, mock_jq):
         # Setup env vars for logic
@@ -160,7 +160,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         df = pd.read_csv("data/cb_history_factors.csv")
         self.assertTrue(df[df['date'] == '2024-04-05']['is_redeemed'].iloc[0])
 
-    @patch('scripts.jqdata_sync_cb.jqdatasdk')
+    @patch('etl.jqdata_sync_cb.jqdatasdk')
     @patch('ams.validators.cb_data_validator.CBDataValidator')
     def test_pit_redemption_logic_before_announcement(self, mock_validator, mock_jq):
         os.environ['JQDATA_USER'] = 'test'
@@ -202,7 +202,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         df = pd.read_csv("data/cb_history_factors.csv")
         self.assertFalse(df[df['date'] == '2024-03-31']['is_redeemed'].iloc[0])
 
-    @patch('scripts.jqdata_sync_cb.jqdatasdk')
+    @patch('etl.jqdata_sync_cb.jqdatasdk')
     @patch('ams.validators.cb_data_validator.CBDataValidator')
     def test_pit_redemption_logic_after_delisting(self, mock_validator, mock_jq):
         os.environ['JQDATA_USER'] = 'test'
@@ -244,7 +244,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         df = pd.read_csv("data/cb_history_factors.csv")
         self.assertFalse(df[df['date'] == '2024-05-01']['is_redeemed'].iloc[0])
 
-    @patch('scripts.jqdata_sync_cb.jqdatasdk')
+    @patch('etl.jqdata_sync_cb.jqdatasdk')
     @patch('ams.validators.cb_data_validator.CBDataValidator')
     def test_no_announcement_defaults_false(self, mock_validator, mock_jq):
         os.environ['JQDATA_USER'] = 'test'

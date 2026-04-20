@@ -1,7 +1,7 @@
 import os
 import pytest
 from unittest.mock import patch, MagicMock
-from scripts.jqdata_sync_cb import sync_cb_data
+from etl.jqdata_sync_cb import sync_cb_data
 
 @patch.dict(os.environ, {}, clear=True)
 def test_jqdata_auth_failure():
@@ -9,7 +9,7 @@ def test_jqdata_auth_failure():
         sync_cb_data()
 
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
-@patch('scripts.jqdata_sync_cb.jqdatasdk')
+@patch('etl.jqdata_sync_cb.jqdatasdk')
 def test_jqdata_successful_sync(mock_jqdatasdk):
     # Mock auth success
     mock_jqdatasdk.auth.return_value = None
@@ -65,7 +65,7 @@ def test_jqdata_successful_sync(mock_jqdatasdk):
     expected_cols = {"ticker", "date", "open", "high", "low", "close", "volume", "premium_rate", "double_low", "underlying_ticker", "is_st", "is_redeemed"}
     assert expected_cols.issubset(set(df.columns))
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
-@patch('scripts.jqdata_sync_cb.jqdatasdk')
+@patch('etl.jqdata_sync_cb.jqdatasdk')
 def test_fetch_ccb_call_data_success(mock_jqdatasdk):
     import pandas as pd
     mock_jqdatasdk.auth.return_value = None
@@ -120,7 +120,7 @@ def test_fetch_ccb_call_data_success(mock_jqdatasdk):
     assert df.loc[0, "is_redeemed"] == True
 
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
-@patch('scripts.jqdata_sync_cb.jqdatasdk')
+@patch('etl.jqdata_sync_cb.jqdatasdk')
 def test_fetch_ccb_call_data_empty(mock_jqdatasdk):
     import pandas as pd
     mock_jqdatasdk.auth.return_value = None

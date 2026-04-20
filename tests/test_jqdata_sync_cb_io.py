@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import sys
 sys.path.append("/root/projects/AMS")
 
-from scripts.jqdata_sync_cb import sync_cb_data
+from etl.jqdata_sync_cb import sync_cb_data
 
 @pytest.fixture
 def mock_jqdata(monkeypatch):

@@ -9,6 +9,12 @@ The core philosophy of AMS v2.0 is to eliminate the drift between backtesting an
 - In **Live Trading**: You plug in real-time QMT data feeds and a live QMT broker.
 - **Zero code changes** are required in the strategy itself to switch environments.
 
+## Project Structure
+- `ams/`: Core Strategy, Runner, and Broker logic (Event-Driven).
+- `etl/`: Data acquisition and processing pipelines (Production).
+- `data/`: Standardized CSV datasets.
+- `scripts/`: Legacy 1.0 scripts and experimental tools (Deprecated).
+
 ## 🚀 Quick Start
 
 **1. Install Dependencies**

@@ -48,7 +48,7 @@ class TestTriggerDailyETL:
     def test_trigger_daily_etl_import(self):
         """Test Case 1: Verify the module can be imported without errors."""
         import importlib
-        import scripts.trigger_daily_etl as tde_module
+        import etl.trigger_daily_etl as tde_module
         importlib.reload(tde_module)
         
         # Verify the module has the required functions and constants
@@ -61,7 +61,7 @@ class TestTriggerDailyETL:
     def test_trigger_daily_etl_output_fields(self):
         """Test Case 5: Verify output JSON has all 4 required fields."""
         import importlib
-        import scripts.trigger_daily_etl as tde_module
+        import etl.trigger_daily_etl as tde_module
         importlib.reload(tde_module)
         
         # Create a minimal mock that returns valid response
@@ -99,7 +99,7 @@ class TestTriggerDailyETL:
 
         # We need to reimport the module to reset its state
         import importlib
-        import scripts.trigger_daily_etl as tde_module
+        import etl.trigger_daily_etl as tde_module
         importlib.reload(tde_module)
 
         # Track calls
@@ -147,7 +147,7 @@ class TestTriggerDailyETL:
         the connection error message."""
 
         import importlib
-        import scripts.trigger_daily_etl as tde_module
+        import etl.trigger_daily_etl as tde_module
         importlib.reload(tde_module)
 
         connection_error = Exception("Connection refused")
@@ -171,7 +171,7 @@ class TestTriggerDailyETL:
         Assert JSON output has status 'partial' and errors includes the failure reason."""
 
         import importlib
-        import scripts.trigger_daily_etl as tde_module
+        import etl.trigger_daily_etl as tde_module
         importlib.reload(tde_module)
 
         exec_calls = []
@@ -214,7 +214,7 @@ class TestTriggerDailyETL:
         Assert status 'partial' with appropriate error."""
 
         import importlib
-        import scripts.trigger_daily_etl as tde_module
+        import etl.trigger_daily_etl as tde_module
         importlib.reload(tde_module)
 
         exec_calls = []
