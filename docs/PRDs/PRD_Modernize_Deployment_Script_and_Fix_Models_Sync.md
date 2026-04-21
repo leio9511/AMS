@@ -31,7 +31,7 @@ AMS 2.0 deployment is currently brittle and non-atomic. Hardcoded paths caused m
 *   **AC 3**: Tarball backup is always created before any directory removal.
 
 ## 5. Overall Test Strategy & Quality Goal
-*   **Verification**: Execute deployment and confirm `~/.openclaw/skills/ams/models/config.py` exists.
+*   **Verification**: Execute deployment and confirm `~/.openclaw/skills/ams/ams/models/config.py` exists.
 
 ## 6. Framework Modifications
 - `/root/projects/AMS/deploy.sh` (Refactor)

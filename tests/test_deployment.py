@@ -116,3 +116,11 @@ def test_deploy_sh_stale_backup_check():
     assert 'if [ -d "$OLD_DIR" ]; then' in content, "deploy.sh missing stale backup check"
     assert 'exit 1' in content, "deploy.sh missing exit 1 in stale backup check"
 
+def test_prd_verification_path():
+    prd_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../docs/PRDs/PRD_Modernize_Deployment_Script_and_Fix_Models_Sync.md'))
+    assert os.path.exists(prd_path), "PRD file not found"
+    with open(prd_path, 'r') as f:
+        content = f.read()
+    assert "~/.openclaw/skills/ams/ams/models/config.py" in content, "PRD missing the correct verification path"
+
+
