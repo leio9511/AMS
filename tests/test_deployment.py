@@ -69,7 +69,7 @@ def test_deploy_sh_etl_sync():
     script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../deploy.sh'))
     with open(script_path, 'r') as f:
         content = f.read()
-    assert 'rsync -avh --delete "$SRC_DIR/etl/" "$DEST_SKILL_DIR/etl/"' in content, "deploy.sh missing etl/ rsync"
+    assert 'rsync -avh --delete --exclude-from="$SRC_DIR/.release_ignore" "$SRC_DIR/" "$TMP_DIR/"' in content, "deploy.sh missing new rsync command"
 
 def test_execute_bash_deploy_sh_dry_run():
     """Test Case 3: Execution bash deploy.sh (dry-run)"""
@@ -77,3 +77,42 @@ def test_execute_bash_deploy_sh_dry_run():
     assert os.path.exists(script_path), "deploy.sh not found"
     result = subprocess.run(['bash', '-n', script_path], capture_output=True, text=True)
     assert result.returncode == 0, f"Execution bash deploy.sh failed: {result.stderr}"
+
+def test_release_ignore_content():
+    ignore_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../.release_ignore'))
+    assert os.path.exists(ignore_path), ".release_ignore not found"
+    with open(ignore_path, 'r') as f:
+        content = f.read()
+    expected_rules = [
+        ".git/", ".gitignore", ".pytest_cache/", "tests/", "__pycache__/", 
+        "*.pyc", "*.log", "docs/PRDs/", ".sdlc_runs/", "run_backtest_script.py", 
+        "turnover_test.py", "run_precision_backtest.py", "debug_trace*.py", 
+        "append_experience.py", "update_issue_exp.py", "run_commit.py"
+    ]
+    for rule in expected_rules:
+        assert rule in content, f"Rule {rule} not found in .release_ignore"
+
+def test_deploy_sh_atomic_swap_logic():
+    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../deploy.sh'))
+    with open(script_path, 'r') as f:
+        content = f.read()
+    assert 'set -euo pipefail' in content, "deploy.sh missing set -euo pipefail"
+    assert 'trap on_error ERR' in content, "deploy.sh missing trap on_error ERR"
+    assert 'TMP_DIR="${DEST_SKILL_DIR}.tmp"' in content, "deploy.sh missing TMP_DIR"
+    assert 'OLD_DIR="${DEST_SKILL_DIR}.old"' in content, "deploy.sh missing OLD_DIR"
+    assert 'rsync -avh --delete --exclude-from="$SRC_DIR/.release_ignore" "$SRC_DIR/" "$TMP_DIR/"' in content, "deploy.sh missing rsync --exclude-from"
+
+def test_deploy_sh_backup_and_restore():
+    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../deploy.sh'))
+    with open(script_path, 'r') as f:
+        content = f.read()
+    assert 'tar -czf "$BACKUP_FILE"' in content, "deploy.sh missing tar backup"
+    assert 'mv "$OLD_DIR" "$DEST_SKILL_DIR"' in content, "deploy.sh missing restore mv command"
+
+def test_deploy_sh_stale_backup_check():
+    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../deploy.sh'))
+    with open(script_path, 'r') as f:
+        content = f.read()
+    assert 'if [ -d "$OLD_DIR" ]; then' in content, "deploy.sh missing stale backup check"
+    assert 'exit 1' in content, "deploy.sh missing exit 1 in stale backup check"
+
