@@ -1,3 +1,4 @@
+from decimal import Decimal
 import pytest
 import pandas as pd
 import numpy as np
@@ -237,3 +238,63 @@ def test_dual_mode_tp_min_logic():
     sell_order = broker.order_book[0]
     import math
     assert math.isclose(sell_order.limit_price, 110.0) # min(121.0, 110.0)
+
+from ams.models.config import TakeProfitConfig, TakeProfitMode
+
+def test_cb_strategy_legacy_init_mapping():
+    strategy = CBRotationStrategy(take_profit_threshold=0.15, tp_mode="position")
+    assert strategy.tp_config is not None
+    assert strategy.tp_config.mode == TakeProfitMode.POSITION
+    assert strategy.tp_config.pos_threshold == Decimal("0.15")
+    assert strategy.tp_config.intra_threshold == Decimal("0.15")
+
+def test_cb_strategy_tp_policy_delegation():
+    # POSITION=20%, INTRADAY=8%, mode=BOTH, cost=100, yesterday_close=110 -> expect 118.8
+    # However, legacy init maps take_profit_threshold to both pos and intra. 
+    # But we can inject our own tp_config to test policy delegation or just test policy delegation directly by mocking or setting config.
+    strategy = CBRotationStrategy()
+    strategy.tp_config = TakeProfitConfig(
+        mode=TakeProfitMode.BOTH, 
+        pos_threshold=Decimal("0.20"), 
+        intra_threshold=Decimal("0.08")
+    )
+    
+    broker = SimBroker(initial_cash=100000.0)
+    
+    def mock_get_position(ticker):
+        return {'avg_price': Decimal('100.0'), 'quantity': 100}
+    broker.get_position = mock_get_position
+    
+    class Context:
+        def __init__(self):
+            self.broker = broker
+            self.current_date = pd.Timestamp('2024-01-01')
+            self.holdings = ['CB1']
+            self.current_prices = {'CB1': 110.0} # prev_close/yesterday_close is 110
+            
+    context = Context()
+    broker.holdings['CB1'] = 100
+    broker._cash = 0
+    broker.update_equity({'CB1': 110.0})
+    strategy.weight_per_position = 1.0
+    
+    df = pd.DataFrame([{
+        'ticker': 'CB1', 'close_price': 110.0, 'premium_rate': 0.1,
+        'volume': 10000, 'amount': 15000000, 'is_st': False, 'suspended': False
+    }])
+    
+    strategy.generate_target_portfolio(context, df)
+    
+    assert len(broker.order_book) == 1
+    sell_order = broker.order_book[0]
+    assert sell_order.direction == OrderDirection.SELL
+    assert sell_order.order_type == OrderType.LIMIT
+    import math
+    # Expected 118.8
+    assert math.isclose(sell_order.limit_price, 118.8)
+
+def test_cb_strategy_invalid_init_raises():
+    # Attempt to create strategy with mode BOTH but missing thresholds
+    # We test instantiating config directly as Strategy init maps identically if thresholds are provided
+    with pytest.raises(ValueError, match="must be positive"):
+        TakeProfitConfig(mode=TakeProfitMode.BOTH, pos_threshold=Decimal("0.20"), intra_threshold=None)

@@ -1,3 +1,5 @@
+from ams.models.config import TakeProfitConfig, TakeProfitMode, TakeProfitPolicy
+from decimal import Decimal
 import pandas as pd
 import numpy as np
 from ams.core.base import BaseStrategy
@@ -21,8 +23,13 @@ class CBRotationStrategy(BaseStrategy):
         self.take_profit_threshold = take_profit_threshold
         self.rebalance_period = rebalance_period
         self.reinvest_on_risk_exit = reinvest_on_risk_exit
-        self.tp_mode = tp_mode
+        self.tp_mode = TakeProfitMode(tp_mode) if isinstance(tp_mode, str) else tp_mode
         self.last_rebalance_date = None
+        if self.take_profit_threshold is not None:
+            thresh = Decimal(str(self.take_profit_threshold))
+            self.tp_config = TakeProfitConfig(mode=self.tp_mode, pos_threshold=thresh, intra_threshold=thresh)
+        else:
+            self.tp_config = None
 
     def on_bar(self, context, data):
         pass
@@ -193,18 +200,14 @@ class CBRotationStrategy(BaseStrategy):
                     pass
 
             # Take Profit Mechanism
-            if self.take_profit_threshold is not None:
-                from decimal import Decimal
-                tp_thresh_dec = Decimal(str(self.take_profit_threshold))
+            if hasattr(self, 'tp_config') and self.tp_config is not None:
                 for ticker in target_portfolio:
                     current_price = current_prices.get(ticker)
                     if not current_price:
                         continue
                         
                     current_price_dec = Decimal(str(current_price))
-                    intraday_tp = current_price_dec * (Decimal('1') + tp_thresh_dec)
                     
-                    cost_tp = None
                     avg_price = None
                     position = {}
                     if hasattr(broker, 'get_position'):
@@ -213,19 +216,15 @@ class CBRotationStrategy(BaseStrategy):
                             avg_price = position['avg_price']
                             if isinstance(avg_price, (int, float, str)):
                                 avg_price = Decimal(str(avg_price))
-                            cost_tp = avg_price * (Decimal('1') + tp_thresh_dec)
-                            
-                    tp_price = None
-                    if self.tp_mode == TP_MODE_INTRADAY:
-                        tp_price = intraday_tp
-                    elif self.tp_mode == TP_MODE_POSITION:
-                        tp_price = cost_tp if cost_tp is not None else intraday_tp
-                    elif self.tp_mode == TP_MODE_BOTH:
-                        if cost_tp is not None:
-                            tp_price = min(cost_tp, intraday_tp)
-                        else:
-                            tp_price = intraday_tp
-                        
+                                
+                    avg_cost_dec = avg_price if avg_price is not None else current_price_dec
+                    
+                    tp_price = TakeProfitPolicy.calculate_tp_price(
+                        config=self.tp_config,
+                        avg_cost=avg_cost_dec,
+                        prev_close=current_price_dec
+                    )
+                    
                     if tp_price is not None:
                         # Rely on Broker's SSoT position data for quantity
                         ssot_qty = int(position.get('quantity', 0)) if position else 0
