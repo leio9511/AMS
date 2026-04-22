@@ -3,7 +3,7 @@ from decimal import Decimal
 import pandas as pd
 import numpy as np
 from ams.core.base import BaseStrategy
-from ams.core.order import Order, OrderDirection, OrderType
+from ams.core.order import Order, OrderDirection, OrderType, OrderStatus
 
 
 TP_MODE_POSITION = "position"
@@ -25,6 +25,8 @@ class CBRotationStrategy(BaseStrategy):
         self.reinvest_on_risk_exit = reinvest_on_risk_exit
         self.tp_mode = TakeProfitMode(tp_mode) if isinstance(tp_mode, str) else tp_mode
         self.last_rebalance_date = None
+        self.liquidated_this_cycle = set()
+        self.last_bar_holdings = set()
         
         # Priority: tp_config > take_profit_threshold
         if tp_config is not None:
@@ -75,6 +77,7 @@ class CBRotationStrategy(BaseStrategy):
                         daily_ret = (current_price - prev_close) / prev_close
                         if daily_ret <= self.stop_loss_threshold:
                             stopped_out_tickers.add(ticker)
+                            self.liquidated_this_cycle.add(ticker)
                             return False # Filter out
                 return True
             df = df[df.apply(check_stop_loss, axis=1)]
@@ -112,8 +115,17 @@ class CBRotationStrategy(BaseStrategy):
             else:
                 is_rebalance_day = True
 
+        if is_rebalance_day:
+            self.liquidated_this_cycle.clear()
+
         target_portfolio = {}
+        current_holdings = getattr(context, 'holdings', [])
         
+        # Detect liquidations (TP or external) from previous bar
+        for ticker in self.last_bar_holdings:
+            if ticker not in current_holdings:
+                self.liquidated_this_cycle.add(ticker)
+
         if is_rebalance_day:
             if current_date is not None:
                 self.last_rebalance_date = current_date
@@ -123,57 +135,70 @@ class CBRotationStrategy(BaseStrategy):
         else:
             # Not a rebalance day
             # If we don't reinvest on risk exit, we just keep current holdings minus stopped out ones
-            current_holdings = getattr(context, 'holdings', [])
-            if not self.reinvest_on_risk_exit:
-                for ticker in current_holdings:
-                    if ticker not in stopped_out_tickers:
-                        # Keep the same weight roughly (or we just maintain positions)
-                        target_portfolio[ticker] = self.weight_per_position
-            else:
-                # If we reinvest, we might pick new ones up to top_n?
-                # The instructions say: "If weekly and we are stopped out early in the week, 
-                # do not re-enter positions until the scheduled rebalance day (e.g., hold cash)."
-                # So even if reinvest=True, wait... the requirement says: 
-                # "If weekly and we are stopped out early in the week, do not re-enter positions until the scheduled rebalance day (e.g., hold cash)."
-                # This perfectly matches reinvest_on_risk_exit=False.
-                # If reinvest_on_risk_exit=True, maybe it does re-enter? Let's just keep current holdings if not rebalance day.
-                for ticker in current_holdings:
-                    if ticker not in stopped_out_tickers:
-                        target_portfolio[ticker] = self.weight_per_position
-                
-                # If reinvest is True, fill the rest up to top_n
-                if self.reinvest_on_risk_exit:
-                    needed = self.top_n - len(target_portfolio)
-                    if needed > 0:
-                        # pick new ones from df
-                        for ticker in df['ticker']:
-                            if ticker not in target_portfolio:
-                                target_portfolio[ticker] = self.weight_per_position
-                                needed -= 1
-                                if needed == 0:
-                                    break
+            for ticker in current_holdings:
+                if ticker not in stopped_out_tickers:
+                    target_portfolio[ticker] = self.weight_per_position
+            
+            # If reinvest is True, fill the rest up to top_n
+            if self.reinvest_on_risk_exit:
+                needed = self.top_n - len(target_portfolio)
+                if needed > 0:
+                    # pick new ones from df, excluding liquidated ones
+                    for ticker in df['ticker']:
+                        if ticker not in target_portfolio and ticker not in self.liquidated_this_cycle:
+                            target_portfolio[ticker] = self.weight_per_position
+                            needed -= 1
+                            if needed == 0:
+                                break
 
         # Execution using PMS Order generation
         broker = getattr(context, 'broker', None)
         if broker is not None:
             current_prices = getattr(context, 'current_prices', {})
             current_equity = broker.total_equity
-            current_holdings_shares = broker.holdings.copy()
             
+            # Helper to get pending orders
+            pending_buys = {}
+            pending_sells = {}
+            if hasattr(broker, 'order_book'):
+                for o in broker.order_book:
+                    if o.status == OrderStatus.PENDING:
+                        if o.direction == OrderDirection.BUY:
+                            pending_buys[o.ticker] = pending_buys.get(o.ticker, 0) + o.quantity
+                        elif o.direction == OrderDirection.SELL:
+                            pending_sells[o.ticker] = pending_sells.get(o.ticker, 0) + o.quantity
+
+            def get_shares_for_sell(t):
+                # Available to sell: actual holdings minus already pending sells
+                return max(0, broker.holdings.get(t, 0) - pending_sells.get(t, 0))
+
+            def get_shares_for_buy(t):
+                # Expected holdings: actual holdings plus pending buys
+                # Note: We do NOT subtract pending sells here to avoid "masking" TP orders
+                # with immediate re-buys in the same bar.
+                return broker.holdings.get(t, 0) + pending_buys.get(t, 0)
+
+            effective_holdings_tickers = list(broker.holdings.keys())
+            for t in pending_buys:
+                if t not in effective_holdings_tickers:
+                    effective_holdings_tickers.append(t)
+
             # Sell missing or decreased
-            for ticker in list(current_holdings_shares.keys()):
+            for ticker in effective_holdings_tickers:
+                eff_shares_sell = get_shares_for_sell(ticker)
                 if ticker not in target_portfolio:
-                    self.order_target_percent(
-                        broker=broker,
-                        ticker=ticker,
-                        target_percent=0.0,
-                        current_price=current_prices.get(ticker),
-                        current_equity=current_equity,
-                        current_shares=current_holdings_shares[ticker]
-                    )
+                    if eff_shares_sell > 0:
+                        self.order_target_percent(
+                            broker=broker,
+                            ticker=ticker,
+                            target_percent=0.0,
+                            current_price=current_prices.get(ticker),
+                            current_equity=current_equity,
+                            current_shares=eff_shares_sell
+                        )
                 else:
                     target_weight = target_portfolio[ticker]
-                    current_val = current_holdings_shares[ticker] * current_prices.get(ticker, 0)
+                    current_val = eff_shares_sell * current_prices.get(ticker, 0)
                     current_weight = current_val / current_equity if current_equity > 0 else 0
                     if current_weight - target_weight > 0.005:
                         self.order_target_percent(
@@ -182,30 +207,40 @@ class CBRotationStrategy(BaseStrategy):
                             target_percent=target_weight,
                             current_price=current_prices.get(ticker),
                             current_equity=current_equity,
-                            current_shares=current_holdings_shares[ticker]
+                            current_shares=eff_shares_sell
                         )
                         
             # Buy new or increased
             for ticker, target_weight in target_portfolio.items():
-                current_shares = current_holdings_shares.get(ticker, 0)
-                current_val = current_shares * current_prices.get(ticker, 0)
+                eff_shares_buy = get_shares_for_buy(ticker)
+                current_val = eff_shares_buy * current_prices.get(ticker, 0)
                 current_weight = current_val / current_equity if current_equity > 0 else 0
                 
                 if target_weight - current_weight > 0.005:
-                    buy_order = self.order_target_percent(
+                    self.order_target_percent(
                         broker=broker,
                         ticker=ticker,
                         target_percent=target_weight,
                         current_price=current_prices.get(ticker),
                         current_equity=current_equity,
-                        current_shares=current_shares
+                        current_shares=eff_shares_buy
                     )
-                    
-                    pass
 
             # Take Profit Mechanism
             if hasattr(self, 'tp_config') and self.tp_config is not None:
+                # Get all pending SELL orders once to avoid redundant loops
+                pending_sells = []
+                if hasattr(broker, 'order_book'):
+                    pending_sells = [
+                        o for o in broker.order_book 
+                        if o.status == OrderStatus.PENDING and o.direction == OrderDirection.SELL
+                    ]
+
                 for ticker in target_portfolio:
+                    # Deduplication: If a TP (LIMIT SELL) order is already pending for this ticker, skip
+                    if any(o.ticker == ticker and o.order_type == OrderType.LIMIT for o in pending_sells):
+                        continue
+
                     current_price = current_prices.get(ticker)
                     if not current_price:
                         continue
@@ -231,6 +266,8 @@ class CBRotationStrategy(BaseStrategy):
                     
                     if tp_price is not None:
                         # Rely on Broker's SSoT position data for quantity
+                        # Note: get_position already accounts for pending orders.
+                        # If a rebalance SELL order was just submitted, ssot_qty will be 0.
                         ssot_qty = int(position.get('quantity', 0)) if position else 0
                         
                         if ssot_qty > 0:
@@ -244,4 +281,5 @@ class CBRotationStrategy(BaseStrategy):
                             )
                             broker.submit_order(tp_order)
 
+        self.last_bar_holdings = set(current_holdings)
         return target_portfolio

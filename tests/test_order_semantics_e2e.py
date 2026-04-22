@@ -112,3 +112,171 @@ def test_tp_mode_both_validation():
         with pytest.raises(ValueError) as exc:
             main_runner.main()
         assert "ERROR: --tp-mode 'both' requires both --tp-pos and --tp-intra to be set." in str(exc.value)
+
+def test_tp_order_deduplication():
+    # Scenario: Strategy should not submit duplicate TP orders if one is already PENDING
+    data_path = "/root/projects/AMS/tests/fixtures/fixture_tp_trigger.csv"
+    data_feed = HistoryDataFeed(file_path=data_path)
+    broker = SimBroker(initial_cash=100000.0, slippage=0.0)
+    
+    # Pre-populate with position
+    broker.submit_order(Order(
+        ticker="TEST01", direction=OrderDirection.BUY, quantity=100,
+        order_type=OrderType.MARKET, limit_price=100.0
+    ))
+    
+    tp_config = TakeProfitConfig(mode=TakeProfitMode.POSITION, pos_threshold=Decimal('0.10'))
+    strategy = CBRotationStrategy(
+        top_n=1, tp_mode='position', tp_config=tp_config,
+        rebalance_period='daily', liquidity_threshold=0
+    )
+    
+    runner = BacktestRunner(data_feed, broker, strategy)
+    
+    # Run for 3 bars. On Day 1, TP should be created. 
+    # On Day 2, TP is still PENDING (High 110.0 == TP 110.0, but let's assume it doesn't match for this test 
+    # or we use a higher threshold).
+    # Actually fixture_tp_trigger.csv Day 2 High is 110.0. 
+    # Let's use 20% threshold so it doesn't trigger.
+    strategy.tp_config = TakeProfitConfig(mode=TakeProfitMode.POSITION, pos_threshold=Decimal('0.20')) # TP Price = 120.0
+    
+    runner.run("2026-01-01", "2026-01-03")
+    
+    tp_orders = [o for o in broker.order_book if o.direction == OrderDirection.SELL and o.limit_price == 120.0]
+    # Current behavior: Every bar (Day 1, 2, 3) a new TP order is submitted. Total 3.
+    # Desired behavior: Only 1 TP order is submitted and remains PENDING until it expires or fills.
+    # Wait, in daily rebalance, it expires every day.
+    # Bar 1: TP1 created.
+    # Bar 2: match_orders (no fill), then TP1 expires. strategy.generate creates TP2.
+    # So for daily, deduplication is less obvious if they expire.
+    
+    # But if we use a broker that doesn't expire orders, or within the SAME bar...
+    # Actually, generate_target_portfolio is called once per bar.
+    # The duplicate issue is most likely within the SAME bar if get_position() is confused, 
+    # or across bars if orders DON'T expire.
+    
+    # If they DO expire, we still should only have ONE PENDING order at any given time.
+    pending_tp = [o for o in broker.order_book if o.direction == OrderDirection.SELL and o.status == OrderStatus.PENDING]
+    assert len(pending_tp) <= 1, f"Should have at most 1 pending TP order, found {len(pending_tp)}"
+
+def test_tp_order_deduplication_same_bar():
+    # Scenario: Multiple calls to strategy in same bar should not duplicate TP orders
+    data_path = "/root/projects/AMS/tests/fixtures/fixture_tp_trigger.csv"
+    data_feed = HistoryDataFeed(file_path=data_path)
+    broker = SimBroker(initial_cash=100000.0, slippage=0.0)
+    
+    broker.submit_order(Order(
+        ticker="TEST01", direction=OrderDirection.BUY, quantity=100,
+        order_type=OrderType.MARKET, limit_price=100.0
+    ))
+    
+    tp_config = TakeProfitConfig(mode=TakeProfitMode.POSITION, pos_threshold=Decimal('0.10'))
+    strategy = CBRotationStrategy(
+        top_n=1, tp_mode='position', tp_config=tp_config,
+        rebalance_period='daily', liquidity_threshold=0
+    )
+    
+    # Manually run one bar
+    date = pd.to_datetime("2026-01-01")
+    data_slice = data_feed.get_data(None, date)
+    
+    daily_data = {"TEST01": {"high": 100.0, "close": 100.0, "low": 100.0, "open": 100.0}}
+    broker.match_orders(daily_data, current_date="2026-01-01")
+    
+    class Context:
+        pass
+    context = Context()
+    context.broker = broker
+    context.holdings = list(broker.holdings.keys())
+    context.current_prices = {"TEST01": 100.0}
+    context.current_date = date
+    
+    # Call strategy twice
+    strategy.generate_target_portfolio(context, data_slice)
+    strategy.generate_target_portfolio(context, data_slice)
+    
+    tp_orders = [o for o in broker.order_book if o.direction == OrderDirection.SELL and o.order_type == OrderType.LIMIT]
+    assert len(tp_orders) == 1, f"Should have only 1 TP order, found {len(tp_orders)}"
+
+def test_weekly_rebalance_does_not_mask_midweek_take_profit():
+    # Scenario: TP triggers on Tuesday, Friday rebalance sees 0 position and handles it gracefully.
+    data_path = "/root/projects/AMS/tests/fixtures/fixture_weekly_tp_rebalance.csv"
+    data_feed = HistoryDataFeed(file_path=data_path)
+    broker = SimBroker(initial_cash=100000.0, slippage=0.0)
+    
+    tp_config = TakeProfitConfig(mode=TakeProfitMode.POSITION, pos_threshold=Decimal('0.05'))
+    strategy = CBRotationStrategy(
+        top_n=1, tp_mode='position', tp_config=tp_config,
+        rebalance_period='weekly', liquidity_threshold=0
+    )
+    
+    runner = BacktestRunner(data_feed, broker, strategy)
+    
+    # Monday 2026-01-05 to Friday 2026-01-09
+    runner.run("2026-01-05", "2026-01-09")
+    
+    # 2026-01-05 (Mon): Rebalance day. TEST01 bought. TP created at 105.0.
+    # 2026-01-06 (Tue): TP triggers (High 110.0). TEST01 sold.
+    # 2026-01-09 (Fri): Rebalance day. TEST02 is now better. 
+    # Strategy should NOT try to sell TEST01 again if it's already gone.
+    
+    sell_orders_test01 = [o for o in broker.order_book if o.ticker == "TEST01" and o.direction == OrderDirection.SELL]
+    
+    # One TP order (Filled)
+    # Potentially one rebalance sell order (should be avoided or skipped)
+    
+    filled_tp = [o for o in sell_orders_test01 if o.status == OrderStatus.FILLED]
+    assert len(filled_tp) == 1, "TEST01 should be sold via TP"
+    
+    # Check if there's any other SELL order for TEST01 that was created on Friday
+    friday_sells = [o for o in sell_orders_test01 if o.effective_date == "2026-01-09"]
+    assert len(friday_sells) == 0, "Should not submit a redundant sell order on Friday rebalance if already sold via TP"
+
+def test_tp_and_rebalance_do_not_double_sell_position():
+    # Scenario: If a TP order is pending, rebalance should not submit a second sell order for the same shares
+    data_path = "/root/projects/AMS/tests/fixtures/fixture_tp_trigger.csv"
+    data_feed = HistoryDataFeed(file_path=data_path)
+    broker = SimBroker(initial_cash=100000.0, slippage=0.0)
+    
+    # Pre-populate with 100 shares
+    broker.submit_order(Order(
+        ticker="TEST01", direction=OrderDirection.BUY, quantity=100,
+        order_type=OrderType.MARKET, limit_price=100.0
+    ))
+    
+    tp_config = TakeProfitConfig(mode=TakeProfitMode.POSITION, pos_threshold=Decimal('0.20')) # Price 120
+    strategy = CBRotationStrategy(
+        top_n=1, tp_mode='position', tp_config=tp_config,
+        rebalance_period='daily', liquidity_threshold=0,
+        weight_per_position=1.0 # 100% of capital
+    )
+    
+    runner = BacktestRunner(data_feed, broker, strategy)
+    
+    # Day 1: Buy filled. TP created (PENDING).
+    runner.run("2026-01-01", "2026-01-01")
+    
+    pending_tp = [o for o in broker.order_book if o.status == OrderStatus.PENDING and o.direction == OrderDirection.SELL]
+    assert len(pending_tp) == 1
+    
+    # Manually make the TP order persist to Day 2
+    pending_tp[0].effective_date = "2026-01-02"
+    
+    # Force strategy to sell TEST01 on Day 2 by setting top_n=0
+    strategy.top_n = 0
+    
+    # Run Day 2
+    runner.run("2026-01-02", "2026-01-02")
+    
+    all_sells = [o for o in broker.order_book if o.ticker == "TEST01" and o.direction == OrderDirection.SELL]
+    # We expect:
+    # 1. The original TP order (still PENDING or FILLED/CANCELED)
+    # 2. NO NEW MARKET SELL order if we account for the pending TP order.
+    # OR, if we wanted to replace it, the TP order should have been canceled.
+    
+    # If the strategy uses Raw Holdings (100), it will submit a MARKET SELL 100.
+    # Then we have 2 sell orders.
+    
+    market_sells = [o for o in all_sells if o.order_type == OrderType.MARKET]
+    assert len(market_sells) == 0, "Should not submit a Market Sell for rebalance if a TP Sell is already pending for all shares"
+
