@@ -27,6 +27,29 @@ def test_cli_help_output():
     assert "--sl" in result.stdout
     assert "--format" in result.stdout
 
+def test_main_runner_default_data_path():
+    result = subprocess.run([sys.executable, "main_runner.py", "--help"], capture_output=True, text=True)
+    expected_default = "/root/.openclaw/workspace/data/cb_history_factors.csv"
+    assert expected_default in result.stdout
+
+def test_main_runner_argument_default():
+    test_args = ["main_runner.py", "--strategy", "cb_rotation", "--start-date", "2025-01-01", 
+                 "--end-date", "2025-01-31", "--capital", "4000000", "--top-n", "20", 
+                 "--rebalance", "daily", "--tp-mode", "position", "--tp-pos", "0.20", 
+                 "--sl", "-0.08"]
+    
+    with patch("sys.argv", test_args), \
+         patch("main_runner.HistoryDataFeed") as mock_data_feed, \
+         patch("main_runner.SimBroker"), \
+         patch("main_runner.StrategyFactory.create_strategy"), \
+         patch("main_runner.BacktestRunner"), \
+         patch("main_runner.reporting.generate_report_data"):
+        main_runner.main()
+        
+        mock_data_feed.assert_called_once()
+        call_args = mock_data_feed.call_args
+        assert call_args.kwargs['file_path'] == "/root/.openclaw/workspace/data/cb_history_factors.csv"
+
 def test_cli_tp_mode_validation():
     test_args = ["main_runner.py", "--strategy", "cb_rotation", "--start-date", "2025-01-01", 
                  "--end-date", "2025-01-31", "--capital", "4000000", "--top-n", "20", 
