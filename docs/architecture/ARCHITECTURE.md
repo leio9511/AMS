@@ -52,6 +52,7 @@ Before any ETL script (e.g., fetching historical quotes) saves data to disk, it 
 ## 3. Strict Point-in-Time (PiT) Adherence
 To prevent **Look-ahead Bias (未来函数)**, historical data must strictly reflect what was knowable at that exact second in history.
 - Example: A Convertible Bond's `is_redeemed` status must be triggered by its `pub_date` (Announcement Date), not its `delisting_date` (which is known weeks in advance).
+
 ## 4. Directory Definitions
 
 To maintain architectural integrity, the repository strictly adheres to the following directory responsibilities:
@@ -60,3 +61,38 @@ To maintain architectural integrity, the repository strictly adheres to the foll
 - `etl/`: Data acquisition and processing pipelines (Production). All ETL scripts reside here.
 - `data/`: Standardized CSV datasets.
 - `scripts/`: Legacy 1.0 scripts and experimental tools (Deprecated).
+
+## 5. Validation Strategy & Quant QA
+
+AMS is not validated by static code correctness alone. A backtesting system can appear operational while silently drifting in execution logic, parameter mapping, reporting, or data handling. For that reason, AMS adopts layered validation.
+
+### 5.1 Validation Layers
+1. **Data Contract Validation**
+   - Validate schema, nullability, price ranges, and required fields before datasets are accepted.
+   - Purpose: block corrupted or structurally invalid datasets from entering research or regression flows.
+
+2. **Smoke Test**
+   - A real, no-mock execution of the primary CLI path (`main_runner.py`) against a small fixture dataset.
+   - Purpose: ensure the unified entrypoint is truly executable, with correct parameter routing across CLI, strategy, runner, broker, and reporting.
+
+3. **Golden Regression Test**
+   - Run a fixed strategy on a fixed golden dataset and compare against stable expected outputs or checkpoints.
+   - Purpose: detect silent drift in execution logic, financial metrics, or reporting output.
+
+4. **Research Validation**
+   - Walk-forward / out-of-sample validation for strategy robustness.
+   - Purpose: reduce overfitting and verify that an edge survives beyond a single historical regime.
+
+### 5.2 Canonical Paths
+The canonical AMS runtime paths are:
+- Code root: `/root/projects/AMS`
+- Historical CB dataset: `/root/projects/AMS/data/cb_history_factors.csv`
+
+Production backtests and formal validation should use these canonical paths unless a fixture-based test explicitly overrides them.
+
+### 5.3 Release Gate Before Live QMT
+Before entering Phase 2 (Live QMT Integration), AMS must satisfy:
+- The unified CLI backtest path is operational.
+- A real smoke test passes.
+- At least one strategy (`cb_rotation`) has a golden regression baseline.
+- Validation framework requirements are documented and enforced in preflight/CI.
