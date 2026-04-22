@@ -45,7 +45,7 @@ def main():
         tp_config = TakeProfitConfig(mode=mode, pos_threshold=pos_thresh, intra_threshold=intra_thresh)
 
     # 2. Data Layer
-    data_feed = HistoryDataFeed(file_path="data/cb_history_factors.csv")
+    data_feed = HistoryDataFeed(file_path="/root/projects/AMS/data/cb_history_factors.csv")
 
     # 3. Broker Layer
     broker = SimBroker(initial_cash=args.capital)
@@ -55,8 +55,8 @@ def main():
         strategy = StrategyFactory.create_strategy(
             args.strategy,
             top_n=args.top_n,
-            rebalance=args.rebalance,
-            sl=args.sl,
+            rebalance_period=args.rebalance,
+            stop_loss_threshold=args.sl,
             tp_mode=args.tp_mode,
             tp_config=tp_config
         )

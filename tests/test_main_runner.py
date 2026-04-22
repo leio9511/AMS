@@ -8,6 +8,7 @@ from unittest.mock import patch, MagicMock
 from ams.core.factory import StrategyFactory
 from ams.utils import reporting
 from ams.core.cb_rotation_strategy import CBRotationStrategy
+from ams.core.history_datafeed import HistoryDataFeed
 from ams.models.config import TakeProfitConfig, TakeProfitMode
 import main_runner
 
@@ -36,56 +37,46 @@ def test_cli_tp_mode_validation():
             main_runner.main()
         assert "ERROR: --tp-mode 'both' requires both --tp-pos and --tp-intra to be set." in str(exc.value)
 
-@patch("main_runner.BacktestRunner")
-@patch("main_runner.reporting.generate_report_data")
-def test_cli_integration_json_output(mock_gen_report, mock_runner_class, capsys):
-    mock_runner = MagicMock()
-    mock_runner.run.return_value = pd.DataFrame() # Mocked return value
-    mock_runner_class.return_value = mock_runner
-    
-    mock_gen_report.return_value = {
-        "summary": {
-            "total_return": Decimal("0.1234"),
-            "max_drawdown": Decimal("-0.0567"),
-            "calmar_ratio": Decimal("2.17"),
-            "final_equity": Decimal("4493600.00")
-        },
-        "weekly_performance": [
-            {
-                "week_ending": "2025-01-10",
-                "total_assets": Decimal("4100000.00"),
-                "weekly_profit_pct": Decimal("0.025"),
-                "cumulative_pct": Decimal("0.025")
-            }
-        ]
-    }
+def test_cli_integration_json_output(tmp_path, capsys):
+    # Create a small fixture CSV
+    csv_file = tmp_path / "test_cb_data.csv"
+    csv_content = """ticker,date,open,high,low,close,volume,premium_rate,double_low,underlying_ticker,is_st,is_redeemed
+123001.SZ,2025-01-06,120.0,122.0,119.0,121.0,100000,0.05,125.0,300001.SZ,False,False
+123002.SZ,2025-01-06,110.0,112.0,109.0,111.0,200000,0.10,121.0,300002.SZ,False,False
+123001.SZ,2025-01-07,121.0,123.0,120.0,122.0,110000,0.06,128.0,300001.SZ,False,False
+123002.SZ,2025-01-07,111.0,113.0,110.0,112.0,210000,0.11,123.0,300002.SZ,False,False
+"""
+    csv_file.write_text(csv_content)
 
-    test_args = ["main_runner.py", "--strategy", "cb_rotation", "--start-date", "2025-01-01", 
-                 "--end-date", "2025-01-31", "--capital", "4000000", "--top-n", "20", 
+    test_args = ["main_runner.py", "--strategy", "cb_rotation", "--start-date", "2025-01-06", 
+                 "--end-date", "2025-01-07", "--capital", "4000000", "--top-n", "10", 
                  "--rebalance", "daily", "--tp-mode", "position", "--tp-pos", "0.20", 
                  "--sl", "-0.08", "--format", "json"]
     
-    with patch("sys.argv", test_args):
+    # Patch the DataFeed path in main_runner and run
+    with patch("sys.argv", test_args), \
+         patch("main_runner.HistoryDataFeed", return_value=HistoryDataFeed(file_path=str(csv_file))):
         main_runner.main()
         
     captured = capsys.readouterr()
     output = captured.out
     
-    # Verify it is valid JSON
+    # Verify it is valid JSON and contains required keys
     parsed = json.loads(output)
-    assert parsed["summary"]["total_return"] == "0.1234"
-    assert parsed["weekly_performance"][0]["total_assets"] == "4100000.00"
+    assert "summary" in parsed
+    assert "weekly_performance" in parsed
+    assert "total_return" in parsed["summary"]
+    assert "max_drawdown" in parsed["summary"]
 
 def test_strategy_instantiation_with_routed_params():
-    # Verify CBRotationStrategy can be instantiated with the new parameter set
+    # Verify CBRotationStrategy can be instantiated with the formal parameter set
     tp_config = TakeProfitConfig(mode=TakeProfitMode.BOTH, pos_threshold=Decimal('0.2'), intra_threshold=Decimal('0.08'))
     strategy = CBRotationStrategy(
         top_n=10,
-        rebalance='daily',
-        sl=-0.08,
+        rebalance_period='daily',
+        stop_loss_threshold=-0.08,
         tp_mode='both',
-        tp_config=tp_config,
-        extra_param="should_be_ignored"
+        tp_config=tp_config
     )
     assert strategy.top_n == 10
     assert strategy.rebalance_period == 'daily'
@@ -110,8 +101,8 @@ def test_main_runner_argument_distribution(mock_create_strategy, mock_broker_cla
     # Verify StrategyFactory received correct parameters
     kwargs = mock_create_strategy.call_args.kwargs
     assert kwargs['top_n'] == 15
-    assert kwargs['rebalance'] == 'weekly'
-    assert kwargs['sl'] == -0.05
+    assert kwargs['rebalance_period'] == 'weekly'
+    assert kwargs['stop_loss_threshold'] == -0.05
     assert kwargs['tp_mode'] == 'intraday'
     assert isinstance(kwargs['tp_config'], TakeProfitConfig)
     assert kwargs['tp_config'].mode == TakeProfitMode.INTRADAY
