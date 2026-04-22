@@ -1,8 +1,13 @@
 import argparse
 import sys
 import logging
+from decimal import Decimal
 from ams.core.factory import StrategyFactory
 from ams.utils import reporting
+from ams.core.history_datafeed import HistoryDataFeed
+from ams.core.sim_broker import SimBroker
+from ams.runners.backtest_runner import BacktestRunner
+from ams.models.config import TakeProfitConfig, TakeProfitMode
 
 # Ensure cb_rotation is registered
 from ams.core.cb_rotation_strategy import CBRotationStrategy
@@ -27,48 +32,47 @@ def main():
     args = parser.parse_args()
 
     # Parameter Validation
-    # "if --tp-mode requires both --tp-pos and --tp-intra, it raises a ValueError with the exact message"
-    # To pass test_cli_tp_mode_validation, we check if tp_mode requires both. As per test and PRD, 'both' mode triggers this message. 
-    # Also if 'both' requires both, what if it's 'position' but tp_intra is not passed? 
-    # Let's just raise it if either tp_pos or tp_intra is missing and the mode requires them.
-    # Wait, the exact ValueError is: "ERROR: --tp-mode '{tp_mode}' requires both --tp-pos and --tp-intra to be set."
-    # Since the requirement says "if --tp-mode requires both --tp-pos and --tp-intra", it specifically means when mode is 'both'.
-    
-    # Wait, let's just make it if it's both but missing either
     if args.tp_mode == 'both':
         if args.tp_pos is None or args.tp_intra is None:
             raise ValueError(f"ERROR: --tp-mode '{args.tp_mode}' requires both --tp-pos and --tp-intra to be set.")
 
-    # Instantiate strategy
+    # 1. TakeProfitConfig Construction
+    tp_config = None
+    if args.tp_mode:
+        mode = TakeProfitMode(args.tp_mode)
+        pos_thresh = Decimal(str(args.tp_pos)) if args.tp_pos is not None else None
+        intra_thresh = Decimal(str(args.tp_intra)) if args.tp_intra is not None else None
+        tp_config = TakeProfitConfig(mode=mode, pos_threshold=pos_thresh, intra_threshold=intra_thresh)
+
+    # 2. Data Layer
+    data_feed = HistoryDataFeed(file_path="data/cb_history_factors.csv")
+
+    # 3. Broker Layer
+    broker = SimBroker(initial_cash=args.capital)
+
+    # 4. Strategy Layer
     try:
         strategy = StrategyFactory.create_strategy(
             args.strategy,
-            start_date=args.start_date,
-            end_date=args.end_date,
-            capital=args.capital,
             top_n=args.top_n,
             rebalance=args.rebalance,
+            sl=args.sl,
             tp_mode=args.tp_mode,
-            tp_pos=args.tp_pos,
-            tp_intra=args.tp_intra,
-            sl=args.sl
+            tp_config=tp_config
         )
     except ValueError as e:
         if "not found in registry" in str(e):
             raise
         else:
             raise
+
+    # 5. Runner Layer
+    runner = BacktestRunner(data_feed, broker, strategy)
+    
+    # 6. Execution
+    df_equity = runner.run(args.start_date, args.end_date)
+    report_data = reporting.generate_report_data(df_equity, args.capital)
             
-    # Assuming the strategy has a run() method that returns the report data
-    if hasattr(strategy, 'run'):
-        report_data = strategy.run()
-    else:
-        # Fallback for strategies that don't have run() yet
-        report_data = {
-            "summary": {},
-            "weekly_performance": []
-        }
-        
     if args.format == 'json':
         print(reporting.format_json(report_data))
     else:

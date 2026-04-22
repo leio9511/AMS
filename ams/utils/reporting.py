@@ -1,4 +1,5 @@
 import json
+import pandas as pd
 from decimal import Decimal
 from typing import Any, Dict
 
@@ -7,6 +8,59 @@ class DecimalEncoder(json.JSONEncoder):
         if isinstance(o, Decimal):
             return str(o)
         return super().default(o)
+
+def generate_report_data(df_equity: pd.DataFrame, initial_cash: float) -> Dict[str, Any]:
+    """
+    Convert equity curve DataFrame into a standardized report structure.
+    """
+    if df_equity.empty:
+        return {"summary": {}, "weekly_performance": []}
+        
+    df = df_equity.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df.set_index('date', inplace=True)
+    
+    # Summary calculation
+    initial_val = Decimal(str(initial_cash))
+    final_val = Decimal(str(df['equity'].iloc[-1]))
+    total_return = (final_val - initial_val) / initial_val
+    
+    df['hwm'] = df['equity'].cummax()
+    df['drawdown'] = (df['equity'] - df['hwm']) / df['hwm']
+    max_dd = Decimal(str(df['drawdown'].min()))
+    
+    calmar = total_return / abs(max_dd) if max_dd != 0 else Decimal('0')
+    
+    summary = {
+        "total_return": total_return,
+        "max_drawdown": max_dd,
+        "calmar_ratio": calmar,
+        "final_equity": final_val
+    }
+    
+    # Weekly Performance (Resampled to Friday)
+    weekly_series = df['equity'].resample('W-FRI').last().dropna()
+    
+    weekly_perf = []
+    prev_equity = initial_val
+    
+    for date, equity in weekly_series.items():
+        curr_equity = Decimal(str(equity))
+        weekly_profit_pct = (curr_equity - prev_equity) / prev_equity
+        cumulative_pct = (curr_equity - initial_val) / initial_val
+        
+        weekly_perf.append({
+            "week_ending": str(date.date()),
+            "total_assets": curr_equity,
+            "weekly_profit_pct": weekly_profit_pct,
+            "cumulative_pct": cumulative_pct
+        })
+        prev_equity = curr_equity
+        
+    return {
+        "summary": summary,
+        "weekly_performance": weekly_perf
+    }
 
 def format_json(report_data: Dict[str, Any]) -> str:
     """

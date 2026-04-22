@@ -15,17 +15,24 @@ class CBRotationStrategy(BaseStrategy):
     def __init__(self, top_n=20, liquidity_threshold=10000000, weight_per_position=0.05, 
                  stop_loss_threshold=-0.08, take_profit_threshold=None,
                  rebalance_period='daily', reinvest_on_risk_exit=True,
-                 tp_mode=TP_MODE_POSITION):
+                 tp_mode=TP_MODE_POSITION, tp_config=None, **kwargs):
         self.top_n = top_n
         self.liquidity_threshold = liquidity_threshold
         self.weight_per_position = weight_per_position
-        self.stop_loss_threshold = stop_loss_threshold
+        
+        # Mapping from CLI arguments if provided via kwargs
+        self.stop_loss_threshold = kwargs.get('sl', stop_loss_threshold)
+        self.rebalance_period = kwargs.get('rebalance', rebalance_period)
+        
         self.take_profit_threshold = take_profit_threshold
-        self.rebalance_period = rebalance_period
         self.reinvest_on_risk_exit = reinvest_on_risk_exit
         self.tp_mode = TakeProfitMode(tp_mode) if isinstance(tp_mode, str) else tp_mode
         self.last_rebalance_date = None
-        if self.take_profit_threshold is not None:
+        
+        # Priority: tp_config > take_profit_threshold
+        if tp_config is not None:
+            self.tp_config = tp_config
+        elif self.take_profit_threshold is not None:
             thresh = Decimal(str(self.take_profit_threshold))
             self.tp_config = TakeProfitConfig(mode=self.tp_mode, pos_threshold=thresh, intra_threshold=thresh)
         else:
