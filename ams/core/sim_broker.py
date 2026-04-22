@@ -38,6 +38,20 @@ class SimBroker(BaseBroker):
     def get_position(self, ticker: str) -> dict:
         qty = self.holdings.get(ticker, 0)
         avg = self.avg_prices.get(ticker, Decimal('0.00'))
+        
+        # Account for pending orders to allow same-day TP creation alongside buy orders
+        for order in self.order_book:
+            if order.ticker == ticker and order.status == OrderStatus.PENDING:
+                if order.direction == OrderDirection.BUY:
+                    order_price = Decimal(str(order.limit_price))
+                    if qty == 0:
+                        avg = order_price
+                    else:
+                        avg = (avg * Decimal(str(qty)) + order_price * Decimal(str(order.quantity))) / Decimal(str(qty + order.quantity))
+                    qty += order.quantity
+                elif order.direction == OrderDirection.SELL:
+                    qty -= order.quantity
+                    
         return {
             "ticker": ticker,
             "quantity": qty,
@@ -58,7 +72,8 @@ class SimBroker(BaseBroker):
                     order.status = OrderStatus.CANCELED
 
     def match_orders(self, bar_data: dict, current_date: str = None):
-        self._expire_old_orders(current_date)
+        # Matching happens BEFORE expiration to allow orders created on Day N 
+        # to match with Day N+1 data before being canceled.
         
         for order in self.order_book:
             if order.status != OrderStatus.PENDING:
@@ -126,6 +141,9 @@ class SimBroker(BaseBroker):
                         order.status = OrderStatus.FILLED
                     else:
                         order.status = OrderStatus.REJECTED
+
+        # Expire old orders AFTER matching
+        self._expire_old_orders(current_date)
 
     def update_equity(self, current_prices: dict):
         # Update last prices

@@ -1,0 +1,4 @@
+ticker,date,open,high,low,close,volume,premium_rate,double_low,underlying_ticker,is_st,is_redeemed
+TEST01,2026-01-01,100.0,100.0,100.0,100.0,1000,0.1,110.0,600000.XSHG,False,False
+TEST01,2026-01-02,100.0,110.0,100.0,105.0,1000,0.1,115.0,600000.XSHG,False,False
+TEST01,2026-01-03,105.0,105.0,105.0,105.0,1000,0.1,115.0,600000.XSHG,False,False

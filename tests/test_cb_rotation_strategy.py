@@ -109,8 +109,7 @@ def test_take_profit_limit_order_generation():
     assert sell_order.order_type == OrderType.LIMIT
     import math
     assert math.isclose(sell_order.limit_price, 110.0) # 100 * 1.1
-    assert sell_order.quantity == 20 # SSoT quantity
-
+    assert sell_order.quantity == 50 # SSoT quantity (20 existing + 30 pending)
 def test_weekly_rebalance_sleep():
     strategy = CBRotationStrategy(top_n=1, rebalance_period='weekly', reinvest_on_risk_exit=False)
     broker = SimBroker(initial_cash=100000.0)

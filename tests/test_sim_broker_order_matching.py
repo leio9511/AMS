@@ -88,12 +88,12 @@ def test_automatic_order_expiry():
     
     bar_data = {
         "AAPL": {
-            "high": 112.0,
+            "high": 109.0, # Does not hit 110.0
             "close": 105.0
         }
     }
     
-    # Process on next day
+    # Process on next day. Should not match, then should be canceled by _expire_old_orders.
     broker.match_orders(bar_data, current_date="2023-01-02")
     
     assert order.status == OrderStatus.CANCELED

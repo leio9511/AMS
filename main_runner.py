@@ -38,7 +38,8 @@ def main():
     # Parameter Validation
     if args.tp_mode == 'both':
         if args.tp_pos is None or args.tp_intra is None:
-            raise ValueError(f"ERROR: --tp-mode '{args.tp_mode}' requires both --tp-pos and --tp-intra to be set.")
+            tp_mode = args.tp_mode
+            raise ValueError(f"ERROR: --tp-mode '{tp_mode}' requires both --tp-pos and --tp-intra to be set.")
 
     # 1. TakeProfitConfig Construction
     tp_config = None
