@@ -16,7 +16,10 @@ StrategyFactory.register_strategy('cb_rotation')(CBRotationStrategy)
 logger = logging.getLogger(__name__)
 
 def main():
-    parser = argparse.ArgumentParser(description="Standardized Unified Backtest Entrypoint")
+    parser = argparse.ArgumentParser(
+        description="Standardized Unified Backtest Entrypoint",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     parser.add_argument('--strategy', required=True, help="The identifier of the strategy to run (supported: 'cb_rotation').")
     parser.add_argument('--start-date', required=True, help="Backtest start date in YYYY-MM-DD format.")
     parser.add_argument('--end-date', required=True, help="Backtest end date in YYYY-MM-DD format.")
@@ -27,6 +30,7 @@ def main():
     parser.add_argument('--tp-pos', type=float, help="Threshold for cost-basis take-profit (e.g., 0.20).")
     parser.add_argument('--tp-intra', type=float, help="Threshold for intraday momentum take-profit (e.g., 0.08).")
     parser.add_argument('--sl', required=True, type=float, help="Threshold for intraday stop-loss (e.g., -0.08).")
+    parser.add_argument('--data-path', default="/root/projects/AMS/data/cb_history_factors.csv", help="Path to the historical data CSV file.")
     parser.add_argument('--format', choices=['text', 'json'], default='text', help="Output format ('text' or 'json'). Default: 'text'.")
 
     args = parser.parse_args()
@@ -45,26 +49,20 @@ def main():
         tp_config = TakeProfitConfig(mode=mode, pos_threshold=pos_thresh, intra_threshold=intra_thresh)
 
     # 2. Data Layer
-    data_feed = HistoryDataFeed(file_path="/root/projects/AMS/data/cb_history_factors.csv")
+    data_feed = HistoryDataFeed(file_path=args.data_path)
 
     # 3. Broker Layer
     broker = SimBroker(initial_cash=args.capital)
 
     # 4. Strategy Layer
-    try:
-        strategy = StrategyFactory.create_strategy(
-            args.strategy,
-            top_n=args.top_n,
-            rebalance_period=args.rebalance,
-            stop_loss_threshold=args.sl,
-            tp_mode=args.tp_mode,
-            tp_config=tp_config
-        )
-    except ValueError as e:
-        if "not found in registry" in str(e):
-            raise
-        else:
-            raise
+    strategy = StrategyFactory.create_strategy(
+        args.strategy,
+        top_n=args.top_n,
+        rebalance_period=args.rebalance,
+        stop_loss_threshold=args.sl,
+        tp_mode=args.tp_mode,
+        tp_config=tp_config
+    )
 
     # 5. Runner Layer
     runner = BacktestRunner(data_feed, broker, strategy)
@@ -79,4 +77,11 @@ def main():
         print(reporting.format_text(report_data))
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        logger.exception("An unexpected error occurred during backtest execution.")
+        sys.exit(1)
