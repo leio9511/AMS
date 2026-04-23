@@ -65,8 +65,15 @@ class CBRotationStrategy(BaseStrategy):
             df = df[~df['is_st']]
 
         stopped_out_tickers = set()
-        current_holdings = getattr(context, 'holdings', [])
+        current_holdings = list(getattr(context, 'holdings', []))
         broker = getattr(context, 'broker', None)
+        
+        if broker is not None and hasattr(broker, 'order_book'):
+            for o in broker.order_book:
+                if o.status == OrderStatus.PENDING and o.direction == OrderDirection.BUY:
+                    if o.ticker not in current_holdings:
+                        current_holdings.append(o.ticker)
+
         current_date = getattr(context, 'current_date', None)
         current_date_str = str(current_date.date()) if hasattr(current_date, 'date') else str(current_date) if current_date else None
         current_prices = getattr(context, 'current_prices', {})
@@ -218,7 +225,7 @@ class CBRotationStrategy(BaseStrategy):
                 current_weight = current_val / current_equity if current_equity > 0 else 0
                 
                 if target_weight - current_weight > 0.005:
-                    self.order_target_percent(
+                    order = self.order_target_percent(
                         broker=broker,
                         ticker=ticker,
                         target_percent=target_weight,
@@ -226,6 +233,8 @@ class CBRotationStrategy(BaseStrategy):
                         current_equity=current_equity,
                         current_shares=eff_shares_buy
                     )
+                    if order:
+                        order.effective_date = current_date_str
 
             # 3. Take Profit Sell Intents
             if hasattr(self, 'tp_config') and self.tp_config is not None:
@@ -294,7 +303,11 @@ class CBRotationStrategy(BaseStrategy):
                     broker.submit_order(tp_order)
                 elif 'REBALANCE' in intents:
                     intent = intents['REBALANCE']
-                    self.order_target_percent(
+                    if hasattr(broker, 'order_book'):
+                        for o in broker.order_book:
+                            if o.ticker == ticker and o.status == OrderStatus.PENDING and o.direction == OrderDirection.SELL and o.order_type == OrderType.LIMIT:
+                                broker.cancel_order(o.order_id)
+                    order = self.order_target_percent(
                         broker=broker,
                         ticker=ticker,
                         target_percent=intent['target_percent'],
@@ -302,8 +315,10 @@ class CBRotationStrategy(BaseStrategy):
                         current_equity=intent['current_equity'],
                         current_shares=intent['current_shares']
                     )
+                    if order:
+                        order.effective_date = current_date_str
 
 
 
-        self.last_bar_holdings = set(current_holdings)
+        self.last_bar_holdings = set(target_portfolio.keys())
         return target_portfolio
