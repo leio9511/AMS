@@ -61,13 +61,21 @@ class SimBroker(BaseBroker):
     def submit_order(self, order: Order):
         self.order_book.append(order)
 
+    def cancel_order(self, order_id):
+        for order in self.order_book:
+            if getattr(order, 'order_id', str(id(order))) == str(order_id) and order.status == OrderStatus.PENDING:
+                order.status = OrderStatus.CANCELED
+                logger.info(f"Order {order_id} canceled explicitly.")
+                return True
+        return False
+
     def expire_orders(self, current_date: str):
         if not current_date:
             return
         for order in self.order_book:
             if order.status == OrderStatus.PENDING and order.effective_date:
                 if order.effective_date < current_date:
-                    order_id = getattr(order, 'id', id(order))
+                    order_id = getattr(order, 'order_id', str(id(order)))
                     logger.info(f"Order {order_id} expired: PENDING -> CANCELED (original date: {order.effective_date})")
                     order.status = OrderStatus.CANCELED
 

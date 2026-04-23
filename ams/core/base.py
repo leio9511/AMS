@@ -86,3 +86,7 @@ class BaseBroker(abc.ABC):
     @abc.abstractmethod
     def order_target_percent(self, ticker, percent):
         pass
+
+    @abc.abstractmethod
+    def cancel_order(self, order_id):
+        pass

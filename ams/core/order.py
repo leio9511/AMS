@@ -30,3 +30,7 @@ class Order:
     limit_price: float
     status: OrderStatus = OrderStatus.PENDING
     effective_date: Optional[str] = None
+
+    @property
+    def order_id(self):
+        return str(id(self))
