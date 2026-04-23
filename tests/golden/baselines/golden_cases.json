@@ -1,0 +1,152 @@
+{
+  "CASE_WEEKLY_BEST": {
+    "strategy": "cb_rotation",
+    "start_date": "2025-01-06",
+    "end_date": "2026-01-06",
+    "capital": 4000000,
+    "top_n": 20,
+    "rebalance": "weekly",
+    "tp_mode": "both",
+    "tp_pos": 0.15,
+    "tp_intra": 0.12,
+    "sl": -0.10,
+    "summary": {
+      "total_return": "0.290076025",
+      "max_drawdown": "-0.03358338309209775",
+      "calmar_ratio": "8.637486705985126892185289367",
+      "final_equity": "5160304.1"
+    },
+    "checkpoints": [
+      {
+        "week_ending": "2025-01-10",
+        "total_assets": "4040845.67",
+        "weekly_profit_pct": "0.0102114175",
+        "cumulative_pct": "0.0102114175"
+      },
+      {
+        "week_ending": "2025-06-27",
+        "total_assets": "4748711.54",
+        "weekly_profit_pct": "0.02439646887186567439094501388",
+        "cumulative_pct": "0.187177885"
+      },
+      {
+        "week_ending": "2025-09-26",
+        "total_assets": "5080587.05",
+        "weekly_profit_pct": "0.0004180614502896322623096148242",
+        "cumulative_pct": "0.2701467625"
+      },
+      {
+        "week_ending": "2025-12-26",
+        "total_assets": "5144148.32",
+        "weekly_profit_pct": "-0.0002848794999049870470273500100",
+        "cumulative_pct": "0.28603708"
+      },
+      {
+        "week_ending": "2026-01-09",
+        "total_assets": "5160304.1",
+        "weekly_profit_pct": "0.003642927442067289856927306685",
+        "cumulative_pct": "0.290076025"
+      }
+    ]
+  },
+  "CASE_WEEKLY_CONSERVATIVE": {
+    "strategy": "cb_rotation",
+    "start_date": "2025-01-06",
+    "end_date": "2026-01-06",
+    "capital": 4000000,
+    "top_n": 20,
+    "rebalance": "weekly",
+    "tp_mode": "both",
+    "tp_pos": 0.15,
+    "tp_intra": 0.08,
+    "sl": -0.05,
+    "summary": {
+      "total_return": "0.2625218725",
+      "max_drawdown": "-0.03355454394686775",
+      "calmar_ratio": "7.823735375920848870044859569",
+      "final_equity": "5050087.49"
+    },
+    "checkpoints": [
+      {
+        "week_ending": "2025-01-10",
+        "total_assets": "4040845.67",
+        "weekly_profit_pct": "0.0102114175",
+        "cumulative_pct": "0.0102114175"
+      },
+      {
+        "week_ending": "2025-06-27",
+        "total_assets": "4692004.43",
+        "weekly_profit_pct": "0.02528044857279632247546484570",
+        "cumulative_pct": "0.1730011075"
+      },
+      {
+        "week_ending": "2025-09-26",
+        "total_assets": "5003488.64",
+        "weekly_profit_pct": "0.0003941243895537606664978885548",
+        "cumulative_pct": "0.25087216"
+      },
+      {
+        "week_ending": "2025-12-26",
+        "total_assets": "5029993.34",
+        "weekly_profit_pct": "-0.0002881499316950445917291145384",
+        "cumulative_pct": "0.257498335"
+      },
+      {
+        "week_ending": "2026-01-09",
+        "total_assets": "5050087.49",
+        "weekly_profit_pct": "0.004793962041813957375790810631",
+        "cumulative_pct": "0.2625218725"
+      }
+    ]
+  },
+  "CASE_DAILY_COMPARATOR": {
+    "strategy": "cb_rotation",
+    "start_date": "2025-01-06",
+    "end_date": "2026-01-06",
+    "capital": 4000000,
+    "top_n": 20,
+    "rebalance": "daily",
+    "tp_mode": "both",
+    "tp_pos": 0.15,
+    "tp_intra": 0.12,
+    "sl": -0.10,
+    "summary": {
+      "total_return": "0.2747127975",
+      "max_drawdown": "-0.035826958475947926",
+      "calmar_ratio": "7.667767770027860942187573457",
+      "final_equity": "5098851.19"
+    },
+    "checkpoints": [
+      {
+        "week_ending": "2025-01-10",
+        "total_assets": "4046818.71",
+        "weekly_profit_pct": "0.0117046775",
+        "cumulative_pct": "0.0117046775"
+      },
+      {
+        "week_ending": "2025-06-27",
+        "total_assets": "4645631.69",
+        "weekly_profit_pct": "0.02405289326728325401882193998",
+        "cumulative_pct": "0.1614079225"
+      },
+      {
+        "week_ending": "2025-09-26",
+        "total_assets": "5033104.27",
+        "weekly_profit_pct": "0.0009253266489319949286731783031",
+        "cumulative_pct": "0.2582760675"
+      },
+      {
+        "week_ending": "2025-12-26",
+        "total_assets": "5074015.73",
+        "weekly_profit_pct": "0.002024818490056641735922794152",
+        "cumulative_pct": "0.2685039325"
+      },
+      {
+        "week_ending": "2026-01-09",
+        "total_assets": "5098851.19",
+        "weekly_profit_pct": "0.004861981046311276164229250476",
+        "cumulative_pct": "0.2747127975"
+      }
+    ]
+  }
+}
