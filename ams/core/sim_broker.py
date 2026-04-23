@@ -103,6 +103,8 @@ class SimBroker(BaseBroker):
                         order.status = OrderStatus.REJECTED
                         
             elif order.order_type == OrderType.MARKET:
+                # Explicit Fill Rule: Stop-loss and rebalance market orders created on bar N 
+                # must be executed on bar N+1 at the next bar open price.
                 base_price = ticker_data.get('open', ticker_data.get('close', 0.0))
                 if self.slippage_model:
                     execute_price = self.slippage_model.calculate_slippage(order, base_price)

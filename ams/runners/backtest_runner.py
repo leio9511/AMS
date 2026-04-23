@@ -54,7 +54,7 @@ class BacktestRunner:
             class Context:
                 pass
             context = Context()
-            context.daily_return = previous_close
+            context.daily_return = previous_close.copy()
             context.holdings = list(self.broker.holdings.keys())
             context.broker = self.broker
             context.current_date = date

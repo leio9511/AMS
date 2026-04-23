@@ -65,6 +65,8 @@ class CBRotationStrategy(BaseStrategy):
             df = df[~df['is_st']]
 
         # Intraday Stop-Loss Filter
+        # Evaluates every day, not restricted to weekly rebalance days. 
+        # If triggered mid-week, it immediately excludes the ticker and creates a sell order for the next bar.
         stopped_out_tickers = set()
         if hasattr(context, 'daily_return') and isinstance(context.daily_return, dict):
             current_holdings = getattr(context, 'holdings', [])
