@@ -69,7 +69,7 @@ class SimBroker(BaseBroker):
                 return True
         return False
 
-    def expire_orders(self, current_date: str):
+    def _expire_old_orders(self, current_date: str):
         if not current_date:
             return
         for order in self.order_book:

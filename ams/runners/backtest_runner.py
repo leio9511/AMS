@@ -37,8 +37,8 @@ class BacktestRunner:
             self.broker.match_orders(daily_data, current_date=date_str)
 
             # 3. Expire Orders
-            if hasattr(self.broker, 'expire_orders'):
-                self.broker.expire_orders(current_date=date_str)
+            if hasattr(self.broker, '_expire_old_orders'):
+                self.broker._expire_old_orders(current_date=date_str)
             
             # 4. Portfolio Snapshot
             # Extract current prices for equity update

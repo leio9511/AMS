@@ -28,6 +28,10 @@ class CBRotationStrategy(BaseStrategy):
         self.liquidated_this_cycle = set()
         self.last_bar_holdings = set()
         
+        if self.tp_mode == TakeProfitMode.BOTH:
+            if tp_config is None and take_profit_threshold is None:
+                raise ValueError(f"ERROR: --tp-mode '{self.tp_mode.value}' requires both --tp-pos and --tp-intra to be set.")
+        
         # Priority: tp_config > take_profit_threshold
         if tp_config is not None:
             self.tp_config = tp_config
@@ -68,12 +72,6 @@ class CBRotationStrategy(BaseStrategy):
         current_holdings = list(getattr(context, 'holdings', []))
         broker = getattr(context, 'broker', None)
         
-        if broker is not None and hasattr(broker, 'order_book'):
-            for o in broker.order_book:
-                if o.status == OrderStatus.PENDING and o.direction == OrderDirection.BUY:
-                    if o.ticker not in current_holdings:
-                        current_holdings.append(o.ticker)
-
         current_date = getattr(context, 'current_date', None)
         current_date_str = str(current_date.date()) if hasattr(current_date, 'date') else str(current_date) if current_date else None
         current_prices = getattr(context, 'current_prices', {})
@@ -303,10 +301,6 @@ class CBRotationStrategy(BaseStrategy):
                     broker.submit_order(tp_order)
                 elif 'REBALANCE' in intents:
                     intent = intents['REBALANCE']
-                    if hasattr(broker, 'order_book'):
-                        for o in broker.order_book:
-                            if o.ticker == ticker and o.status == OrderStatus.PENDING and o.direction == OrderDirection.SELL and o.order_type == OrderType.LIMIT:
-                                broker.cancel_order(o.order_id)
                     order = self.order_target_percent(
                         broker=broker,
                         ticker=ticker,
