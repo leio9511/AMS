@@ -30,7 +30,7 @@ class CBRotationStrategy(BaseStrategy):
         
         if self.tp_mode == TakeProfitMode.BOTH:
             if tp_config is None and take_profit_threshold is None:
-                raise ValueError(f"ERROR: --tp-mode '{self.tp_mode.value}' requires both --tp-pos and --tp-intra to be set.")
+                raise ValueError(f"ERROR: --tp-mode '{tp_mode}' requires both --tp-pos and --tp-intra to be set.")
         
         # Priority: tp_config > take_profit_threshold
         if tp_config is not None:
