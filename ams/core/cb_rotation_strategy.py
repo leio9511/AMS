@@ -70,6 +70,9 @@ class CBRotationStrategy(BaseStrategy):
         stopped_out_tickers = set()
         if hasattr(context, 'daily_return') and isinstance(context.daily_return, dict):
             current_holdings = getattr(context, 'holdings', [])
+            broker = getattr(context, 'broker', None)
+            current_date_str = str(getattr(context, 'current_date', ''))
+            
             def check_stop_loss(row):
                 ticker = row['ticker']
                 if ticker in current_holdings and ticker in context.daily_return:
@@ -80,6 +83,21 @@ class CBRotationStrategy(BaseStrategy):
                         if daily_ret <= self.stop_loss_threshold:
                             stopped_out_tickers.add(ticker)
                             self.liquidated_this_cycle.add(ticker)
+                            
+                            # Immediately generate a mid-week stop-loss sell order
+                            if broker is not None:
+                                position = broker.get_position(ticker)
+                                ssot_qty = int(position.get('quantity', 0))
+                                if ssot_qty > 0:
+                                    sl_order = Order(
+                                        ticker=ticker,
+                                        direction=OrderDirection.SELL,
+                                        quantity=ssot_qty,
+                                        order_type=OrderType.MARKET,
+                                        limit_price=float(current_price),
+                                        effective_date=current_date_str
+                                    )
+                                    broker.submit_order(sl_order)
                             return False # Filter out
                 return True
             df = df[df.apply(check_stop_loss, axis=1)]

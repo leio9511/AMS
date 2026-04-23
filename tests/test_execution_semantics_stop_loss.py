@@ -23,9 +23,13 @@ def test_stop_loss_fills_on_next_bar_open():
     runner = BacktestRunner(feed, broker, strategy)
     dates = feed.df['date'].unique()
     
-    runner.run(dates[0], dates[-1])
+    # Run only up to 2024-01-04 to observe the stop loss fill and avoid the next day's rebuy
+    runner.run(dates[0], pd.to_datetime('2024-01-04'))
     
-    assert broker.holdings.get('T1', 0) == 10000 # Wait, it rebought?
+    # Assert holdings are 0 after stop-loss execution
+    assert broker.holdings.get('T1', 0) == 0
+    # Stop-loss triggered on 01-03 close (8.8), filled on 01-04 open (8.0). Cash: 100k - (10k * 10) + (10k * 8) = 80k
+    assert broker.cash == 80000.0
 
 def test_weekly_rebalance_should_not_mask_stop_loss():
     feed = DummyDataFeed("tests/fixtures/fixture_stop_loss_immediate_effect.csv")
