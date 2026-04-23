@@ -61,7 +61,7 @@ class SimBroker(BaseBroker):
     def submit_order(self, order: Order):
         self.order_book.append(order)
 
-    def _expire_old_orders(self, current_date: str):
+    def expire_orders(self, current_date: str):
         if not current_date:
             return
         for order in self.order_book:
@@ -141,9 +141,6 @@ class SimBroker(BaseBroker):
                         order.status = OrderStatus.FILLED
                     else:
                         order.status = OrderStatus.REJECTED
-
-        # Expire old orders AFTER matching
-        self._expire_old_orders(current_date)
 
     def update_equity(self, current_prices: dict):
         # Update last prices

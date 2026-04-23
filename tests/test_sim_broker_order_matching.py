@@ -93,8 +93,9 @@ def test_automatic_order_expiry():
         }
     }
     
-    # Process on next day. Should not match, then should be canceled by _expire_old_orders.
+    # Process on next day. Should not match, then should be canceled by expire_orders.
     broker.match_orders(bar_data, current_date="2023-01-02")
+    broker.expire_orders(current_date="2023-01-02")
     
     assert order.status == OrderStatus.CANCELED
     assert broker.cash == 10000.0

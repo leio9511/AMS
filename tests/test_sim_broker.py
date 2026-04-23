@@ -56,7 +56,7 @@ def test_expire_old_orders_logging(caplog):
     broker.submit_order(order)
     
     with caplog.at_level(logging.INFO):
-        broker._expire_old_orders("2023-01-02")
+        broker.expire_orders("2023-01-02")
         
     assert order.status == OrderStatus.CANCELED
     assert "PENDING -> CANCELED" in caplog.text

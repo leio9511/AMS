@@ -13,6 +13,7 @@ class BacktestRunner:
         dates = pd.date_range(start_date, end_date)
         previous_close = {}
         for date in dates:
+            # 1. Bar Input Ready
             data_slice = self.data_feed.get_data(None, date)
             if data_slice is None or data_slice.empty:
                 continue
@@ -32,9 +33,14 @@ class BacktestRunner:
             # Convert date to string to ensure correct comparison for day-order lifecycle
             date_str = str(date.date()) if hasattr(date, 'date') else str(date)
             
-            # 1. Broker matching
+            # 2. Match Orders
             self.broker.match_orders(daily_data, current_date=date_str)
+
+            # 3. Expire Orders
+            if hasattr(self.broker, 'expire_orders'):
+                self.broker.expire_orders(current_date=date_str)
             
+            # 4. Portfolio Snapshot
             # Extract current prices for equity update
             current_prices = {}
             price_col = 'close_price' if 'close_price' in data_slice.columns else 'price' if 'price' in data_slice.columns else 'close'
@@ -42,9 +48,9 @@ class BacktestRunner:
                 for _, row in data_slice.iterrows():
                     current_prices[row['ticker']] = row[price_col]
             
-            # 2. Broker equity update
             self.broker.update_equity(current_prices)
             
+            # 5. Strategy Signal Evaluation
             class Context:
                 pass
             context = Context()
@@ -59,7 +65,7 @@ class BacktestRunner:
                 for _, row in data_slice.iterrows():
                     previous_close[row['ticker']] = row[price_col]
             
-            # 3. Strategy generate orders (decoupled from Runner logic)
+            # 6. Order Creation
             # The Strategy is now responsible for generating Orders!
             self.strategy.generate_target_portfolio(context, data_slice)
             
