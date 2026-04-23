@@ -33,7 +33,8 @@ def test_cli_smoke_json_output():
         
     assert "summary" in output
     assert "weekly_performance" in output
-    
+    assert len(output["weekly_performance"]) > 0
+
     summary = output["summary"]
     required_keys = ["final_equity", "total_return", "max_drawdown", "calmar_ratio"]
     for key in required_keys:
