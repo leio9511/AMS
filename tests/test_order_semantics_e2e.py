@@ -248,7 +248,7 @@ def test_tp_and_rebalance_do_not_double_sell_position():
     strategy = CBRotationStrategy(
         top_n=1, tp_mode='position', tp_config=tp_config,
         rebalance_period='daily', liquidity_threshold=0,
-        weight_per_position=1.0 # 100% of capital
+        weight_per_position=0.1 # 100% of capital
     )
     
     runner = BacktestRunner(data_feed, broker, strategy)
