@@ -103,7 +103,7 @@ class SimBroker(BaseBroker):
                         order.status = OrderStatus.REJECTED
                         
             elif order.order_type == OrderType.MARKET:
-                base_price = ticker_data.get('close', 0.0)
+                base_price = ticker_data.get('open', ticker_data.get('close', 0.0))
                 if self.slippage_model:
                     execute_price = self.slippage_model.calculate_slippage(order, base_price)
                 else:
