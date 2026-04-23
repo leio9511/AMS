@@ -28,7 +28,13 @@ def test_tp_limit_order_triggers_on_next_bar_high():
     for o in runner.broker.order_book:
         if o.direction.value == "SELL" and o.status == OrderStatus.FILLED:
             found_filled = True
+            assert float(o.limit_price) == 107.1
+            assert o.quantity == 980
     assert found_filled
+    
+    # Expected Cash: 100000 - 980*102.0 + 980*107.1 = 100000 + 980*5.1 = 100000 + 4998 = 104998
+    assert runner.broker.cash == 104998.0
+    assert runner.broker.total_equity == 104998.0
 
 def test_tp_limit_order_expires_only_after_valid_match_window():
     runner = setup_runner(rebalance='daily', tp_pos=0.10) # TP = 102*1.10 = 112.2
@@ -43,14 +49,21 @@ def test_tp_limit_order_expires_only_after_valid_match_window():
     assert 'BOND1' in runner.broker.holdings
 
 def test_weekly_rebalance_does_not_mask_midweek_take_profit():
-    # In weekly mode, TP should trigger mid-week (Day 2 or Day 3).
+    # In weekly mode, TP should trigger mid-week (Day 2).
     runner = setup_runner(rebalance='weekly', tp_pos=0.05)
-    runner.run('2026-03-02', '2026-03-06') # runs full week
+    runner.run('2026-03-02', '2026-03-06')
     
-    # It should sell mid-week and not double sell.
-    assert runner.broker.cash > 0
-    for ticker, qty in runner.broker.holdings.items():
-        assert qty >= 0
+    # Check for TP fill (should be on Day 2)
+    tp_filled = any(o.ticker == 'BOND1' and o.direction.value == 'SELL' and o.status == OrderStatus.FILLED for o in runner.broker.order_book)
+    assert tp_filled
+    
+    # Check for Friday rebalance re-buy (should be PENDING on Friday end)
+    # Friday (2026-03-06) rebalance should see BOND1 is missing and re-buy it.
+    rebuy_pending = any(o.ticker == 'BOND1' and o.direction.value == 'BUY' and o.status == OrderStatus.PENDING for o in runner.broker.order_book)
+    assert rebuy_pending
+    
+    # Ensure no double sell (holdings should be 0 filled, but we might have a pending buy)
+    assert runner.broker.holdings.get('BOND1', 0) == 0
 
 def test_daily_tp_threshold_changes_affect_outcome():
     r1 = setup_runner(rebalance='daily', tp_pos=0.05)

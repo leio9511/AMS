@@ -4,6 +4,20 @@ import pandas as pd
 import numpy as np
 from ams.core.cb_rotation_strategy import CBRotationStrategy
 
+from ams.models.config import TakeProfitMode
+
+def test_tp_mode_both_validation_error():
+    # If tp_mode is 'both' and neither tp_config nor take_profit_threshold is provided
+    with pytest.raises(ValueError) as excinfo:
+        CBRotationStrategy(tp_mode='both')
+    assert "ERROR: --tp-mode 'both' requires both --tp-pos and --tp-intra to be set." in str(excinfo.value)
+
+def test_tp_mode_both_validation_with_enum_error():
+    # If tp_mode is TakeProfitMode.BOTH and neither tp_config nor take_profit_threshold is provided
+    with pytest.raises(ValueError) as excinfo:
+        CBRotationStrategy(tp_mode=TakeProfitMode.BOTH)
+    assert "ERROR: --tp-mode 'both' requires both --tp-pos and --tp-intra to be set." in str(excinfo.value)
+
 def test_generate_target_portfolio_success():
     strategy = CBRotationStrategy()
     
