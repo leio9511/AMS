@@ -34,6 +34,18 @@ def _build_underlying_mapping(df_bonds_info: pd.DataFrame) -> dict:
     return mapping_df.set_index("code")["company_code"].to_dict()
 
 
+def _build_delist_mapping(df_bonds_info: pd.DataFrame) -> dict:
+    if df_bonds_info is None or df_bonds_info.empty:
+        return {}
+    if "code" not in df_bonds_info.columns or "delist_Date" not in df_bonds_info.columns:
+        return {}
+
+    mapping_df = df_bonds_info[["code", "delist_Date"]].copy()
+    mapping_df["delist_Date"] = pd.to_datetime(mapping_df["delist_Date"], errors="coerce")
+    mapping_df = mapping_df.drop_duplicates(subset=["code"], keep="last")
+    return mapping_df.set_index("code")["delist_Date"].to_dict()
+
+
 def _build_bond_key_columns(df: pd.DataFrame, ticker_col: str = "ticker") -> pd.DataFrame:
     result = df.copy()
     if ticker_col not in result.columns:
@@ -109,6 +121,7 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
 
     df_bonds_info = jqdatasdk.bond.run_query(jqdatasdk.query(jqdatasdk.bond.CONBOND_BASIC_INFO))
     bond_to_stock = _build_underlying_mapping(df_bonds_info)
+    bond_to_delist = _build_delist_mapping(df_bonds_info)
 
     df_all_bonds = jqdatasdk.get_all_securities(["conbond"])
     tickers = df_all_bonds.index.tolist()
@@ -134,6 +147,7 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
         "premium_rate_source_row_count": 0,
         "premium_rate_joined_row_count": 0,
         "premium_rate_join_coverage_ratio": 0.0,
+        "is_redeemed_missing_delist_count": 0,
     }
 
     raw_codes = [code for code in df["bond_code_raw"].dropna().astype(str).unique().tolist() if code]
@@ -168,23 +182,9 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
 
     df["is_st"] = df["is_st"].fillna(False)
 
-    try:
-        q_call = jqdatasdk.query(jqdatasdk.finance.CCB_CALL).filter(jqdatasdk.finance.CCB_CALL.code.in_(tickers))
-        df_call = jqdatasdk.finance.run_query(q_call)
-
-        if not df_call.empty and {"code", "pub_date", "delisting_date"}.issubset(df_call.columns):
-            df_call = df_call[["code", "pub_date", "delisting_date"]].copy()
-            df_call.rename(columns={"code": "ticker"}, inplace=True)
-            df_call["pub_date"] = pd.to_datetime(df_call["pub_date"])
-            df_call["delisting_date"] = pd.to_datetime(df_call["delisting_date"])
-            df_call = df_call.drop_duplicates(subset=["ticker"], keep="last")
-            df = pd.merge(df, df_call, on="ticker", how="left")
-            df["is_redeemed"] = (df["date"] >= df["pub_date"]) & (df["date"] < df["delisting_date"])
-        else:
-            df["is_redeemed"] = False
-    except Exception as e:
-        print(f"Warning: Failed to fetch CCB_CALL data: {e}")
-        df["is_redeemed"] = False
+    df["delist_Date"] = pd.to_datetime(df["ticker"].map(bond_to_delist), errors="coerce")
+    premium_rate_metrics["is_redeemed_missing_delist_count"] = int(df["delist_Date"].isna().sum())
+    df["is_redeemed"] = df["delist_Date"].notna() & (df["date"] >= df["delist_Date"])
 
     num_redeemed = df["is_redeemed"].sum()
     print(f"Total redeemed records marked: {num_redeemed}")
