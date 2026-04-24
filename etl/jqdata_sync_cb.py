@@ -6,6 +6,14 @@ import pandas as pd
 
 
 METRICS_PATH = "data/cb_history_factors.metrics.json"
+LEGACY_UNDERLYING_SOURCE_FATAL = (
+    "[FATAL] Invalid underlying-ticker source contract: get_security_info(ticker).parent "
+    "is not valid for AMS convertible bonds."
+)
+LEGACY_REDEMPTION_SOURCE_FATAL = (
+    "[FATAL] Invalid redemption source contract: finance.CCB_CALL is not a valid "
+    "JQData table for AMS convertible-bond lifecycle semantics."
+)
 REDEMPTION_SOURCE_CONTRACT = {
     "source_table": "bond.CONBOND_BASIC_INFO",
     "primary_field": "delist_Date",
@@ -28,6 +36,14 @@ def _split_bond_ticker(ticker: str) -> tuple[str | None, str | None]:
     if not bond_code_raw or not bond_exchange_code:
         return None, None
     return bond_code_raw, bond_exchange_code
+
+
+def _raise_legacy_underlying_source_error() -> None:
+    raise RuntimeError(LEGACY_UNDERLYING_SOURCE_FATAL)
+
+
+def _raise_legacy_redemption_source_error() -> None:
+    raise RuntimeError(LEGACY_REDEMPTION_SOURCE_FATAL)
 
 
 def _build_underlying_mapping(df_bonds_info: pd.DataFrame) -> dict:

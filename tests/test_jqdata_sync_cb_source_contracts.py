@@ -1,9 +1,21 @@
 import os
-import pandas as pd
-import pytest
+import re
 from unittest.mock import patch
 
-from etl.jqdata_sync_cb import _build_underlying_mapping, sync_cb_data
+import pandas as pd
+import pytest
+
+from etl.jqdata_sync_cb import (
+    LEGACY_UNDERLYING_SOURCE_FATAL,
+    _build_underlying_mapping,
+    _raise_legacy_underlying_source_error,
+    sync_cb_data,
+)
+
+
+def test_legacy_underlying_source_guard_raises_exact_prd_fatal_message():
+    with pytest.raises(RuntimeError, match=re.escape(LEGACY_UNDERLYING_SOURCE_FATAL)):
+        _raise_legacy_underlying_source_error()
 
 
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)

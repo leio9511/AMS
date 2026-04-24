@@ -1,10 +1,22 @@
 import json
 import os
+import re
 from unittest.mock import patch
 
 import pandas as pd
+import pytest
 
-from etl.jqdata_sync_cb import REDEMPTION_SOURCE_CONTRACT, sync_cb_data
+from etl.jqdata_sync_cb import (
+    LEGACY_REDEMPTION_SOURCE_FATAL,
+    REDEMPTION_SOURCE_CONTRACT,
+    _raise_legacy_redemption_source_error,
+    sync_cb_data,
+)
+
+
+def test_legacy_redemption_source_guard_raises_exact_prd_fatal_message():
+    with pytest.raises(RuntimeError, match=re.escape(LEGACY_REDEMPTION_SOURCE_FATAL)):
+        _raise_legacy_redemption_source_error()
 
 
 def test_redemption_source_contract_declares_primary_and_fallback_fields():
