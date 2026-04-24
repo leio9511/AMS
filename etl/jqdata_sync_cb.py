@@ -6,6 +6,16 @@ import pandas as pd
 
 
 METRICS_PATH = "data/cb_history_factors.metrics.json"
+REDEMPTION_SOURCE_CONTRACT = {
+    "source_table": "bond.CONBOND_BASIC_INFO",
+    "primary_field": "delist_Date",
+    "fallback_informational_fields": [
+        "maturity_date",
+        "last_cash_date",
+        "convert_end_date",
+    ],
+    "null_primary_behavior": "is_redeemed=False",
+}
 
 
 def _split_bond_ticker(ticker: str) -> tuple[str | None, str | None]:
@@ -35,15 +45,16 @@ def _build_underlying_mapping(df_bonds_info: pd.DataFrame) -> dict:
 
 
 def _build_delist_mapping(df_bonds_info: pd.DataFrame) -> dict:
+    contract = REDEMPTION_SOURCE_CONTRACT
     if df_bonds_info is None or df_bonds_info.empty:
         return {}
-    if "code" not in df_bonds_info.columns or "delist_Date" not in df_bonds_info.columns:
+    if "code" not in df_bonds_info.columns or contract["primary_field"] not in df_bonds_info.columns:
         return {}
 
-    mapping_df = df_bonds_info[["code", "delist_Date"]].copy()
-    mapping_df["delist_Date"] = pd.to_datetime(mapping_df["delist_Date"], errors="coerce")
+    mapping_df = df_bonds_info[["code", contract["primary_field"]]].copy()
+    mapping_df[contract["primary_field"]] = pd.to_datetime(mapping_df[contract["primary_field"]], errors="coerce")
     mapping_df = mapping_df.drop_duplicates(subset=["code"], keep="last")
-    return mapping_df.set_index("code")["delist_Date"].to_dict()
+    return mapping_df.set_index("code")[contract["primary_field"]].to_dict()
 
 
 def _build_bond_key_columns(df: pd.DataFrame, ticker_col: str = "ticker") -> pd.DataFrame:
@@ -184,6 +195,10 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
 
     df["delist_Date"] = pd.to_datetime(df["ticker"].map(bond_to_delist), errors="coerce")
     premium_rate_metrics["is_redeemed_missing_delist_count"] = int(df["delist_Date"].isna().sum())
+    # The first deterministic redemption contract is intentionally narrow:
+    # `delist_Date` is the only decision field, while `maturity_date`, `last_cash_date`,
+    # and `convert_end_date` remain fallback informational fields for observability only.
+    # When `delist_Date` is missing, AMS must keep `is_redeemed=False` instead of guessing.
     df["is_redeemed"] = df["delist_Date"].notna() & (df["date"] >= df["delist_Date"])
 
     num_redeemed = df["is_redeemed"].sum()

@@ -50,6 +50,7 @@ For the convertible-bond research dataset, AMS now treats upstream source contra
 - `underlying_ticker` must come from `bond.CONBOND_BASIC_INFO.company_code`, not `get_security_info(ticker).parent`.
 - `premium_rate` must be joined through the canonical normalized key `bond_code_raw + bond_exchange_code + date` against `bond.CONBOND_DAILY_CONVERT`.
 - `is_redeemed` must derive from `bond.CONBOND_BASIC_INFO.delist_Date`, not `finance.CCB_CALL`.
+- In this first deterministic redemption contract, `maturity_date`, `last_cash_date`, and `convert_end_date` are fallback informational fields only. They are explicitly documented for future lifecycle observability, but they do not override the rule that `delist_Date` is the only decision field and `delist_Date = null` keeps `is_redeemed = False`.
 - The ETL metrics artifact at `/root/projects/AMS/data/cb_history_factors.metrics.json` is the observability surface for source-contract health, and currently must expose:
   - `premium_rate_source_row_count`
   - `premium_rate_joined_row_count`
