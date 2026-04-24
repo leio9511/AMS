@@ -23,6 +23,7 @@ Phase 1.5: Backtest Reliability Hardening
 - `main_runner.py` unified CLI path is not truly executable yet
 - Missing a real smoke test for the CLI main path
 - Missing a validation framework (golden dataset / regression / walk-forward layering)
+- ISSUE-1142 governance hardening still depends on the repaired CB source-contract layer remaining explicit, observable, and regression-protected
 
 ## Active Workstreams
 1. Unified Backtest Entrypoint Bugfix
@@ -35,6 +36,12 @@ Phase 1.5: Backtest Reliability Hardening
    - Define golden outputs and checkpoints
    - Establish smoke / regression / walk-forward layers
    - Use this as a quality gate before Phase 2
+
+3. CB Source-Contract Hardening
+   - Keep `underlying_ticker`, `premium_rate`, and `is_redeemed` on explicit documented source contracts
+   - Preserve the integrated ETL metrics artifact at `/root/projects/AMS/data/cb_history_factors.metrics.json`
+   - Use regression guards to block fallback to `get_security_info(ticker).parent` and `finance.CCB_CALL`
+   - Treat this as prerequisite upstream input quality for ISSUE-1142 dataset governance
 
 ## Gate to Next Phase
 Before entering Phase 2, AMS must satisfy:
@@ -57,7 +64,10 @@ Before entering Phase 2, AMS must satisfy:
 ## Linked Issues / PRDs
 - ISSUE-1167: Standardized Unified Backtest Entrypoint
 - ISSUE-1172: Validation Framework
+- ISSUE-1182: CB source-contract repair for `underlying_ticker`, `premium_rate`, and `is_redeemed`
+- ISSUE-1142: CB research dataset governance and quality gates
 - PRD: `docs/PRDs/PRD_Standardized_Unified_Backtest_Entrypoint.md`
+- PRD: `docs/PRDs/PRD_CB_Source_Contract_Repair_for_Premium_Underlying_and_Redemption.md`
 
 ## Notes
 - `STATE.md` is runtime-oriented and may be overwritten by SDLC.

@@ -44,6 +44,20 @@ runner.run()
 
 Garbage data permanently ruins backtests. AMS treats data integrity as a first-class citizen.
 
+### Convertible-Bond Source Contract Repair Baseline
+For the convertible-bond research dataset, AMS now treats upstream source contracts as an explicit architectural layer rather than an ETL implementation detail.
+
+- `underlying_ticker` must come from `bond.CONBOND_BASIC_INFO.company_code`, not `get_security_info(ticker).parent`.
+- `premium_rate` must be joined through the canonical normalized key `bond_code_raw + bond_exchange_code + date` against `bond.CONBOND_DAILY_CONVERT`.
+- `is_redeemed` must derive from `bond.CONBOND_BASIC_INFO.delist_Date`, not `finance.CCB_CALL`.
+- The ETL metrics artifact at `/root/projects/AMS/data/cb_history_factors.metrics.json` is the observability surface for source-contract health, and currently must expose:
+  - `premium_rate_source_row_count`
+  - `premium_rate_joined_row_count`
+  - `premium_rate_join_coverage_ratio`
+  - `is_redeemed_missing_delist_count`
+
+These source-contract guarantees are the prerequisite input layer for later dataset governance hardening under ISSUE-1142.
+
 ### The "Data Circuit Breaker"
 Before any ETL script (e.g., fetching historical quotes) saves data to disk, it **MUST** pass through a Data Contract Validator (e.g., `ams.validators.cb_data_validator`).
 - **Pandera Schema**: We use `pandera` to declare strict schemas (e.g., `premium_rate` must be between -10.0 and 100.0, no NaNs allowed).

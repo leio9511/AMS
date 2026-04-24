@@ -1,3 +1,4 @@
+import json
 import os
 import pandas as pd
 import pytest
@@ -141,6 +142,29 @@ def test_atomic_write_success(mock_jqdata, tmp_path):
         
         sync_cb_data()
         mock_replace.assert_called_with("data/cb_history_factors.csv.tmp", "data/cb_history_factors.csv")
+
+
+def test_sync_cb_data_writes_metrics_artifact_without_breaking_atomic_csv_flow(mock_jqdata, tmp_path):
+    with patch("os.replace") as mock_replace, \
+         patch("ams.validators.cb_data_validator.CBDataValidator") as mock_validator_cls, \
+         patch("os.makedirs"), \
+         patch("os.path.exists", return_value=False), \
+         patch("pandas.DataFrame.to_csv"), \
+         patch("pandas.read_csv") as mock_read_csv, \
+         patch("builtins.open", create=True) as mock_open:
+
+        mock_validator = mock_validator_cls.return_value
+        mock_validator.validate_dataframe.return_value = True
+        mock_read_csv.return_value = pd.DataFrame({
+            "ticker": ["123456.SH"], "date": ["2025-01-06"], "close": [100.5],
+            "premium_rate": [0.155], "is_st": [False], "is_redeemed": [True]
+        })
+
+        sync_cb_data()
+
+        mock_replace.assert_called_with("data/cb_history_factors.csv.tmp", "data/cb_history_factors.csv")
+        opened_paths = [call.args[0] for call in mock_open.call_args_list if call.args]
+        assert "data/cb_history_factors.metrics.json" in opened_paths
 
 def test_validation_interception(mock_jqdata, tmp_path):
     with patch("os.replace") as mock_replace, \
