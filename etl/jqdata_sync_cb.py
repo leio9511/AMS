@@ -2,6 +2,19 @@ import os
 import pandas as pd
 import jqdatasdk
 
+def _build_underlying_mapping(df_bonds_info: pd.DataFrame) -> dict:
+    if df_bonds_info is None or df_bonds_info.empty:
+        return {}
+    if "code" not in df_bonds_info.columns or "company_code" not in df_bonds_info.columns:
+        return {}
+
+    mapping_df = df_bonds_info[["code", "company_code"]].dropna(subset=["code", "company_code"])
+    if mapping_df.empty:
+        return {}
+
+    mapping_df = mapping_df.drop_duplicates(subset=["code"], keep="last")
+    return mapping_df.set_index("code")["company_code"].to_dict()
+
 def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     output_path = "data/cb_history_factors.csv"
     bak_path = "data/cb_history_factors.csv.bak"
@@ -24,15 +37,7 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
 
     # Fetch all convertible bonds
     df_bonds_info = jqdatasdk.bond.run_query(jqdatasdk.query(jqdatasdk.bond.CONBOND_BASIC_INFO))
-    
-    # Get mapping of bond ticker to underlying ticker (company_code in JQData)
-    # Note: JQData company_code might need to be converted to stock ticker
-    # But wait, CONBOND_BASIC_INFO has company_code. 
-    # Let's check what it looks like.
-    
-    # Actually, JQData has a better way to get underlying stock for a bond.
-    # We'll use the finance table if possible, but since it's missing, 
-    # we'll use a heuristic or find another way.
+    bond_to_stock = _build_underlying_mapping(df_bonds_info)
     
     # Let's try to get all securities to see if they have the info.
     df_all_bonds = jqdatasdk.get_all_securities(['conbond'])
@@ -48,15 +53,6 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     df['date'] = pd.to_datetime(df['date'])
 
     # 1. Underlying Ticker
-    # We can get the underlying stock ticker from jqdatasdk.get_security_info(ticker).parent
-    bond_to_stock = {}
-    for t in tickers:
-        try:
-            info = jqdatasdk.get_security_info(t)
-            bond_to_stock[t] = info.parent
-        except:
-            bond_to_stock[t] = None
-    
     df['underlying_ticker'] = df['ticker'].map(bond_to_stock)
 
     # 2. Premium Rate
@@ -83,7 +79,11 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
 
     # 3. ST Status
     # Get all unique underlying tickers
-    underlying_tickers = [t for t in df['underlying_ticker'].unique() if t]
+    underlying_tickers = [
+        ticker
+        for ticker in df['underlying_ticker'].dropna().astype(str).unique().tolist()
+        if ticker
+    ]
     if underlying_tickers:
         # Fetch ST status
         df_st = jqdatasdk.get_extras('is_st', underlying_tickers, start_date=start_date, end_date=end_date)
