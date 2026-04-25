@@ -165,6 +165,8 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     df["date"] = pd.to_datetime(df["date"])
 
     df["underlying_ticker"] = df["ticker"].map(bond_to_stock)
+    if df["underlying_ticker"].isna().any():
+        raise ValueError("Missing underlying_ticker for some records")
     df = _build_bond_key_columns(df, ticker_col="ticker")
 
     premium_rate_metrics = {
@@ -187,7 +189,7 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     if not df_premium.empty:
         df = pd.merge(df, df_premium, on=["date", "bond_code_raw", "bond_exchange_code"], how="left")
     else:
-        df["premium_rate"] = 0.0
+        df["premium_rate"] = float("nan")
 
     premium_rate_metrics["premium_rate_joined_row_count"] = int(df["premium_rate"].notna().sum())
     total_price_rows = int(len(df))
@@ -204,7 +206,8 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
 
         df = pd.merge(df, st_long, on=["date", "underlying_ticker"], how="left")
 
-    df["is_st"] = df["is_st"].fillna(False)
+    if "is_st" not in df.columns or df["is_st"].isna().any():
+        raise ValueError("Missing is_st for some records")
 
     df["delist_Date"] = pd.to_datetime(df["ticker"].map(bond_to_delist), errors="coerce")
     premium_rate_metrics["is_redeemed_missing_delist_count"] = int(df["delist_Date"].isna().sum())
@@ -213,11 +216,14 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     # and `convert_end_date` remain fallback informational fields for observability only.
     # When `delist_Date` is missing, AMS must keep `is_redeemed=False` instead of guessing.
     df["is_redeemed"] = df["delist_Date"].notna() & (df["date"] >= df["delist_Date"])
+    if df["is_redeemed"].isna().any():
+        raise ValueError("Missing is_redeemed for some records")
 
     num_redeemed = df["is_redeemed"].sum()
     print(f"Total redeemed records marked: {num_redeemed}")
 
-    df["premium_rate"] = df["premium_rate"].fillna(0.0)
+    if "premium_rate" not in df.columns or df["premium_rate"].isna().any():
+        raise ValueError("Missing premium_rate for some records")
     df["double_low"] = df["close"] + df["premium_rate"] * 100
 
     df = df[[
@@ -237,6 +243,19 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
 
     metrics_bak_path = metrics_path + ".bak"
     tmp_metrics_path = metrics_path + ".tmp"
+    
+    import datetime
+    premium_rate_metrics.update({
+        "row_count": int(len(df)),
+        "underlying_ticker_nonnull_ratio": float(df["underlying_ticker"].notna().mean()),
+        "premium_rate_nonzero_ratio": float((df["premium_rate"] != 0).mean()),
+        "premium_rate_zero_ratio": float((df["premium_rate"] == 0).mean()),
+        "is_st_true_count": int(df["is_st"].sum()),
+        "is_redeemed_true_count": int(df["is_redeemed"].sum()),
+        "generated_at": datetime.datetime.now().isoformat(),
+        "source_lineage": "jqdata_sync_cb"
+    })
+
     _write_metrics(tmp_metrics_path, premium_rate_metrics)
 
     from ams.validators.cb_data_validator import CBDataValidator, DatasetSemanticValidator

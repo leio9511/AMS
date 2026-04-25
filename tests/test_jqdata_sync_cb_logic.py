@@ -223,6 +223,45 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
     @patch("etl.jqdata_sync_cb.jqdatasdk")
     @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
     @patch("ams.validators.cb_data_validator.CBDataValidator")
+    def test_etl_fail_fast_on_missing_premium(self, mock_validator, mock_semantic_validator, mock_jq):
+        os.environ["JQDATA_USER"] = "test"
+        os.environ["JQDATA_PWD"] = "test"
+        mock_jq.auth.return_value = None
+        mock_jq.get_all_securities.return_value = pd.DataFrame(index=[self.ticker])
+        mock_jq.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+        mock_jq.get_price.return_value = self._single_price_df("2024-01-03")
+        
+        mock_jq.bond.run_query.side_effect = [self._mock_bonds_info(), pd.DataFrame()]
+        mock_jq.get_extras.return_value = pd.DataFrame({self.underlying: [True]}, index=pd.to_datetime(["2024-01-03"]))
+        
+        with self.assertRaises((ValueError, SystemExit)):
+            sync_cb_data("2024-01-03", "2024-01-03")
+
+    @patch("etl.jqdata_sync_cb.jqdatasdk")
+    @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+    @patch("ams.validators.cb_data_validator.CBDataValidator")
+    def test_etl_fail_fast_on_missing_is_st(self, mock_validator, mock_semantic_validator, mock_jq):
+        os.environ["JQDATA_USER"] = "test"
+        os.environ["JQDATA_PWD"] = "test"
+        mock_jq.auth.return_value = None
+        mock_jq.get_all_securities.return_value = pd.DataFrame(index=[self.ticker])
+        mock_jq.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+        mock_jq.get_price.return_value = self._single_price_df("2024-01-03")
+        
+        premium = pd.DataFrame({"date": ["2024-01-03"], "code": [self.raw_code], "exchange_code": [self.exchange_code], "convert_premium_rate": [10.0]})
+        mock_jq.bond.run_query.side_effect = [self._mock_bonds_info(), premium]
+        mock_jq.get_extras.return_value = pd.DataFrame()
+        
+        with self.assertRaises((ValueError, SystemExit)):
+            sync_cb_data("2024-01-03", "2024-01-03")
+
+    @patch("etl.jqdata_sync_cb.jqdatasdk")
+    @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+    @patch("ams.validators.cb_data_validator.CBDataValidator")
     def test_etl_promotion_success(self, mock_validator, mock_semantic_validator, mock_jq):
         os.environ["JQDATA_USER"] = "test"
         os.environ["JQDATA_PWD"] = "test"
