@@ -5,7 +5,7 @@ import jqdatasdk
 import pandas as pd
 
 
-METRICS_PATH = "data/cb_history_factors.metrics.json"
+METRICS_PATH = "/root/projects/AMS/data/cb_history_factors.metrics.json"
 LEGACY_UNDERLYING_SOURCE_FATAL = (
     "[FATAL] Invalid underlying-ticker source contract: get_security_info(ticker).parent "
     "is not valid for AMS convertible bonds."
@@ -125,8 +125,8 @@ def _write_metrics(metrics_path: str, metrics: dict) -> None:
 
 
 def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
-    output_path = "data/cb_history_factors.csv"
-    bak_path = "data/cb_history_factors.csv.bak"
+    output_path = "/root/projects/AMS/data/cb_history_factors.csv"
+    bak_path = "/root/projects/AMS/data/cb_history_factors.csv.bak"
     metrics_path = METRICS_PATH
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -234,15 +234,15 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
         "is_redeemed",
     ]]
 
-    metrics_bak_path = "data/cb_history_factors.metrics.json.bak"
-    tmp_metrics_path = "data/cb_history_factors.metrics.json.tmp"
+    metrics_bak_path = "/root/projects/AMS/data/cb_history_factors.metrics.json.bak"
+    tmp_metrics_path = "/root/projects/AMS/data/cb_history_factors.metrics.json.tmp"
     _write_metrics(tmp_metrics_path, premium_rate_metrics)
 
     from ams.validators.cb_data_validator import CBDataValidator, DatasetSemanticValidator
 
     validator_l1 = CBDataValidator()
     validator_l2 = DatasetSemanticValidator()
-    tmp_path = "data/cb_history_factors.csv.tmp"
+    tmp_path = "/root/projects/AMS/data/cb_history_factors.csv.tmp"
 
     df.to_csv(tmp_path, index=False)
 
@@ -261,12 +261,12 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
 
     import sys
     if validation_passed:
-        if os.path.exists(output_path):
-            os.replace(output_path, bak_path)
-        if os.path.exists(metrics_path):
-            os.replace(metrics_path, metrics_bak_path)
-        
         try:
+            if os.path.exists(output_path):
+                os.replace(output_path, bak_path)
+            if os.path.exists(metrics_path):
+                os.replace(metrics_path, metrics_bak_path)
+            
             os.replace(tmp_path, output_path)
             os.replace(tmp_metrics_path, metrics_path)
             print(f"Successfully synced data to {output_path}")

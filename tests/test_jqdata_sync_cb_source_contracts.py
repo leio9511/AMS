@@ -63,7 +63,7 @@ def test_underlying_ticker_is_mapped_from_basic_info_company_code(mock_validator
 
     sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
 
-    df = pd.read_csv("data/cb_history_factors.csv")
+    df = pd.read_csv("/root/projects/AMS/data/cb_history_factors.csv")
     assert df.loc[0, "underlying_ticker"] == "600000.XSHG"
 
 

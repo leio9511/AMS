@@ -79,7 +79,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
 
         sync_cb_data(self.start_date, self.end_date)
 
-        df = pd.read_csv("data/cb_history_factors.csv")
+        df = pd.read_csv("/root/projects/AMS/data/cb_history_factors.csv")
         self.assertTrue((df["premium_rate"] > 0).all())
         self.assertEqual(df["premium_rate"].iloc[0], 0.1)
         self.assertEqual(df["premium_rate"].iloc[4], 0.3)
@@ -114,7 +114,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
 
         sync_cb_data("2024-01-03", "2024-01-03")
 
-        df = pd.read_csv("data/cb_history_factors.csv")
+        df = pd.read_csv("/root/projects/AMS/data/cb_history_factors.csv")
         self.assertEqual(df["underlying_ticker"].iloc[0], self.underlying)
         self.assertTrue(df["is_st"].iloc[0])
 
@@ -146,9 +146,9 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
 
         sync_cb_data("2024-01-03", "2024-01-03")
 
-        df = pd.read_csv("data/cb_history_factors.csv")
+        df = pd.read_csv("/root/projects/AMS/data/cb_history_factors.csv")
         self.assertEqual(df["premium_rate"].iloc[0], 0.155)
-        with open("data/cb_history_factors.metrics.json", "r", encoding="utf-8") as f:
+        with open("/root/projects/AMS/data/cb_history_factors.metrics.json", "r", encoding="utf-8") as f:
             metrics = json.load(f)
         self.assertEqual(metrics["premium_rate_source_row_count"], 1)
         self.assertEqual(metrics["premium_rate_joined_row_count"], 1)
@@ -179,9 +179,9 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
 
         sync_cb_data("2024-04-30", "2024-04-30")
 
-        df = pd.read_csv("data/cb_history_factors.csv")
+        df = pd.read_csv("/root/projects/AMS/data/cb_history_factors.csv")
         self.assertTrue(df["is_redeemed"].iloc[0])
-        with open("data/cb_history_factors.metrics.json", "r", encoding="utf-8") as f:
+        with open("/root/projects/AMS/data/cb_history_factors.metrics.json", "r", encoding="utf-8") as f:
             metrics = json.load(f)
         self.assertEqual(metrics["is_redeemed_missing_delist_count"], 0)
 
@@ -213,7 +213,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
 
         sync_cb_data("2024-01-03", "2024-01-03")
 
-        df = pd.read_csv("data/cb_history_factors.csv")
+        df = pd.read_csv("/root/projects/AMS/data/cb_history_factors.csv")
         self.assertTrue(df["is_st"].iloc[0])
 
 
@@ -295,7 +295,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         
         original_replace = os.replace
         def mock_replace(src, dst):
-            if src == "data/cb_history_factors.csv.tmp":
+            if src == "/root/projects/AMS/data/cb_history_factors.csv.tmp":
                 raise OSError("Mock failure")
             return original_replace(src, dst)
 
