@@ -258,29 +258,37 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
         val_l2 = validator_l2.validate_dataframe(df_to_val)
         validation_passed = val_l1 and val_l2
     except Exception as e:
+        print(e)
         validation_passed = False
 
     import sys
     if validation_passed:
+        canonical_backed_up = False
+        metrics_backed_up = False
+        canonical_existed = os.path.exists(output_path)
+        metrics_existed = os.path.exists(metrics_path)
         try:
-            if os.path.exists(output_path):
+            if canonical_existed:
                 os.replace(output_path, bak_path)
-            if os.path.exists(metrics_path):
+                canonical_backed_up = True
+            if metrics_existed:
                 os.replace(metrics_path, metrics_bak_path)
+                metrics_backed_up = True
             
             os.replace(tmp_path, output_path)
             os.replace(tmp_metrics_path, metrics_path)
             print(f"Successfully synced data to {output_path}")
         except Exception as e:
-            if os.path.exists(bak_path):
+            if canonical_backed_up:
                 os.replace(bak_path, output_path)
-            elif os.path.exists(output_path):
+            elif not canonical_existed and os.path.exists(output_path):
                 os.remove(output_path)
                 
-            if os.path.exists(metrics_bak_path):
+            if metrics_backed_up:
                 os.replace(metrics_bak_path, metrics_path)
-            elif os.path.exists(metrics_path):
+            elif not metrics_existed and os.path.exists(metrics_path):
                 os.remove(metrics_path)
+                
             print("[DataPromotionRollback] Atomic promotion failed. Canonical dataset restored from backup.")
             sys.exit(1)
     else:
