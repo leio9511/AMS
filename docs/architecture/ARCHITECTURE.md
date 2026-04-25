@@ -111,3 +111,4 @@ Before entering Phase 2 (Live QMT Integration), AMS must satisfy:
 - A real smoke test passes.
 - At least one strategy (`cb_rotation`) has a golden regression baseline.
 - Validation framework requirements are documented and enforced in preflight/CI.
+- ISSUE-1142 is a blocking issue for AMS Phase 2. AMS must not enter Live QMT Integration until /root/projects/AMS/data/cb_history_factors.csv is the unique canonical CB research/backtest dataset and the semantic quality gates defined in this PRD are enforced.

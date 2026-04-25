@@ -29,8 +29,21 @@ def test_cli_help_output():
 
 def test_main_runner_default_data_path():
     result = subprocess.run([sys.executable, "main_runner.py", "--help"], capture_output=True, text=True)
-    expected_default = "/root/.openclaw/workspace/data/cb_history_factors.csv"
+    expected_default = "/root/projects/AMS/data/cb_history_factors.csv"
+    legacy_default = "/root/.openclaw/workspace/data/cb_history_factors.csv"
     assert expected_default in result.stdout
+    assert legacy_default not in result.stdout
+
+def test_phase2_blocker_statement_in_docs():
+    statement = "ISSUE-1142 is a blocking issue for AMS Phase 2. AMS must not enter Live QMT Integration until /root/projects/AMS/data/cb_history_factors.csv is the unique canonical CB research/backtest dataset and the semantic quality gates defined in this PRD are enforced."
+    
+    with open("/root/projects/AMS/docs/ROADMAP.md", "r", encoding="utf-8") as f:
+        roadmap_content = f.read()
+    assert statement in roadmap_content
+
+    with open("/root/projects/AMS/docs/architecture/ARCHITECTURE.md", "r", encoding="utf-8") as f:
+        architecture_content = f.read()
+    assert statement in architecture_content
 
 def test_main_runner_argument_default():
     test_args = ["main_runner.py", "--strategy", "cb_rotation", "--start-date", "2025-01-01", 
@@ -48,7 +61,7 @@ def test_main_runner_argument_default():
         
         mock_data_feed.assert_called_once()
         call_args = mock_data_feed.call_args
-        assert call_args.kwargs['file_path'] == "/root/.openclaw/workspace/data/cb_history_factors.csv"
+        assert call_args.kwargs['file_path'] == "/root/projects/AMS/data/cb_history_factors.csv"
 
 def test_cli_tp_mode_validation():
     test_args = ["main_runner.py", "--strategy", "cb_rotation", "--start-date", "2025-01-01", 

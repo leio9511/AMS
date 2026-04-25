@@ -53,7 +53,8 @@ def test_canonical_data_path_usage():
     'Verify that when no data path is specified, it defaults to the production canonical path.'
     """
     result = subprocess.run([sys.executable, "main_runner.py", "--help"], capture_output=True, text=True)
-    assert "/root/.openclaw/workspace/data/cb_history_factors.csv" in result.stdout
+    assert "/root/projects/AMS/data/cb_history_factors.csv" in result.stdout
+    assert "/root/.openclaw/workspace/data/cb_history_factors.csv" not in result.stdout
 
 def test_json_format_integrity():
     """

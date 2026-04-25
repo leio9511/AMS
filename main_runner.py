@@ -30,7 +30,7 @@ def main():
     parser.add_argument('--tp-pos', type=float, help="Threshold for cost-basis take-profit (e.g., 0.20).")
     parser.add_argument('--tp-intra', type=float, help="Threshold for intraday momentum take-profit (e.g., 0.08).")
     parser.add_argument('--sl', required=True, type=float, help="Threshold for intraday stop-loss (e.g., -0.08).")
-    parser.add_argument('--data-path', default="/root/.openclaw/workspace/data/cb_history_factors.csv", help="Path to the historical data CSV file.")
+    parser.add_argument('--data-path', default="/root/projects/AMS/data/cb_history_factors.csv", help="Path to the historical data CSV file.")
     parser.add_argument('--format', choices=['text', 'json'], default='text', help="Output format ('text' or 'json'). Default: 'text'.")
 
     args = parser.parse_args()

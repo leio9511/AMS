@@ -50,6 +50,7 @@ Before entering Phase 2, AMS must satisfy:
 - Smoke test passes in CI/preflight
 - `cb_rotation` has its first golden regression baseline
 - Validation framework requirements are documented and tracked
+- ISSUE-1142 is a blocking issue for AMS Phase 2. AMS must not enter Live QMT Integration until /root/projects/AMS/data/cb_history_factors.csv is the unique canonical CB research/backtest dataset and the semantic quality gates defined in this PRD are enforced.
 
 ## Next Actions
 - Fix `main_runner.py` real CLI path
