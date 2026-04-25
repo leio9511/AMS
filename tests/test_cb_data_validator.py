@@ -95,3 +95,95 @@ def test_cli_invalid_csv(tmp_path):
     result = subprocess.run([sys.executable, script_path, "--csv", str(csv_file)], capture_output=True, text=True)
     assert result.returncode == 1
     assert "[DataContractViolation] Validation failed due to SchemaError:" in result.stdout
+
+from ams.validators.cb_data_validator import DatasetSemanticValidator, DataSemanticViolation, DataDriftViolation
+import json
+
+def test_semantic_validation_success(tmp_path):
+    baseline_file = tmp_path / "baseline.json"
+    baseline_data = {
+        "row_count": 50000,
+        "premium_rate_nonzero_ratio": 0.98,
+        "is_st_true_count": 2,
+        "is_redeemed_true_count": 2
+    }
+    baseline_file.write_text(json.dumps(baseline_data))
+
+    df = pd.DataFrame({
+        "underlying_ticker": ["000001"] * 50000,
+        "premium_rate": [0.1] * 49000 + [0.0] * 1000,
+        "is_st": [True] * 2 + [False] * 49998,
+        "is_redeemed": [True] * 2 + [False] * 49998
+    })
+
+    validator = DatasetSemanticValidator(baseline_path=str(baseline_file))
+    assert validator.validate_dataframe(df) is True
+
+def test_semantic_validation_collapsed_premium(tmp_path):
+    baseline_file = tmp_path / "baseline.json"
+    baseline_data = {
+        "row_count": 50000,
+        "premium_rate_nonzero_ratio": 0.98,
+        "is_st_true_count": 2,
+        "is_redeemed_true_count": 2
+    }
+    baseline_file.write_text(json.dumps(baseline_data))
+    
+    # ratio of nonzero is < 0.95
+    df = pd.DataFrame({
+        "underlying_ticker": ["000001"] * 50000,
+        "premium_rate": [0.1] * 40000 + [0.0] * 10000,
+        "is_st": [True] * 2 + [False] * 49998,
+        "is_redeemed": [True] * 2 + [False] * 49998
+    })
+    
+    validator = DatasetSemanticValidator(baseline_path=str(baseline_file))
+    with pytest.raises(DataSemanticViolation) as excinfo:
+        validator.validate_dataframe(df)
+    assert "[DataSemanticViolation] premium_rate_nonzero_ratio below minimum threshold." in str(excinfo.value)
+
+def test_semantic_validation_zero_st_events(tmp_path):
+    baseline_file = tmp_path / "baseline.json"
+    baseline_data = {
+        "row_count": 50000,
+        "premium_rate_nonzero_ratio": 0.98,
+        "is_st_true_count": 2,
+        "is_redeemed_true_count": 2
+    }
+    baseline_file.write_text(json.dumps(baseline_data))
+    
+    df = pd.DataFrame({
+        "underlying_ticker": ["000001"] * 50000,
+        "premium_rate": [0.1] * 49000 + [0.0] * 1000,
+        "is_st": [False] * 50000,
+        "is_redeemed": [True] * 2 + [False] * 49998
+    })
+    
+    validator = DatasetSemanticValidator(baseline_path=str(baseline_file))
+    with pytest.raises(DataSemanticViolation) as excinfo:
+        validator.validate_dataframe(df)
+    assert "[DataSemanticViolation] is_st_true_count below minimum threshold." in str(excinfo.value)
+
+def test_semantic_validation_drift_violation(tmp_path):
+    baseline_file = tmp_path / "baseline.json"
+    # mock a baseline with 100k rows
+    baseline_data = {
+        "row_count": 100000,
+        "premium_rate_nonzero_ratio": 0.98,
+        "is_st_true_count": 2,
+        "is_redeemed_true_count": 2
+    }
+    baseline_file.write_text(json.dumps(baseline_data))
+    
+    # provide a dataframe with 50k rows, which is a drop > 20%
+    df = pd.DataFrame({
+        "underlying_ticker": ["000001"] * 50000,
+        "premium_rate": [0.1] * 49000 + [0.0] * 1000,
+        "is_st": [True] * 2 + [False] * 49998,
+        "is_redeemed": [True] * 2 + [False] * 49998
+    })
+    
+    validator = DatasetSemanticValidator(baseline_path=str(baseline_file))
+    with pytest.raises(DataDriftViolation) as excinfo:
+        validator.validate_dataframe(df)
+    assert "[DataDriftViolation] candidate dataset drift exceeded baseline guardrail." in str(excinfo.value)
