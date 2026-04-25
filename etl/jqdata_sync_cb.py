@@ -6,6 +6,7 @@ import pandas as pd
 
 
 METRICS_PATH = "/root/projects/AMS/data/cb_history_factors.metrics.json"
+DATA_PATH = "/root/projects/AMS/data/cb_history_factors.csv"
 LEGACY_UNDERLYING_SOURCE_FATAL = (
     "[FATAL] Invalid underlying-ticker source contract: get_security_info(ticker).parent "
     "is not valid for AMS convertible bonds."
@@ -125,8 +126,8 @@ def _write_metrics(metrics_path: str, metrics: dict) -> None:
 
 
 def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
-    output_path = "/root/projects/AMS/data/cb_history_factors.csv"
-    bak_path = "/root/projects/AMS/data/cb_history_factors.csv.bak"
+    output_path = DATA_PATH
+    bak_path = output_path + ".bak"
     metrics_path = METRICS_PATH
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -234,15 +235,15 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
         "is_redeemed",
     ]]
 
-    metrics_bak_path = "/root/projects/AMS/data/cb_history_factors.metrics.json.bak"
-    tmp_metrics_path = "/root/projects/AMS/data/cb_history_factors.metrics.json.tmp"
+    metrics_bak_path = metrics_path + ".bak"
+    tmp_metrics_path = metrics_path + ".tmp"
     _write_metrics(tmp_metrics_path, premium_rate_metrics)
 
     from ams.validators.cb_data_validator import CBDataValidator, DatasetSemanticValidator
 
     validator_l1 = CBDataValidator()
     validator_l2 = DatasetSemanticValidator()
-    tmp_path = "/root/projects/AMS/data/cb_history_factors.csv.tmp"
+    tmp_path = output_path + ".tmp"
 
     df.to_csv(tmp_path, index=False)
 
@@ -273,8 +274,13 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
         except Exception as e:
             if os.path.exists(bak_path):
                 os.replace(bak_path, output_path)
+            elif os.path.exists(output_path):
+                os.remove(output_path)
+                
             if os.path.exists(metrics_bak_path):
                 os.replace(metrics_bak_path, metrics_path)
+            elif os.path.exists(metrics_path):
+                os.remove(metrics_path)
             print("[DataPromotionRollback] Atomic promotion failed. Canonical dataset restored from backup.")
             sys.exit(1)
     else:

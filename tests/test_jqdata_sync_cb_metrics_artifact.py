@@ -1,10 +1,11 @@
+import etl.jqdata_sync_cb
 import json
 import os
 from unittest.mock import patch
 
 import pandas as pd
 
-from etl.jqdata_sync_cb import METRICS_PATH, sync_cb_data
+from etl.jqdata_sync_cb import sync_cb_data
 
 
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
@@ -61,8 +62,8 @@ def test_metrics_artifact_contains_required_premium_and_redemption_contract_fiel
 
     sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
 
-    assert os.path.exists(METRICS_PATH)
-    with open(METRICS_PATH, "r", encoding="utf-8") as f:
+    assert os.path.exists(etl.jqdata_sync_cb.METRICS_PATH)
+    with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
         metrics = json.load(f)
 
     assert metrics["premium_rate_source_row_count"] == 2

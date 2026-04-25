@@ -1,3 +1,4 @@
+import etl.jqdata_sync_cb
 import json
 import os
 import unittest
@@ -79,7 +80,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
 
         sync_cb_data(self.start_date, self.end_date)
 
-        df = pd.read_csv("/root/projects/AMS/data/cb_history_factors.csv")
+        df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
         self.assertTrue((df["premium_rate"] > 0).all())
         self.assertEqual(df["premium_rate"].iloc[0], 0.1)
         self.assertEqual(df["premium_rate"].iloc[4], 0.3)
@@ -114,7 +115,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
 
         sync_cb_data("2024-01-03", "2024-01-03")
 
-        df = pd.read_csv("/root/projects/AMS/data/cb_history_factors.csv")
+        df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
         self.assertEqual(df["underlying_ticker"].iloc[0], self.underlying)
         self.assertTrue(df["is_st"].iloc[0])
 
@@ -146,9 +147,9 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
 
         sync_cb_data("2024-01-03", "2024-01-03")
 
-        df = pd.read_csv("/root/projects/AMS/data/cb_history_factors.csv")
+        df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
         self.assertEqual(df["premium_rate"].iloc[0], 0.155)
-        with open("/root/projects/AMS/data/cb_history_factors.metrics.json", "r", encoding="utf-8") as f:
+        with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
             metrics = json.load(f)
         self.assertEqual(metrics["premium_rate_source_row_count"], 1)
         self.assertEqual(metrics["premium_rate_joined_row_count"], 1)
@@ -179,9 +180,9 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
 
         sync_cb_data("2024-04-30", "2024-04-30")
 
-        df = pd.read_csv("/root/projects/AMS/data/cb_history_factors.csv")
+        df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
         self.assertTrue(df["is_redeemed"].iloc[0])
-        with open("/root/projects/AMS/data/cb_history_factors.metrics.json", "r", encoding="utf-8") as f:
+        with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
             metrics = json.load(f)
         self.assertEqual(metrics["is_redeemed_missing_delist_count"], 0)
 
@@ -213,7 +214,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
 
         sync_cb_data("2024-01-03", "2024-01-03")
 
-        df = pd.read_csv("/root/projects/AMS/data/cb_history_factors.csv")
+        df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
         self.assertTrue(df["is_st"].iloc[0])
 
 
@@ -242,7 +243,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
             sync_cb_data("2024-01-03", "2024-01-03")
             
             # Assert os.replace was called for tmp to canonical
-            calls = [call for call in mock_replace.mock_calls if 'data/cb_history_factors.csv.tmp' in str(call)]
+            calls = [call for call in mock_replace.mock_calls if 'cb_history_factors.csv.tmp' in str(call)]
             self.assertTrue(len(calls) > 0)
             
     @patch("etl.jqdata_sync_cb.jqdatasdk")
@@ -271,7 +272,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
             self.assertNotEqual(cm.exception.code, 0)
             
             # Canonical paths should not be overwritten
-            calls = [call for call in mock_replace.mock_calls if 'data/cb_history_factors.csv.tmp' in str(call)]
+            calls = [call for call in mock_replace.mock_calls if 'cb_history_factors.csv.tmp' in str(call)]
             self.assertEqual(len(calls), 0)
 
     @patch("etl.jqdata_sync_cb.jqdatasdk")
@@ -295,7 +296,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         
         original_replace = os.replace
         def mock_replace(src, dst):
-            if src == "/root/projects/AMS/data/cb_history_factors.csv.tmp":
+            if src == f"{etl.jqdata_sync_cb.DATA_PATH}.tmp":
                 raise OSError("Mock failure")
             return original_replace(src, dst)
 

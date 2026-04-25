@@ -1,3 +1,4 @@
+import etl.jqdata_sync_cb
 import json
 import os
 from unittest.mock import patch
@@ -51,8 +52,8 @@ def test_jqdata_successful_sync(mock_semantic_validator, mock_jqdatasdk):
 
     sync_cb_data()
 
-    assert os.path.exists("/root/projects/AMS/data/cb_history_factors.csv")
-    df = pd.read_csv("/root/projects/AMS/data/cb_history_factors.csv")
+    assert os.path.exists(etl.jqdata_sync_cb.DATA_PATH)
+    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
     expected_cols = {
         "ticker",
         "date",
@@ -123,7 +124,7 @@ def test_integrated_source_contract_repairs_keep_dataset_generation_green(mock_s
 
     sync_cb_data()
 
-    df = pd.read_csv("/root/projects/AMS/data/cb_history_factors.csv")
+    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
     assert len(df) == 2
     assert set(df["premium_rate"].round(3).tolist()) == {0.155, 0.1}
     assert bool(df.loc[df["ticker"] == "123071.XSHE", "is_redeemed"].iloc[0]) is False
@@ -166,6 +167,6 @@ def test_integrated_source_contract_flow_rejects_legacy_underlying_and_redemptio
 
     sync_cb_data()
 
-    df = pd.read_csv("/root/projects/AMS/data/cb_history_factors.csv")
+    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
     assert bool(df.loc[0, "is_redeemed"]) is True
     assert df.loc[0, "underlying_ticker"] == "000001.XSHE"

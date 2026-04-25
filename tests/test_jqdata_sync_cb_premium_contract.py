@@ -1,3 +1,4 @@
+import etl.jqdata_sync_cb
 import json
 import os
 from unittest.mock import patch
@@ -46,7 +47,7 @@ def test_premium_rate_join_uses_code_exchange_code_and_date_instead_of_full_tick
 
     sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
 
-    df = pd.read_csv("/root/projects/AMS/data/cb_history_factors.csv")
+    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
     assert df.loc[0, "premium_rate"] == 0.155
 
 
@@ -80,7 +81,7 @@ def test_premium_rate_join_metrics_are_emitted_with_expected_names(mock_validato
 
     sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
 
-    with open("/root/projects/AMS/data/cb_history_factors.metrics.json", "r", encoding="utf-8") as f:
+    with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
         metrics = json.load(f)
 
     assert metrics["premium_rate_source_row_count"] == 1

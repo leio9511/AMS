@@ -1,3 +1,4 @@
+import etl.jqdata_sync_cb
 import json
 import os
 import pandas as pd
@@ -98,7 +99,7 @@ def test_backup_creation(mock_jqdata, tmp_path):
         
         # Mocking os.path.exists to return True for the specific file
         def side_effect_exists(path):
-            if path == "/root/projects/AMS/data/cb_history_factors.csv":
+            if path == etl.jqdata_sync_cb.DATA_PATH:
                 return True
             return False
 
@@ -108,7 +109,7 @@ def test_backup_creation(mock_jqdata, tmp_path):
              except:
                  pass # We expect it might fail later due to other paths
              
-             mock_replace.assert_any_call("/root/projects/AMS/data/cb_history_factors.csv", "/root/projects/AMS/data/cb_history_factors.csv.bak")
+             mock_replace.assert_any_call(etl.jqdata_sync_cb.DATA_PATH, f"{etl.jqdata_sync_cb.DATA_PATH}.bak")
 
 def test_validator_integration(mock_jqdata, tmp_path):
     # This test checks if CBDataValidator is called
@@ -141,7 +142,7 @@ def test_atomic_write_success(mock_jqdata, tmp_path):
         })
         
         sync_cb_data()
-        mock_replace.assert_any_call("/root/projects/AMS/data/cb_history_factors.csv.tmp", "/root/projects/AMS/data/cb_history_factors.csv")
+        mock_replace.assert_any_call(f"{etl.jqdata_sync_cb.DATA_PATH}.tmp", etl.jqdata_sync_cb.DATA_PATH)
 
 
 def test_sync_cb_data_writes_metrics_artifact_without_breaking_atomic_csv_flow(mock_jqdata, tmp_path):
@@ -162,9 +163,9 @@ def test_sync_cb_data_writes_metrics_artifact_without_breaking_atomic_csv_flow(m
 
         sync_cb_data()
 
-        mock_replace.assert_any_call("/root/projects/AMS/data/cb_history_factors.csv.tmp", "/root/projects/AMS/data/cb_history_factors.csv")
+        mock_replace.assert_any_call(f"{etl.jqdata_sync_cb.DATA_PATH}.tmp", etl.jqdata_sync_cb.DATA_PATH)
         opened_paths = [call.args[0] for call in mock_open.call_args_list if call.args]
-        assert "/root/projects/AMS/data/cb_history_factors.metrics.json.tmp" in opened_paths
+        assert f"{etl.jqdata_sync_cb.METRICS_PATH}.tmp" in opened_paths
 
 def test_validation_interception(mock_jqdata, tmp_path):
     with patch("os.replace") as mock_replace, \
