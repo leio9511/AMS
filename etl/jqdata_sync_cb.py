@@ -130,10 +130,6 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     metrics_path = METRICS_PATH
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    if os.path.exists(output_path):
-        import shutil
-
-        shutil.copy2(output_path, bak_path)
 
     user = os.environ.get("JQDATA_USER")
     pwd = os.environ.get("JQDATA_PWD")
@@ -238,11 +234,14 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
         "is_redeemed",
     ]]
 
-    _write_metrics(metrics_path, premium_rate_metrics)
+    metrics_bak_path = "data/cb_history_factors.metrics.json.bak"
+    tmp_metrics_path = "data/cb_history_factors.metrics.json.tmp"
+    _write_metrics(tmp_metrics_path, premium_rate_metrics)
 
-    from ams.validators.cb_data_validator import CBDataValidator
+    from ams.validators.cb_data_validator import CBDataValidator, DatasetSemanticValidator
 
-    validator = CBDataValidator()
+    validator_l1 = CBDataValidator()
+    validator_l2 = DatasetSemanticValidator()
     tmp_path = "data/cb_history_factors.csv.tmp"
 
     df.to_csv(tmp_path, index=False)
@@ -252,13 +251,35 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     df_to_val["is_st"] = df_to_val["is_st"].astype(bool)
     df_to_val["is_redeemed"] = df_to_val["is_redeemed"].astype(bool)
 
-    if validator.validate_dataframe(df_to_val):
-        os.replace(tmp_path, output_path)
-        print(f"Successfully synced data to {output_path}")
+    validation_passed = False
+    try:
+        val_l1 = validator_l1.validate_dataframe(df_to_val)
+        val_l2 = validator_l2.validate_dataframe(df_to_val)
+        validation_passed = val_l1 and val_l2
+    except Exception as e:
+        validation_passed = False
+
+    import sys
+    if validation_passed:
+        if os.path.exists(output_path):
+            os.replace(output_path, bak_path)
+        if os.path.exists(metrics_path):
+            os.replace(metrics_path, metrics_bak_path)
+        
+        try:
+            os.replace(tmp_path, output_path)
+            os.replace(tmp_metrics_path, metrics_path)
+            print(f"Successfully synced data to {output_path}")
+        except Exception as e:
+            if os.path.exists(bak_path):
+                os.replace(bak_path, output_path)
+            if os.path.exists(metrics_bak_path):
+                os.replace(metrics_bak_path, metrics_path)
+            print("[DataPromotionRollback] Atomic promotion failed. Canonical dataset restored from backup.")
+            sys.exit(1)
     else:
-        print(f"[DataContractViolation] Validation failed for {tmp_path}, keeping old file.")
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+        print("[DataPromotionBlocked] Candidate research dataset failed validation. Canonical dataset remains unchanged.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

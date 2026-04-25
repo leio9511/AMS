@@ -16,7 +16,9 @@ def test_jqdata_auth_failure():
 
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
 @patch("etl.jqdata_sync_cb.jqdatasdk")
-def test_jqdata_successful_sync(mock_jqdatasdk):
+@patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+def test_jqdata_successful_sync(mock_semantic_validator, mock_jqdatasdk):
+    mock_semantic_validator.return_value.validate_dataframe.return_value = True
     mock_jqdatasdk.auth.return_value = None
 
     mock_df_bonds = pd.DataFrame({"code": ["110059.XSHG"], "end_date": [pd.NaT]})
@@ -71,7 +73,9 @@ def test_jqdata_successful_sync(mock_jqdatasdk):
 
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
 @patch("etl.jqdata_sync_cb.jqdatasdk")
-def test_integrated_source_contract_repairs_keep_dataset_generation_green(mock_jqdatasdk):
+@patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+def test_integrated_source_contract_repairs_keep_dataset_generation_green(mock_semantic_validator, mock_jqdatasdk):
+    mock_semantic_validator.return_value.validate_dataframe.return_value = True
     mock_jqdatasdk.auth.return_value = None
 
     mock_df_bonds = pd.DataFrame({"code": ["123071.XSHE", "110059.XSHG"], "end_date": [pd.NaT, pd.NaT]})
@@ -128,7 +132,9 @@ def test_integrated_source_contract_repairs_keep_dataset_generation_green(mock_j
 
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
 @patch("etl.jqdata_sync_cb.jqdatasdk")
-def test_integrated_source_contract_flow_rejects_legacy_underlying_and_redemption_paths(mock_jqdatasdk):
+@patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+def test_integrated_source_contract_flow_rejects_legacy_underlying_and_redemption_paths(mock_semantic_validator, mock_jqdatasdk):
+    mock_semantic_validator.return_value.validate_dataframe.return_value = True
     mock_jqdatasdk.auth.return_value = None
 
     mock_df_bonds = pd.DataFrame({"code": ["110059.XSHG"], "end_date": [pd.NaT]})

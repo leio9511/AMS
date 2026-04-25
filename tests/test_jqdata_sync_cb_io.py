@@ -90,7 +90,7 @@ def test_backup_creation(mock_jqdata, tmp_path):
     with patch("os.makedirs"), \
          patch("os.path.dirname", return_value=str(data_dir)), \
          patch("os.path.exists", side_effect=lambda p: os.path.exists(p) if not p.startswith("data/") else os.path.exists(os.path.join(tmp_path, p))), \
-         patch("shutil.copy2") as mock_copy:
+         patch("os.replace") as mock_replace:
         
         # We need to be careful with paths in the script
         # The script uses "data/..." relative paths
@@ -108,7 +108,7 @@ def test_backup_creation(mock_jqdata, tmp_path):
              except:
                  pass # We expect it might fail later due to other paths
              
-             mock_copy.assert_called_with("data/cb_history_factors.csv", "data/cb_history_factors.csv.bak")
+             mock_replace.assert_any_call("data/cb_history_factors.csv", "data/cb_history_factors.csv.bak")
 
 def test_validator_integration(mock_jqdata, tmp_path):
     # This test checks if CBDataValidator is called
@@ -141,7 +141,7 @@ def test_atomic_write_success(mock_jqdata, tmp_path):
         })
         
         sync_cb_data()
-        mock_replace.assert_called_with("data/cb_history_factors.csv.tmp", "data/cb_history_factors.csv")
+        mock_replace.assert_any_call("data/cb_history_factors.csv.tmp", "data/cb_history_factors.csv")
 
 
 def test_sync_cb_data_writes_metrics_artifact_without_breaking_atomic_csv_flow(mock_jqdata, tmp_path):
@@ -162,9 +162,9 @@ def test_sync_cb_data_writes_metrics_artifact_without_breaking_atomic_csv_flow(m
 
         sync_cb_data()
 
-        mock_replace.assert_called_with("data/cb_history_factors.csv.tmp", "data/cb_history_factors.csv")
+        mock_replace.assert_any_call("data/cb_history_factors.csv.tmp", "data/cb_history_factors.csv")
         opened_paths = [call.args[0] for call in mock_open.call_args_list if call.args]
-        assert "data/cb_history_factors.metrics.json" in opened_paths
+        assert "data/cb_history_factors.metrics.json.tmp" in opened_paths
 
 def test_validation_interception(mock_jqdata, tmp_path):
     with patch("os.replace") as mock_replace, \
@@ -175,9 +175,10 @@ def test_validation_interception(mock_jqdata, tmp_path):
          patch("pandas.read_csv"), \
          patch("os.remove") as mock_remove:
         
+        import pytest
         mock_validator = mock_validator_cls.return_value
         mock_validator.validate_dataframe.return_value = False # Force failure
         
-        sync_cb_data()
+        with pytest.raises(SystemExit):
+            sync_cb_data()
         mock_replace.assert_not_called()
-        mock_remove.assert_called_with("data/cb_history_factors.csv.tmp")
