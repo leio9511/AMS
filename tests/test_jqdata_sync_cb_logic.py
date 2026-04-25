@@ -364,22 +364,34 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         mock_validator.return_value.validate_dataframe.return_value = True
         mock_semantic_validator.return_value.validate_dataframe.return_value = True
         
+        mock_data_path = "/tmp/mock_cb_data.csv"
+        mock_metrics_path = "/tmp/mock_metrics.json"
+
         original_replace = os.replace
         def mock_replace(src, dst):
-            if src == etl.jqdata_sync_cb.DATA_PATH and dst == etl.jqdata_sync_cb.DATA_PATH + ".bak":
+            if src == mock_data_path and dst == mock_data_path + ".bak":
                 raise OSError("Mock failure: Cannot backup canonical file")
             return original_replace(src, dst)
             
-        with open(etl.jqdata_sync_cb.DATA_PATH, "w") as f:
+        with open(mock_data_path, "w") as f:
             f.write("dummy")
 
-        with patch("os.replace", side_effect=mock_replace), patch("os.remove") as mock_remove:
-            with self.assertRaises(SystemExit) as cm:
-                sync_cb_data("2024-01-03", "2024-01-03")
-            
-            self.assertNotEqual(cm.exception.code, 0)
-            calls = [call for call in mock_remove.mock_calls if etl.jqdata_sync_cb.DATA_PATH in str(call)]
-            self.assertEqual(len(calls), 0)
+        try:
+            with patch("etl.jqdata_sync_cb.DATA_PATH", mock_data_path), \
+                 patch("etl.jqdata_sync_cb.METRICS_PATH", mock_metrics_path), \
+                 patch("os.replace", side_effect=mock_replace), \
+                 patch("os.remove") as mock_remove:
+                with self.assertRaises(SystemExit) as cm:
+                    sync_cb_data("2024-01-03", "2024-01-03")
+                
+                self.assertNotEqual(cm.exception.code, 0)
+                calls = [call for call in mock_remove.mock_calls if mock_data_path in str(call)]
+                self.assertEqual(len(calls), 0)
+        finally:
+            if os.path.exists(mock_data_path):
+                os.remove(mock_data_path)
+            if os.path.exists(mock_metrics_path):
+                os.remove(mock_metrics_path)
 
 if __name__ == "__main__":
     unittest.main()
