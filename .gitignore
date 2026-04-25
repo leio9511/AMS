@@ -66,3 +66,4 @@ data/
 
 .sdlc_repo.lock
 .sdlc_lock_manifest.json
+output.json
