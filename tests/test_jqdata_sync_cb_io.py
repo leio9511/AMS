@@ -38,7 +38,7 @@ def mock_jqdata(monkeypatch):
          patch("jqdatasdk.bond.CONBOND_DAILY_CONVERT", mock_daily_convert, create=True):
         
         # Setup basic info
-        mock_get_all.return_value = pd.DataFrame(index=["123456.SH"])
+        mock_get_all.return_value = pd.DataFrame(index=["123456.XSHG"])
         
         # Price data
         price_df = pd.DataFrame({
@@ -49,29 +49,29 @@ def mock_jqdata(monkeypatch):
         # But for one ticker it returns a DataFrame with DatetimeIndex
         # sync_cb_data expects 'time' and 'code' columns after reset_index
         price_df_reset = price_df.reset_index()
-        price_df_reset["code"] = "123456.SH"
+        price_df_reset["code"] = "123456.XSHG"
         mock_get_price.return_value = price_df_reset.set_index(["time", "code"])
 
         # Security info
         mock_info = MagicMock()
-        mock_info.parent = "600000.SH"
+        mock_info.parent = "600000.XSHG"
         mock_get_info.return_value = mock_info
 
         # run_query for bonds info
         bonds_info = pd.DataFrame({
-            "code": ["123456"], "company_code": ["600000.SH"], "delist_Date": ["2026-01-01"]
+            "code": ["123456"], "company_code": ["600000.XSHG"], "delist_Date": ["2026-01-01"]
         })
         
         # run_query for premium rate
         premium_df = pd.DataFrame({
-            "date": ["2025-01-06"], "code": ["123456"], "exchange_code": ["SH"], "convert_premium_rate": [15.5]
+            "date": ["2025-01-06"], "code": ["123456"], "exchange_code": ["XSHG"], "convert_premium_rate": [15.5]
         })
         
         mock_run_query.side_effect = [bonds_info, premium_df]
 
         # ST status
         st_df = pd.DataFrame({
-            "600000.SH": [False]
+            "600000.XSHG": [False]
         }, index=pd.to_datetime(["2025-01-06"]))
         mock_get_extras.return_value = st_df
 
@@ -137,7 +137,7 @@ def test_atomic_write_success(mock_jqdata, tmp_path):
         mock_validator = mock_validator_cls.return_value
         mock_validator.validate_dataframe.return_value = True
         mock_read_csv.return_value = pd.DataFrame({
-            "ticker": ["123456.SH"], "date": ["2025-01-06"], "close": [100.5],
+            "ticker": ["123456.XSHG"], "date": ["2025-01-06"], "close": [100.5],
             "premium_rate": [0.155], "is_st": [False], "is_redeemed": [False]
         })
         
@@ -157,7 +157,7 @@ def test_sync_cb_data_writes_metrics_artifact_without_breaking_atomic_csv_flow(m
         mock_validator = mock_validator_cls.return_value
         mock_validator.validate_dataframe.return_value = True
         mock_read_csv.return_value = pd.DataFrame({
-            "ticker": ["123456.SH"], "date": ["2025-01-06"], "close": [100.5],
+            "ticker": ["123456.XSHG"], "date": ["2025-01-06"], "close": [100.5],
             "premium_rate": [0.155], "is_st": [False], "is_redeemed": [True]
         })
 

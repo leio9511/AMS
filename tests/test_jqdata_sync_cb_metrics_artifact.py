@@ -68,6 +68,8 @@ def test_metrics_artifact_contains_required_premium_and_redemption_contract_fiel
     with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
         metrics = json.load(f)
 
+    queried_raw_codes = mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.call_args.args[0]
+    assert queried_raw_codes == ["123071", "110059"]
     assert metrics["premium_rate_source_row_count"] == 2
     assert metrics["premium_rate_joined_row_count"] == 2
     assert metrics["premium_rate_join_coverage_ratio"] == 1.0

@@ -1,0 +1,177 @@
+diff --git a/tests/test_jqdata_sync_cb.py b/tests/test_jqdata_sync_cb.py
+index 27247e1..7a9cd07 100644
+--- a/tests/test_jqdata_sync_cb.py
++++ b/tests/test_jqdata_sync_cb.py
+@@ -204,3 +204,40 @@ def test_sync_cb_data_raises_when_normalized_underlying_mapping_is_missing(mock_
+ 
+     with pytest.raises(ValueError, match="Missing underlying_ticker for some records"):
+         sync_cb_data()
++
++
++@patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
++@patch("etl.jqdata_sync_cb._build_underlying_mapping", return_value={"110059.XSHG": "000001.XSHE"})
++@patch("etl.jqdata_sync_cb.jqdatasdk")
++@patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
++def test_full_ticker_cannot_be_used_as_underlying_map_key(
++    mock_semantic_validator, mock_jqdatasdk, _mock_build_underlying_mapping
++):
++    mock_semantic_validator.return_value.validate_dataframe.return_value = True
++    mock_jqdatasdk.auth.return_value = None
++
++    mock_df_bonds = pd.DataFrame({"code": ["110059.XSHG"], "end_date": [pd.NaT]})
++    mock_df_bonds.index = ["110059.XSHG"]
++    mock_jqdatasdk.get_all_securities.return_value = mock_df_bonds
++
++    mock_jqdatasdk.bond.run_query.side_effect = [
++        pd.DataFrame({"code": ["110059"], "company_code": ["000001.XSHE"], "delist_Date": ["2025-12-31"]}),
++        pd.DataFrame({"date": ["2020-01-02"], "code": ["110059"], "exchange_code": ["XSHG"], "convert_premium_rate": [10.0]}),
++    ]
++    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
++    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
++    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
++    mock_jqdatasdk.get_price.return_value = pd.DataFrame(
++        {
++            "time": ["2020-01-02"],
++            "code": ["110059.XSHG"],
++            "open": [100.0],
++            "high": [101.0],
++            "low": [99.0],
++            "close": [100.5],
++            "volume": [1000],
++        }
++    ).set_index(["time", "code"])
++
++    with pytest.raises(ValueError, match="Missing underlying_ticker for some records"):
++        sync_cb_data()
+diff --git a/tests/test_jqdata_sync_cb_io.py b/tests/test_jqdata_sync_cb_io.py
+index eef7b4c..aaf4f08 100644
+--- a/tests/test_jqdata_sync_cb_io.py
++++ b/tests/test_jqdata_sync_cb_io.py
+@@ -38,7 +38,7 @@ def mock_jqdata(monkeypatch):
+          patch("jqdatasdk.bond.CONBOND_DAILY_CONVERT", mock_daily_convert, create=True):
+         
+         # Setup basic info
+-        mock_get_all.return_value = pd.DataFrame(index=["123456.SH"])
++        mock_get_all.return_value = pd.DataFrame(index=["123456.XSHG"])
+         
+         # Price data
+         price_df = pd.DataFrame({
+@@ -49,29 +49,29 @@ def mock_jqdata(monkeypatch):
+         # But for one ticker it returns a DataFrame with DatetimeIndex
+         # sync_cb_data expects 'time' and 'code' columns after reset_index
+         price_df_reset = price_df.reset_index()
+-        price_df_reset["code"] = "123456.SH"
++        price_df_reset["code"] = "123456.XSHG"
+         mock_get_price.return_value = price_df_reset.set_index(["time", "code"])
+ 
+         # Security info
+         mock_info = MagicMock()
+-        mock_info.parent = "600000.SH"
++        mock_info.parent = "600000.XSHG"
+         mock_get_info.return_value = mock_info
+ 
+         # run_query for bonds info
+         bonds_info = pd.DataFrame({
+-            "code": ["123456"], "company_code": ["600000.SH"], "delist_Date": ["2026-01-01"]
++            "code": ["123456"], "company_code": ["600000.XSHG"], "delist_Date": ["2026-01-01"]
+         })
+         
+         # run_query for premium rate
+         premium_df = pd.DataFrame({
+-            "date": ["2025-01-06"], "code": ["123456"], "exchange_code": ["SH"], "convert_premium_rate": [15.5]
++            "date": ["2025-01-06"], "code": ["123456"], "exchange_code": ["XSHG"], "convert_premium_rate": [15.5]
+         })
+         
+         mock_run_query.side_effect = [bonds_info, premium_df]
+ 
+         # ST status
+         st_df = pd.DataFrame({
+-            "600000.SH": [False]
++            "600000.XSHG": [False]
+         }, index=pd.to_datetime(["2025-01-06"]))
+         mock_get_extras.return_value = st_df
+ 
+@@ -137,7 +137,7 @@ def test_atomic_write_success(mock_jqdata, tmp_path):
+         mock_validator = mock_validator_cls.return_value
+         mock_validator.validate_dataframe.return_value = True
+         mock_read_csv.return_value = pd.DataFrame({
+-            "ticker": ["123456.SH"], "date": ["2025-01-06"], "close": [100.5],
++            "ticker": ["123456.XSHG"], "date": ["2025-01-06"], "close": [100.5],
+             "premium_rate": [0.155], "is_st": [False], "is_redeemed": [False]
+         })
+         
+@@ -157,7 +157,7 @@ def test_sync_cb_data_writes_metrics_artifact_without_breaking_atomic_csv_flow(m
+         mock_validator = mock_validator_cls.return_value
+         mock_validator.validate_dataframe.return_value = True
+         mock_read_csv.return_value = pd.DataFrame({
+-            "ticker": ["123456.SH"], "date": ["2025-01-06"], "close": [100.5],
++            "ticker": ["123456.XSHG"], "date": ["2025-01-06"], "close": [100.5],
+             "premium_rate": [0.155], "is_st": [False], "is_redeemed": [True]
+         })
+ 
+diff --git a/tests/test_jqdata_sync_cb_logic.py b/tests/test_jqdata_sync_cb_logic.py
+index 8442d23..f2902a1 100644
+--- a/tests/test_jqdata_sync_cb_logic.py
++++ b/tests/test_jqdata_sync_cb_logic.py
+@@ -141,6 +141,8 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
+         sync_cb_data("2024-01-03", "2024-01-03")
+ 
+         df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
++        queried_raw_codes = mock_jq.bond.CONBOND_DAILY_CONVERT.code.in_.call_args.args[0]
++        self.assertEqual(queried_raw_codes, [self.raw_code])
+         self.assertEqual(df["underlying_ticker"].iloc[0], self.underlying)
+ 
+     @patch("etl.jqdata_sync_cb.jqdatasdk")
+diff --git a/tests/test_jqdata_sync_cb_metrics_artifact.py b/tests/test_jqdata_sync_cb_metrics_artifact.py
+index 09423a5..8975afd 100644
+--- a/tests/test_jqdata_sync_cb_metrics_artifact.py
++++ b/tests/test_jqdata_sync_cb_metrics_artifact.py
+@@ -68,6 +68,8 @@ def test_metrics_artifact_contains_required_premium_and_redemption_contract_fiel
+     with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
+         metrics = json.load(f)
+ 
++    queried_raw_codes = mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.call_args.args[0]
++    assert queried_raw_codes == ["123071", "110059"]
+     assert metrics["premium_rate_source_row_count"] == 2
+     assert metrics["premium_rate_joined_row_count"] == 2
+     assert metrics["premium_rate_join_coverage_ratio"] == 1.0
+diff --git a/tests/test_jqdata_sync_cb_premium_contract.py b/tests/test_jqdata_sync_cb_premium_contract.py
+index f32097e..7c05eec 100644
+--- a/tests/test_jqdata_sync_cb_premium_contract.py
++++ b/tests/test_jqdata_sync_cb_premium_contract.py
+@@ -48,6 +48,8 @@ def test_premium_rate_join_uses_code_exchange_code_and_date_instead_of_full_tick
+     sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
+ 
+     df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
++    queried_raw_codes = mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.call_args.args[0]
++    assert queried_raw_codes == ["123071"]
+     assert df.loc[0, "premium_rate"] == 0.155
+ 
+ 
+diff --git a/tests/test_jqdata_sync_cb_source_contracts.py b/tests/test_jqdata_sync_cb_source_contracts.py
+index 324caa0..410a565 100644
+--- a/tests/test_jqdata_sync_cb_source_contracts.py
++++ b/tests/test_jqdata_sync_cb_source_contracts.py
+@@ -36,7 +36,8 @@ def test_underlying_ticker_is_mapped_from_basic_info_company_code(mock_validator
+     premium = pd.DataFrame(
+         {
+             "date": ["2020-01-02"],
+-            "code": ["110059.XSHG"],
++            "code": ["110059"],
++            "exchange_code": ["XSHG"],
+             "convert_premium_rate": [10.0],
+         }
+     )
+@@ -122,10 +123,10 @@ def test_underlying_ticker_path_does_not_use_full_ticker_as_mapping_key(mock_val
+     assert not mock_jqdatasdk.get_security_info.called
+ 
+ 
+-def test_build_underlying_mapping_normalizes_basic_info_code_to_raw_key():
++def test_build_underlying_mapping_preserves_raw_basic_info_code_keys():
+     df_bonds_info = pd.DataFrame(
+         {
+-            "code": ["110059", "123071.XSHE"],
++            "code": ["110059", "123071"],
+             "company_code": ["600000.XSHG", "000001.XSHE"],
+         }
+     )

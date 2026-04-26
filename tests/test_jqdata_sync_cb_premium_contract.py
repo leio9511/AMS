@@ -48,6 +48,8 @@ def test_premium_rate_join_uses_code_exchange_code_and_date_instead_of_full_tick
     sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
 
     df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+    queried_raw_codes = mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.call_args.args[0]
+    assert queried_raw_codes == ["123071"]
     assert df.loc[0, "premium_rate"] == 0.155
 
 

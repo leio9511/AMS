@@ -36,7 +36,8 @@ def test_underlying_ticker_is_mapped_from_basic_info_company_code(mock_validator
     premium = pd.DataFrame(
         {
             "date": ["2020-01-02"],
-            "code": ["110059.XSHG"],
+            "code": ["110059"],
+            "exchange_code": ["XSHG"],
             "convert_premium_rate": [10.0],
         }
     )
@@ -122,10 +123,10 @@ def test_underlying_ticker_path_does_not_use_full_ticker_as_mapping_key(mock_val
     assert not mock_jqdatasdk.get_security_info.called
 
 
-def test_build_underlying_mapping_normalizes_basic_info_code_to_raw_key():
+def test_build_underlying_mapping_preserves_raw_basic_info_code_keys():
     df_bonds_info = pd.DataFrame(
         {
-            "code": ["110059", "123071.XSHE"],
+            "code": ["110059", "123071"],
             "company_code": ["600000.XSHG", "000001.XSHE"],
         }
     )

@@ -141,6 +141,8 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         sync_cb_data("2024-01-03", "2024-01-03")
 
         df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+        queried_raw_codes = mock_jq.bond.CONBOND_DAILY_CONVERT.code.in_.call_args.args[0]
+        self.assertEqual(queried_raw_codes, [self.raw_code])
         self.assertEqual(df["underlying_ticker"].iloc[0], self.underlying)
 
     @patch("etl.jqdata_sync_cb.jqdatasdk")
