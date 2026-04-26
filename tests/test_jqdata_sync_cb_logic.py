@@ -18,10 +18,10 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         self.exchange_code = "XSHG"
         self.underlying = "600000.XSHG"
 
-    def _mock_bonds_info(self, delist_date="2024-12-31", code=None):
+    def _mock_bonds_info(self, delist_date="2024-12-31"):
         return pd.DataFrame(
             {
-                "code": [self.raw_code if code is None else code],
+                "code": [self.raw_code],
                 "company_code": [self.underlying],
                 "delist_Date": [delist_date],
             }
@@ -198,7 +198,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         premium = pd.DataFrame(
             {"date": ["2024-04-30"], "code": [self.raw_code], "exchange_code": [self.exchange_code], "convert_premium_rate": [10.0]}
         )
-        mock_jq.bond.run_query.side_effect = [self._mock_bonds_info("2024-04-30", code=self.ticker), premium]
+        mock_jq.bond.run_query.side_effect = [self._mock_bonds_info("2024-04-30"), premium]
         mock_jq.get_extras.return_value = pd.DataFrame({self.underlying: [False]}, index=pd.to_datetime(["2024-04-30"]))
         mock_validator.return_value.validate_dataframe.return_value = True
 

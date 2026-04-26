@@ -47,7 +47,7 @@ def test_metrics_artifact_contains_required_premium_and_redemption_contract_fiel
 
     bonds_info = pd.DataFrame(
         {
-            "code": ["123071.XSHE", "110059.XSHG"],
+            "code": ["123071", "110059"],
             "company_code": ["000001.XSHE", "000002.XSHG"],
             "delist_Date": [None, "2020-01-01"],
         }
@@ -109,7 +109,7 @@ def test_etl_writes_all_required_metrics(mock_validator_cls, mock_semantic_valid
 
     bonds_info = pd.DataFrame(
         {
-            "code": ["123071.XSHE"],
+            "code": ["123071"],
             "company_code": ["000001.XSHE"],
             "delist_Date": ["2020-01-01"],
         }
