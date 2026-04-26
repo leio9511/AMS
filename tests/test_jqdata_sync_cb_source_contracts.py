@@ -28,7 +28,7 @@ def test_underlying_ticker_is_mapped_from_basic_info_company_code(mock_validator
 
     bonds_info = pd.DataFrame(
         {
-            "code": ["110059.XSHG"],
+            "code": ["110059"],
             "company_code": ["600000.XSHG"],
             "delist_Date": ["2025-12-31"],
         }
@@ -71,13 +71,13 @@ def test_underlying_ticker_is_mapped_from_basic_info_company_code(mock_validator
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
 @patch("etl.jqdata_sync_cb.jqdatasdk")
 @patch("ams.validators.cb_data_validator.CBDataValidator")
-def test_underlying_ticker_path_does_not_call_get_security_info_parent(mock_validator_cls, mock_jqdatasdk):
+def test_underlying_ticker_path_does_not_use_full_ticker_as_mapping_key(mock_validator_cls, mock_jqdatasdk):
     mock_validator_cls.return_value.validate_dataframe.return_value = True
     mock_jqdatasdk.auth.return_value = None
 
     bonds_info = pd.DataFrame(
         {
-            "code": ["110059.XSHG"],
+            "code": ["110059"],
             "company_code": ["600000.XSHG"],
             "delist_Date": ["2025-12-31"],
         }
@@ -85,7 +85,8 @@ def test_underlying_ticker_path_does_not_call_get_security_info_parent(mock_vali
     premium = pd.DataFrame(
         {
             "date": ["2020-01-02"],
-            "code": ["110059.XSHG"],
+            "code": ["110059"],
+            "exchange_code": ["XSHG"],
             "convert_premium_rate": [10.0],
         }
     )
@@ -116,13 +117,15 @@ def test_underlying_ticker_path_does_not_call_get_security_info_parent(mock_vali
 
     sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
 
+    queried_raw_codes = mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.call_args.args[0]
+    assert queried_raw_codes == ["110059"]
     assert not mock_jqdatasdk.get_security_info.called
 
 
-def test_build_underlying_mapping_uses_company_code_column():
+def test_build_underlying_mapping_normalizes_basic_info_code_to_raw_key():
     df_bonds_info = pd.DataFrame(
         {
-            "code": ["123456.XSHG", "123457.XSHE"],
+            "code": ["110059", "123071.XSHE"],
             "company_code": ["600000.XSHG", "000001.XSHE"],
         }
     )
@@ -130,6 +133,22 @@ def test_build_underlying_mapping_uses_company_code_column():
     mapping = _build_underlying_mapping(df_bonds_info)
 
     assert mapping == {
-        "123456.XSHG": "600000.XSHG",
-        "123457.XSHE": "000001.XSHE",
+        "110059": "600000.XSHG",
+        "123071": "000001.XSHE",
+    }
+
+
+def test_build_underlying_mapping_uses_company_code_column():
+    df_bonds_info = pd.DataFrame(
+        {
+            "code": ["123456", "123457"],
+            "company_code": ["600000.XSHG", "000001.XSHE"],
+        }
+    )
+
+    mapping = _build_underlying_mapping(df_bonds_info)
+
+    assert mapping == {
+        "123456": "600000.XSHG",
+        "123457": "000001.XSHE",
     }

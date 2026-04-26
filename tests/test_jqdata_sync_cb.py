@@ -27,7 +27,7 @@ def test_jqdata_successful_sync(mock_semantic_validator, mock_jqdatasdk):
     mock_jqdatasdk.get_all_securities.return_value = mock_df_bonds
 
     mock_jqdatasdk.bond.run_query.side_effect = [
-        pd.DataFrame({"code": ["110059.XSHG"], "company_code": ["000001.XSHE"], "delist_Date": ["2025-12-31"]}),
+        pd.DataFrame({"code": ["110059"], "company_code": ["000001.XSHE"], "delist_Date": ["2025-12-31"]}),
         pd.DataFrame({"date": ["2020-01-02"], "code": ["110059"], "exchange_code": ["XSHG"], "convert_premium_rate": [10.0]}),
     ]
 
@@ -86,7 +86,7 @@ def test_integrated_source_contract_repairs_keep_dataset_generation_green(mock_s
     mock_jqdatasdk.bond.run_query.side_effect = [
         pd.DataFrame(
             {
-                "code": ["123071.XSHE", "110059.XSHG"],
+                "code": ["123071", "110059"],
                 "company_code": ["000001.XSHE", "000002.XSHG"],
                 "delist_Date": [None, "2020-01-01"],
             }
@@ -143,7 +143,7 @@ def test_integrated_source_contract_flow_rejects_legacy_underlying_and_redemptio
     mock_jqdatasdk.get_all_securities.return_value = mock_df_bonds
 
     mock_jqdatasdk.bond.run_query.side_effect = [
-        pd.DataFrame({"code": ["110059.XSHG"], "company_code": ["000001.XSHE"], "delist_Date": ["2020-01-01"]}),
+        pd.DataFrame({"code": ["110059"], "company_code": ["000001.XSHE"], "delist_Date": ["2020-01-01"]}),
         pd.DataFrame({"date": ["2020-01-02"], "code": ["110059"], "exchange_code": ["XSHG"], "convert_premium_rate": [10.0]}),
     ]
 
@@ -170,3 +170,37 @@ def test_integrated_source_contract_flow_rejects_legacy_underlying_and_redemptio
     df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
     assert bool(df.loc[0, "is_redeemed"]) is True
     assert df.loc[0, "underlying_ticker"] == "000001.XSHE"
+
+
+@patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
+@patch("etl.jqdata_sync_cb.jqdatasdk")
+@patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+def test_sync_cb_data_raises_when_normalized_underlying_mapping_is_missing(mock_semantic_validator, mock_jqdatasdk):
+    mock_semantic_validator.return_value.validate_dataframe.return_value = True
+    mock_jqdatasdk.auth.return_value = None
+
+    mock_df_bonds = pd.DataFrame({"code": ["110059.XSHG"], "end_date": [pd.NaT]})
+    mock_df_bonds.index = ["110059.XSHG"]
+    mock_jqdatasdk.get_all_securities.return_value = mock_df_bonds
+
+    mock_jqdatasdk.bond.run_query.side_effect = [
+        pd.DataFrame({"code": ["999999"], "company_code": ["000001.XSHE"], "delist_Date": ["2025-12-31"]}),
+        pd.DataFrame({"date": ["2020-01-02"], "code": ["110059"], "exchange_code": ["XSHG"], "convert_premium_rate": [10.0]}),
+    ]
+    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+    mock_jqdatasdk.get_price.return_value = pd.DataFrame(
+        {
+            "time": ["2020-01-02"],
+            "code": ["110059.XSHG"],
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.5],
+            "volume": [1000],
+        }
+    ).set_index(["time", "code"])
+
+    with pytest.raises(ValueError, match="Missing underlying_ticker for some records"):
+        sync_cb_data()

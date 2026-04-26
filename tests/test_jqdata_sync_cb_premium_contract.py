@@ -34,7 +34,7 @@ def test_premium_rate_join_uses_code_exchange_code_and_date_instead_of_full_tick
     mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
     mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
 
-    bonds_info = pd.DataFrame({"code": ["123071.XSHE"], "company_code": ["000001.XSHE"], "delist_Date": ["2025-12-31"]})
+    bonds_info = pd.DataFrame({"code": ["123071"], "company_code": ["000001.XSHE"], "delist_Date": ["2025-12-31"]})
     premium = pd.DataFrame(
         {
             "date": ["2020-01-02"],
@@ -68,7 +68,7 @@ def test_premium_rate_join_metrics_are_emitted_with_expected_names(mock_validato
     mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
     mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
 
-    bonds_info = pd.DataFrame({"code": ["123071.XSHE"], "company_code": ["000001.XSHE"], "delist_Date": ["2025-12-31"]})
+    bonds_info = pd.DataFrame({"code": ["123071"], "company_code": ["000001.XSHE"], "delist_Date": ["2025-12-31"]})
     premium = pd.DataFrame(
         {
             "date": ["2020-01-02"],

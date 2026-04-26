@@ -59,7 +59,7 @@ def test_redemption_source_contract_keeps_null_delist_behavior_deterministic(moc
 
     bonds_info = pd.DataFrame(
         {
-            "code": ["110059.XSHG"],
+            "code": ["110059"],
             "company_code": ["000001.XSHE"],
             "delist_Date": [None],
             "maturity_date": ["2030-01-01"],
@@ -115,7 +115,7 @@ def test_is_redeemed_becomes_true_on_and_after_delist_date(mock_validator_cls, m
     mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
 
     bonds_info = pd.DataFrame(
-        {"code": ["110059.XSHG"], "company_code": ["000001.XSHE"], "delist_Date": ["2020-01-02"]}
+        {"code": ["110059"], "company_code": ["000001.XSHE"], "delist_Date": ["2020-01-02"]}
     )
     premium = pd.DataFrame(
         {
@@ -162,7 +162,7 @@ def test_null_delist_date_forces_false_and_increments_missing_delist_metric(mock
     mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
 
     bonds_info = pd.DataFrame(
-        {"code": ["110059.XSHG"], "company_code": ["000001.XSHE"], "delist_Date": [None]}
+        {"code": ["110059"], "company_code": ["000001.XSHE"], "delist_Date": [None]}
     )
     premium = pd.DataFrame(
         {"date": ["2020-01-02"], "code": ["110059"], "exchange_code": ["XSHG"], "convert_premium_rate": [10.0]}
@@ -206,7 +206,7 @@ def test_etl_never_queries_finance_ccb_call_after_contract_repair(mock_validator
     mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
 
     bonds_info = pd.DataFrame(
-        {"code": ["110059.XSHG"], "company_code": ["000001.XSHE"], "delist_Date": ["2020-01-02"]}
+        {"code": ["110059"], "company_code": ["000001.XSHE"], "delist_Date": ["2020-01-02"]}
     )
     premium = pd.DataFrame(
         {"date": ["2020-01-02"], "code": ["110059"], "exchange_code": ["XSHG"], "convert_premium_rate": [10.0]}

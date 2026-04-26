@@ -53,12 +53,20 @@ def _build_underlying_mapping(df_bonds_info: pd.DataFrame) -> dict:
     if "code" not in df_bonds_info.columns or "company_code" not in df_bonds_info.columns:
         return {}
 
-    mapping_df = df_bonds_info[["code", "company_code"]].dropna(subset=["code", "company_code"])
+    mapping_df = df_bonds_info[["code", "company_code"]].dropna(subset=["code", "company_code"]).copy()
     if mapping_df.empty:
         return {}
 
-    mapping_df = mapping_df.drop_duplicates(subset=["code"], keep="last")
-    return mapping_df.set_index("code")["company_code"].to_dict()
+    code_as_str = mapping_df["code"].astype(str).str.strip()
+    split_keys = code_as_str.apply(_split_bond_ticker)
+    split_df = pd.DataFrame(split_keys.tolist(), columns=["bond_code_raw", "bond_exchange_code"], index=mapping_df.index)
+    mapping_df["bond_code_raw"] = split_df["bond_code_raw"].where(split_df["bond_code_raw"].notna(), code_as_str)
+    mapping_df = mapping_df[mapping_df["bond_code_raw"].astype(str).str.len() > 0]
+    if mapping_df.empty:
+        return {}
+
+    mapping_df = mapping_df.drop_duplicates(subset=["bond_code_raw"], keep="last")
+    return mapping_df.set_index("bond_code_raw")["company_code"].to_dict()
 
 
 def _build_delist_mapping(df_bonds_info: pd.DataFrame) -> dict:
@@ -69,9 +77,17 @@ def _build_delist_mapping(df_bonds_info: pd.DataFrame) -> dict:
         return {}
 
     mapping_df = df_bonds_info[["code", contract["primary_field"]]].copy()
+    code_as_str = mapping_df["code"].astype(str).str.strip()
+    split_keys = code_as_str.apply(_split_bond_ticker)
+    split_df = pd.DataFrame(split_keys.tolist(), columns=["bond_code_raw", "bond_exchange_code"], index=mapping_df.index)
+    mapping_df["bond_code_raw"] = split_df["bond_code_raw"].where(split_df["bond_code_raw"].notna(), code_as_str)
+    mapping_df = mapping_df[mapping_df["bond_code_raw"].astype(str).str.len() > 0]
+    if mapping_df.empty:
+        return {}
+
     mapping_df[contract["primary_field"]] = pd.to_datetime(mapping_df[contract["primary_field"]], errors="coerce")
-    mapping_df = mapping_df.drop_duplicates(subset=["code"], keep="last")
-    return mapping_df.set_index("code")[contract["primary_field"]].to_dict()
+    mapping_df = mapping_df.drop_duplicates(subset=["bond_code_raw"], keep="last")
+    return mapping_df.set_index("bond_code_raw")[contract["primary_field"]].to_dict()
 
 
 def _build_bond_key_columns(df: pd.DataFrame, ticker_col: str = "ticker") -> pd.DataFrame:
@@ -164,10 +180,10 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     df.rename(columns={"time": "date", "code": "ticker"}, inplace=True)
     df["date"] = pd.to_datetime(df["date"])
 
-    df["underlying_ticker"] = df["ticker"].map(bond_to_stock)
+    df = _build_bond_key_columns(df, ticker_col="ticker")
+    df["underlying_ticker"] = df["bond_code_raw"].map(bond_to_stock)
     if df["underlying_ticker"].isna().any():
         raise ValueError("Missing underlying_ticker for some records")
-    df = _build_bond_key_columns(df, ticker_col="ticker")
 
     premium_rate_metrics = {
         "premium_rate_source_row_count": 0,
@@ -209,7 +225,7 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     if "is_st" not in df.columns or df["is_st"].isna().any():
         raise ValueError("Missing is_st for some records")
 
-    df["delist_Date"] = pd.to_datetime(df["ticker"].map(bond_to_delist), errors="coerce")
+    df["delist_Date"] = pd.to_datetime(df["bond_code_raw"].map(bond_to_delist), errors="coerce")
     premium_rate_metrics["is_redeemed_missing_delist_count"] = int(df["delist_Date"].isna().sum())
     # The first deterministic redemption contract is intentionally narrow:
     # `delist_Date` is the only decision field, while `maturity_date`, `last_cash_date`,

@@ -21,7 +21,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
     def _mock_bonds_info(self, delist_date="2024-12-31"):
         return pd.DataFrame(
             {
-                "code": [self.ticker],
+                "code": [self.raw_code],
                 "company_code": [self.underlying],
                 "delist_Date": [delist_date],
             }
@@ -100,10 +100,6 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         mock_jq.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
         mock_jq.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
         mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
-
-        mock_jq.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
-        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
-        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
         mock_jq.get_price.return_value = self._single_price_df("2024-01-03")
 
         premium = pd.DataFrame(
@@ -118,6 +114,34 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
         self.assertEqual(df["underlying_ticker"].iloc[0], self.underlying)
         self.assertTrue(df["is_st"].iloc[0])
+
+    @patch("etl.jqdata_sync_cb.jqdatasdk")
+    @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+    @patch("ams.validators.cb_data_validator.CBDataValidator")
+    def test_sync_cb_data_maps_underlying_ticker_from_bond_code_raw(self, mock_validator, mock_semantic_validator, mock_jq):
+        mock_semantic_validator.return_value.validate_dataframe.return_value = True
+        os.environ["JQDATA_USER"] = "test"
+        os.environ["JQDATA_PWD"] = "test"
+        mock_jq.auth.return_value = None
+        mock_jq.get_all_securities.return_value = pd.DataFrame(index=[self.ticker])
+        mock_jq.get_security_info.side_effect = AssertionError("legacy get_security_info path must not be used")
+
+        mock_jq.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+        mock_jq.get_price.return_value = self._single_price_df("2024-01-03")
+
+        premium = pd.DataFrame(
+            {"date": ["2024-01-03"], "code": [self.raw_code], "exchange_code": [self.exchange_code], "convert_premium_rate": [10.0]}
+        )
+        mock_jq.bond.run_query.side_effect = [self._mock_bonds_info(), premium]
+        mock_jq.get_extras.return_value = pd.DataFrame({self.underlying: [False]}, index=pd.to_datetime(["2024-01-03"]))
+        mock_validator.return_value.validate_dataframe.return_value = True
+
+        sync_cb_data("2024-01-03", "2024-01-03")
+
+        df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+        self.assertEqual(df["underlying_ticker"].iloc[0], self.underlying)
 
     @patch("etl.jqdata_sync_cb.jqdatasdk")
     @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
@@ -139,7 +163,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
             index=pd.MultiIndex.from_tuples([(pd.to_datetime("2024-01-03"), "123071.XSHE")], names=["time", "code"]),
         )
 
-        bonds_info = pd.DataFrame({"code": ["123071.XSHE"], "company_code": ["000001.XSHE"], "delist_Date": ["2024-12-31"]})
+        bonds_info = pd.DataFrame({"code": ["123071"], "company_code": ["000001.XSHE"], "delist_Date": ["2024-12-31"]})
         premium = pd.DataFrame({"date": ["2024-01-03"], "code": ["123071"], "exchange_code": ["XSHE"], "convert_premium_rate": [15.5]})
         mock_jq.bond.run_query.side_effect = [bonds_info, premium]
         mock_jq.get_extras.return_value = pd.DataFrame({"000001.XSHE": [False]}, index=pd.to_datetime(["2024-01-03"]))
@@ -200,9 +224,6 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         mock_jq.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
         mock_jq.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
         mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
-        mock_jq.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
-        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
-        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
         mock_jq.get_price.return_value = self._single_price_df("2024-01-03")
 
         mock_jq.bond.run_query.side_effect = [
@@ -217,9 +238,6 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
         self.assertTrue(df["is_st"].iloc[0])
 
-
-
-
     @patch("etl.jqdata_sync_cb.jqdatasdk")
     @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
     @patch("ams.validators.cb_data_validator.CBDataValidator")
@@ -232,10 +250,10 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         mock_jq.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
         mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
         mock_jq.get_price.return_value = self._single_price_df("2024-01-03")
-        
+
         mock_jq.bond.run_query.side_effect = [self._mock_bonds_info(), pd.DataFrame()]
         mock_jq.get_extras.return_value = pd.DataFrame({self.underlying: [True]}, index=pd.to_datetime(["2024-01-03"]))
-        
+
         with self.assertRaises((ValueError, SystemExit)):
             sync_cb_data("2024-01-03", "2024-01-03")
 
@@ -251,11 +269,11 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         mock_jq.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
         mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
         mock_jq.get_price.return_value = self._single_price_df("2024-01-03")
-        
+
         premium = pd.DataFrame({"date": ["2024-01-03"], "code": [self.raw_code], "exchange_code": [self.exchange_code], "convert_premium_rate": [10.0]})
         mock_jq.bond.run_query.side_effect = [self._mock_bonds_info(), premium]
         mock_jq.get_extras.return_value = pd.DataFrame()
-        
+
         with self.assertRaises((ValueError, SystemExit)):
             sync_cb_data("2024-01-03", "2024-01-03")
 
@@ -274,17 +292,16 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         premium = pd.DataFrame({"date": ["2024-01-03"], "code": [self.raw_code], "exchange_code": [self.exchange_code], "convert_premium_rate": [10.0]})
         mock_jq.bond.run_query.side_effect = [self._mock_bonds_info(), premium]
         mock_jq.get_extras.return_value = pd.DataFrame({self.underlying: [True]}, index=pd.to_datetime(["2024-01-03"]))
-        
+
         mock_validator.return_value.validate_dataframe.return_value = True
         mock_semantic_validator.return_value.validate_dataframe.return_value = True
 
         with patch("os.replace") as mock_replace:
             sync_cb_data("2024-01-03", "2024-01-03")
-            
-            # Assert os.replace was called for tmp to canonical
-            calls = [call for call in mock_replace.mock_calls if 'cb_history_factors.csv.tmp' in str(call)]
+
+            calls = [call for call in mock_replace.mock_calls if "cb_history_factors.csv.tmp" in str(call)]
             self.assertTrue(len(calls) > 0)
-            
+
     @patch("etl.jqdata_sync_cb.jqdatasdk")
     @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
     @patch("ams.validators.cb_data_validator.CBDataValidator")
@@ -300,18 +317,16 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         premium = pd.DataFrame({"date": ["2024-01-03"], "code": [self.raw_code], "exchange_code": [self.exchange_code], "convert_premium_rate": [10.0]})
         mock_jq.bond.run_query.side_effect = [self._mock_bonds_info(), premium]
         mock_jq.get_extras.return_value = pd.DataFrame({self.underlying: [True]}, index=pd.to_datetime(["2024-01-03"]))
-        
-        mock_validator.return_value.validate_dataframe.return_value = True
-        mock_semantic_validator.return_value.validate_dataframe.return_value = False  # Validation fails
 
-        with patch("sys.stdout", new_callable=unittest.mock.MagicMock) as mock_stdout, patch("os.replace") as mock_replace:
+        mock_validator.return_value.validate_dataframe.return_value = True
+        mock_semantic_validator.return_value.validate_dataframe.return_value = False
+
+        with patch("sys.stdout", new_callable=unittest.mock.MagicMock), patch("os.replace") as mock_replace:
             with self.assertRaises(SystemExit) as cm:
                 sync_cb_data("2024-01-03", "2024-01-03")
-            
+
             self.assertNotEqual(cm.exception.code, 0)
-            
-            # Canonical paths should not be overwritten
-            calls = [call for call in mock_replace.mock_calls if 'cb_history_factors.csv.tmp' in str(call)]
+            calls = [call for call in mock_replace.mock_calls if "cb_history_factors.csv.tmp" in str(call)]
             self.assertEqual(len(calls), 0)
 
     @patch("etl.jqdata_sync_cb.jqdatasdk")
@@ -329,11 +344,12 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         premium = pd.DataFrame({"date": ["2024-01-03"], "code": [self.raw_code], "exchange_code": [self.exchange_code], "convert_premium_rate": [10.0]})
         mock_jq.bond.run_query.side_effect = [self._mock_bonds_info(), premium]
         mock_jq.get_extras.return_value = pd.DataFrame({self.underlying: [True]}, index=pd.to_datetime(["2024-01-03"]))
-        
+
         mock_validator.return_value.validate_dataframe.return_value = True
         mock_semantic_validator.return_value.validate_dataframe.return_value = True
-        
+
         original_replace = os.replace
+
         def mock_replace(src, dst):
             if src == f"{etl.jqdata_sync_cb.DATA_PATH}.tmp":
                 raise OSError("Mock failure")
@@ -342,7 +358,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         with patch("os.replace", side_effect=mock_replace):
             with self.assertRaises(SystemExit) as cm:
                 sync_cb_data("2024-01-03", "2024-01-03")
-            
+
             self.assertNotEqual(cm.exception.code, 0)
 
     @patch("etl.jqdata_sync_cb.jqdatasdk")
@@ -360,17 +376,19 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         premium = pd.DataFrame({"date": ["2024-01-03"], "code": [self.raw_code], "exchange_code": [self.exchange_code], "convert_premium_rate": [10.0]})
         mock_jq.bond.run_query.side_effect = [self._mock_bonds_info(), premium]
         mock_jq.get_extras.return_value = pd.DataFrame({self.underlying: [True]}, index=pd.to_datetime(["2024-01-03"]))
-        
+
         mock_validator.return_value.validate_dataframe.return_value = True
-        
+
         class DataSemanticViolation(Exception):
             pass
-            
-        mock_semantic_validator.return_value.validate_dataframe.side_effect = DataSemanticViolation("[DataSemanticViolation] premium_rate_nonzero_ratio below minimum threshold.")
+
+        mock_semantic_validator.return_value.validate_dataframe.side_effect = DataSemanticViolation(
+            "[DataSemanticViolation] premium_rate_nonzero_ratio below minimum threshold."
+        )
 
         from io import StringIO
         import sys
-        
+
         captured_output = StringIO()
         original_stdout = sys.stdout
         try:
@@ -380,7 +398,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
             self.assertNotEqual(cm.exception.code, 0)
         finally:
             sys.stdout = original_stdout
-            
+
         output = captured_output.getvalue()
         self.assertIn("[DataSemanticViolation] premium_rate_nonzero_ratio below minimum threshold.", output)
 
@@ -399,30 +417,30 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         premium = pd.DataFrame({"date": ["2024-01-03"], "code": [self.raw_code], "exchange_code": [self.exchange_code], "convert_premium_rate": [10.0]})
         mock_jq.bond.run_query.side_effect = [self._mock_bonds_info(), premium]
         mock_jq.get_extras.return_value = pd.DataFrame({self.underlying: [True]}, index=pd.to_datetime(["2024-01-03"]))
-        
+
         mock_validator.return_value.validate_dataframe.return_value = True
         mock_semantic_validator.return_value.validate_dataframe.return_value = True
-        
+
         mock_data_path = "/tmp/mock_cb_data.csv"
         mock_metrics_path = "/tmp/mock_metrics.json"
 
         original_replace = os.replace
+
         def mock_replace(src, dst):
             if src == mock_data_path and dst == mock_data_path + ".bak":
                 raise OSError("Mock failure: Cannot backup canonical file")
             return original_replace(src, dst)
-            
+
         with open(mock_data_path, "w") as f:
             f.write("dummy")
 
         try:
-            with patch("etl.jqdata_sync_cb.DATA_PATH", mock_data_path), \
-                 patch("etl.jqdata_sync_cb.METRICS_PATH", mock_metrics_path), \
-                 patch("os.replace", side_effect=mock_replace), \
-                 patch("os.remove") as mock_remove:
+            with patch("etl.jqdata_sync_cb.DATA_PATH", mock_data_path), patch(
+                "etl.jqdata_sync_cb.METRICS_PATH", mock_metrics_path
+            ), patch("os.replace", side_effect=mock_replace), patch("os.remove") as mock_remove:
                 with self.assertRaises(SystemExit) as cm:
                     sync_cb_data("2024-01-03", "2024-01-03")
-                
+
                 self.assertNotEqual(cm.exception.code, 0)
                 calls = [call for call in mock_remove.mock_calls if mock_data_path in str(call)]
                 self.assertEqual(len(calls), 0)
@@ -431,6 +449,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
                 os.remove(mock_data_path)
             if os.path.exists(mock_metrics_path):
                 os.remove(mock_metrics_path)
+
 
 if __name__ == "__main__":
     unittest.main()
