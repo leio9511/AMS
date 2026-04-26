@@ -59,7 +59,7 @@ def mock_jqdata(monkeypatch):
 
         # run_query for bonds info
         bonds_info = pd.DataFrame({
-            "code": ["123456.SH"], "company_code": ["600000.SH"], "delist_Date": ["2026-01-01"]
+            "code": ["123456"], "company_code": ["600000.SH"], "delist_Date": ["2026-01-01"]
         })
         
         # run_query for premium rate

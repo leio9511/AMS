@@ -86,7 +86,7 @@ def test_integrated_source_contract_repairs_keep_dataset_generation_green(mock_s
     mock_jqdatasdk.bond.run_query.side_effect = [
         pd.DataFrame(
             {
-                "code": ["123071", "110059"],
+                "code": ["123071.XSHE", "110059.XSHG"],
                 "company_code": ["000001.XSHE", "000002.XSHG"],
                 "delist_Date": [None, "2020-01-01"],
             }
@@ -143,7 +143,7 @@ def test_integrated_source_contract_flow_rejects_legacy_underlying_and_redemptio
     mock_jqdatasdk.get_all_securities.return_value = mock_df_bonds
 
     mock_jqdatasdk.bond.run_query.side_effect = [
-        pd.DataFrame({"code": ["110059"], "company_code": ["000001.XSHE"], "delist_Date": ["2020-01-01"]}),
+        pd.DataFrame({"code": ["110059.XSHG"], "company_code": ["000001.XSHE"], "delist_Date": ["2020-01-01"]}),
         pd.DataFrame({"date": ["2020-01-02"], "code": ["110059"], "exchange_code": ["XSHG"], "convert_premium_rate": [10.0]}),
     ]
 
