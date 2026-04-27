@@ -400,11 +400,9 @@ def test_sync_cb_data_reason_coded_metrics_survive_empty_price_rows(mock_jqdatas
 
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
 @patch("etl.jqdata_sync_cb.jqdatasdk")
-@patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
 def test_sync_cb_data_exclusion_only_window_does_not_raise_false_missing_is_st_failure(
-    mock_semantic_validator, mock_jqdatasdk
+    mock_jqdatasdk,
 ):
-    mock_semantic_validator.return_value.validate_dataframe.return_value = True
     mock_jqdatasdk.auth.return_value = None
 
     mock_df_bonds = pd.DataFrame(
@@ -432,24 +430,33 @@ def test_sync_cb_data_exclusion_only_window_does_not_raise_false_missing_is_st_f
         }
     ).set_index(["time", "code"])
 
+    existing_canonical = pd.DataFrame(
+        {
+            "ticker": ["110059.XSHG"],
+            "date": ["2025-01-16"],
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.5],
+            "volume": [1000],
+            "premium_rate": [0.1],
+            "double_low": [110.5],
+            "underlying_ticker": ["000001.XSHE"],
+            "is_st": [False],
+            "is_redeemed": [False],
+        }
+    )
+    existing_canonical.to_csv(etl.jqdata_sync_cb.DATA_PATH, index=False)
+
     sync_cb_data(start_date="2025-01-17", end_date="2025-01-17")
 
     df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
-    assert list(df.columns) == [
-        "ticker",
-        "date",
-        "open",
-        "high",
-        "low",
-        "close",
-        "volume",
-        "premium_rate",
-        "double_low",
-        "underlying_ticker",
-        "is_st",
-        "is_redeemed",
-    ]
-    assert df.empty
+    assert df.to_dict(orient="records") == existing_canonical.to_dict(orient="records")
+    with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
+        metrics = json.load(f)
+    assert metrics["row_count"] == 0
+    assert metrics["filtered_bond_codes_outside_basic_info"] == ["999999"]
+    assert metrics["filtered_bond_codes_missing_company_code_legacy"] == ["125302"]
 
 
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)

@@ -294,6 +294,32 @@ def _build_candidate_summary_metrics(df: pd.DataFrame) -> dict:
     }
 
 
+def _promote_exclusion_only_metrics(tmp_metrics_path: str, metrics_path: str) -> None:
+    metrics_bak_path = metrics_path + ".bak"
+    metrics_backed_up = False
+    metrics_existed = os.path.exists(metrics_path)
+
+    try:
+        if metrics_existed:
+            os.replace(metrics_path, metrics_bak_path)
+            metrics_backed_up = True
+
+        os.replace(tmp_metrics_path, metrics_path)
+    except Exception:
+        if metrics_backed_up:
+            os.replace(metrics_bak_path, metrics_path)
+        elif not metrics_existed and os.path.exists(metrics_path):
+            os.remove(metrics_path)
+
+        if os.path.exists(tmp_metrics_path):
+            os.remove(tmp_metrics_path)
+
+        print("[DataPromotionRollback] Exclusion-only metrics promotion failed. Canonical dataset remains unchanged.")
+        import sys
+
+        sys.exit(1)
+
+
 def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     output_path = DATA_PATH
     bak_path = output_path + ".bak"
@@ -352,8 +378,10 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
         "premium_rate_join_coverage_ratio": 0.0,
         "is_redeemed_missing_delist_count": 0,
     }
+    exclusion_only_window = False
 
     if df.empty:
+        exclusion_only_window = True
         df = _build_empty_canonical_cb_frame()
     else:
         df["underlying_ticker"] = df["bond_code_raw"].map(bond_to_stock)
@@ -429,6 +457,13 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     })
 
     _write_metrics(tmp_metrics_path, premium_rate_metrics)
+
+    if exclusion_only_window:
+        _promote_exclusion_only_metrics(tmp_metrics_path, metrics_path)
+        print(
+            "[ExclusionOnlyWindow] No supportable bonds survived; metrics updated and canonical dataset remains unchanged."
+        )
+        return
 
     from ams.validators.cb_data_validator import CBDataValidator, DatasetSemanticValidator
 

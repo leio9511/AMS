@@ -15,8 +15,12 @@ from etl.jqdata_sync_cb import sync_cb_data
 def test_metrics_artifact_records_zero_survivors_for_exclusion_only_window(
     mock_validator_cls, mock_semantic_validator_cls, mock_jqdatasdk
 ):
-    mock_validator_cls.return_value.validate_dataframe.return_value = True
-    mock_semantic_validator_cls.return_value.validate_dataframe.return_value = True
+    mock_validator_cls.return_value.validate_dataframe.side_effect = AssertionError(
+        "exclusion-only branch must skip CBDataValidator"
+    )
+    mock_semantic_validator_cls.return_value.validate_dataframe.side_effect = AssertionError(
+        "exclusion-only branch must skip DatasetSemanticValidator"
+    )
     mock_jqdatasdk.auth.return_value = None
 
     mock_jqdatasdk.get_all_securities.return_value = pd.DataFrame(
@@ -49,11 +53,30 @@ def test_metrics_artifact_records_zero_survivors_for_exclusion_only_window(
         }
     )
 
-    with patch("os.replace"):
-        sync_cb_data(start_date="2025-01-17", end_date="2025-01-18")
+    existing_canonical = pd.DataFrame(
+        {
+            "ticker": ["110059.XSHG"],
+            "date": ["2025-01-16"],
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.5],
+            "volume": [1000],
+            "premium_rate": [0.1],
+            "double_low": [110.5],
+            "underlying_ticker": ["000001.XSHE"],
+            "is_st": [False],
+            "is_redeemed": [False],
+        }
+    )
+    existing_canonical.to_csv(etl.jqdata_sync_cb.DATA_PATH, index=False)
 
-    tmp_metrics_path = etl.jqdata_sync_cb.METRICS_PATH + ".tmp"
-    with open(tmp_metrics_path, "r", encoding="utf-8") as f:
+    sync_cb_data(start_date="2025-01-17", end_date="2025-01-18")
+
+    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+    assert df.to_dict(orient="records") == existing_canonical.to_dict(orient="records")
+
+    with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
         metrics = json.load(f)
 
     assert metrics["row_count"] == 0
