@@ -181,9 +181,30 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     df["date"] = pd.to_datetime(df["date"])
 
     df = _build_bond_key_columns(df, ticker_col="ticker")
+
+    # Pre-filter: build set of all bond codes known to CONBOND_BASIC_INFO
+    # (before _build_underlying_mapping drops rows with NaN company_code).
+    all_basic_info_codes = set()
+    if df_bonds_info is not None and not df_bonds_info.empty and "code" in df_bonds_info.columns:
+        for code_val in df_bonds_info["code"].dropna().astype(str):
+            bond_raw, _ = _split_bond_ticker(str(code_val))
+            if bond_raw is not None and bond_raw:
+                all_basic_info_codes.add(bond_raw)
+            else:
+                cleaned = str(code_val).strip()
+                if cleaned:
+                    all_basic_info_codes.add(cleaned)
+
+    in_basic_info = df["bond_code_raw"].isin(all_basic_info_codes)
+    filtered_rows_outside_basic_info = int((~in_basic_info).sum())
+    filtered_bonds_outside_basic_info = list(
+        df.loc[~in_basic_info, "bond_code_raw"].dropna().astype(str).unique()
+    )
+    df = df[in_basic_info].copy()
+
     df["underlying_ticker"] = df["bond_code_raw"].map(bond_to_stock)
     if df["underlying_ticker"].isna().any():
-        raise ValueError("Missing underlying_ticker for some records")
+        raise ValueError("Missing underlying_ticker for bonds in CONBOND_BASIC_INFO")
 
     premium_rate_metrics = {
         "premium_rate_source_row_count": 0,
@@ -268,6 +289,9 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
         "premium_rate_zero_ratio": float((df["premium_rate"] == 0).mean()),
         "is_st_true_count": int(df["is_st"].sum()),
         "is_redeemed_true_count": int(df["is_redeemed"].sum()),
+        "filtered_bonds_outside_basic_info_count": len(filtered_bonds_outside_basic_info),
+        "filtered_rows_outside_basic_info_count": filtered_rows_outside_basic_info,
+        "filtered_bond_codes": filtered_bonds_outside_basic_info,
         "generated_at": datetime.datetime.now().isoformat(),
         "source_lineage": "jqdata_sync_cb"
     })

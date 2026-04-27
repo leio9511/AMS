@@ -184,7 +184,8 @@ def test_sync_cb_data_raises_when_normalized_underlying_mapping_is_missing(mock_
     mock_jqdatasdk.get_all_securities.return_value = mock_df_bonds
 
     mock_jqdatasdk.bond.run_query.side_effect = [
-        pd.DataFrame({"code": ["999999"], "company_code": ["000001.XSHE"], "delist_Date": ["2025-12-31"]}),
+        # Bond is IN CONBOND_BASIC_INFO but company_code is NaN → mapping will fail
+        pd.DataFrame({"code": ["110059"], "company_code": [None], "delist_Date": ["2025-12-31"]}),
         pd.DataFrame({"date": ["2020-01-02"], "code": ["110059"], "exchange_code": ["XSHG"], "convert_premium_rate": [10.0]}),
     ]
     mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
@@ -202,7 +203,7 @@ def test_sync_cb_data_raises_when_normalized_underlying_mapping_is_missing(mock_
         }
     ).set_index(["time", "code"])
 
-    with pytest.raises(ValueError, match="Missing underlying_ticker for some records"):
+    with pytest.raises(ValueError, match="Missing underlying_ticker for bonds in CONBOND_BASIC_INFO"):
         sync_cb_data()
 
 
@@ -239,5 +240,5 @@ def test_full_ticker_cannot_be_used_as_underlying_map_key(
         }
     ).set_index(["time", "code"])
 
-    with pytest.raises(ValueError, match="Missing underlying_ticker for some records"):
+    with pytest.raises(ValueError, match="Missing underlying_ticker for bonds in CONBOND_BASIC_INFO"):
         sync_cb_data()
