@@ -311,7 +311,7 @@ def test_bonds_outside_basic_info_are_filtered_not_blocking(mock_semantic_valida
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
 @patch("etl.jqdata_sync_cb.jqdatasdk")
 @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
-def test_sync_cb_data_filters_legacy_missing_company_code_when_delisted_before_window_start(
+def test_sync_cb_data_real_window_known_legacy_case_is_accounted_for_in_reason_coded_metrics(
     mock_semantic_validator, mock_jqdatasdk
 ):
     mock_semantic_validator.return_value.validate_dataframe.return_value = True
@@ -368,6 +368,8 @@ def test_sync_cb_data_filters_legacy_missing_company_code_when_delisted_before_w
     assert metrics["filtered_bonds_missing_company_code_legacy_count"] == 1
     assert metrics["filtered_rows_missing_company_code_legacy_count"] == 1
     assert metrics["filtered_bond_codes_missing_company_code_legacy"] == ["125302"]
+    assert metrics["filtered_bonds_outside_basic_info_count"] == 0
+    assert metrics["filtered_bond_codes_outside_basic_info"] == []
 
 
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)

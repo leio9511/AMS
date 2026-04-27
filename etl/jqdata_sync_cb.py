@@ -336,7 +336,6 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
         "filtered_bonds_missing_company_code_legacy_count": len(filtered_bonds_missing_company_code_legacy),
         "filtered_rows_missing_company_code_legacy_count": filtered_rows_missing_company_code_legacy,
         "filtered_bond_codes_missing_company_code_legacy": filtered_bonds_missing_company_code_legacy,
-        "filtered_bond_codes": filtered_bonds_outside_basic_info,
         "generated_at": datetime.datetime.now().isoformat(),
         "source_lineage": "jqdata_sync_cb"
     })
