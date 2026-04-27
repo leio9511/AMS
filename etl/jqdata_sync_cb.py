@@ -32,6 +32,20 @@ SUPPORTABILITY_EXCLUSION_BUCKETS = {
         "codes_key": "filtered_bond_codes_missing_company_code_legacy",
     },
 }
+CANONICAL_CB_COLUMNS = [
+    "ticker",
+    "date",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "premium_rate",
+    "double_low",
+    "underlying_ticker",
+    "is_st",
+    "is_redeemed",
+]
 REDEMPTION_SOURCE_CONTRACT = {
     "source_table": "bond.CONBOND_BASIC_INFO",
     "primary_field": "delist_Date",
@@ -239,6 +253,47 @@ def _build_supportability_exclusion_metrics(df: pd.DataFrame) -> dict:
     return metrics
 
 
+def _build_empty_canonical_cb_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "ticker": pd.Series(dtype="object"),
+            "date": pd.Series(dtype="datetime64[ns]"),
+            "open": pd.Series(dtype="float64"),
+            "high": pd.Series(dtype="float64"),
+            "low": pd.Series(dtype="float64"),
+            "close": pd.Series(dtype="float64"),
+            "volume": pd.Series(dtype="float64"),
+            "premium_rate": pd.Series(dtype="float64"),
+            "double_low": pd.Series(dtype="float64"),
+            "underlying_ticker": pd.Series(dtype="object"),
+            "is_st": pd.Series(dtype="bool"),
+            "is_redeemed": pd.Series(dtype="bool"),
+        }
+    )[CANONICAL_CB_COLUMNS]
+
+
+def _build_candidate_summary_metrics(df: pd.DataFrame) -> dict:
+    row_count = int(len(df))
+    if row_count == 0:
+        return {
+            "row_count": 0,
+            "underlying_ticker_nonnull_ratio": 0.0,
+            "premium_rate_nonzero_ratio": 0.0,
+            "premium_rate_zero_ratio": 0.0,
+            "is_st_true_count": 0,
+            "is_redeemed_true_count": 0,
+        }
+
+    return {
+        "row_count": row_count,
+        "underlying_ticker_nonnull_ratio": float(df["underlying_ticker"].notna().mean()),
+        "premium_rate_nonzero_ratio": float((df["premium_rate"] != 0).mean()),
+        "premium_rate_zero_ratio": float((df["premium_rate"] == 0).mean()),
+        "is_st_true_count": int(df["is_st"].sum()),
+        "is_redeemed_true_count": int(df["is_redeemed"].sum()),
+    }
+
+
 def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     output_path = DATA_PATH
     bak_path = output_path + ".bak"
@@ -291,10 +346,6 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
 
     df = df[df["supportability_bucket"].eq(SUPPORTABILITY_BUCKET_SUPPORTABLE)].copy()
 
-    df["underlying_ticker"] = df["bond_code_raw"].map(bond_to_stock)
-    if df["underlying_ticker"].isna().any():
-        raise ValueError(SUPPORTABILITY_REGRESSION_ERROR)
-
     premium_rate_metrics = {
         "premium_rate_source_row_count": 0,
         "premium_rate_joined_row_count": 0,
@@ -302,82 +353,76 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
         "is_redeemed_missing_delist_count": 0,
     }
 
-    raw_codes = [code for code in df["bond_code_raw"].dropna().astype(str).unique().tolist() if code]
-    q = jqdatasdk.query(jqdatasdk.bond.CONBOND_DAILY_CONVERT).filter(
-        jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_(raw_codes),
-        jqdatasdk.bond.CONBOND_DAILY_CONVERT.date >= start_date,
-        jqdatasdk.bond.CONBOND_DAILY_CONVERT.date <= end_date,
-    )
-    df_premium_raw = jqdatasdk.bond.run_query(q)
-    df_premium = _normalize_premium_source(df_premium_raw)
-    premium_rate_metrics["premium_rate_source_row_count"] = int(len(df_premium))
-
-    if not df_premium.empty:
-        df = pd.merge(df, df_premium, on=["date", "bond_code_raw", "bond_exchange_code"], how="left")
+    if df.empty:
+        df = _build_empty_canonical_cb_frame()
     else:
-        df["premium_rate"] = float("nan")
+        df["underlying_ticker"] = df["bond_code_raw"].map(bond_to_stock)
+        if df["underlying_ticker"].isna().any():
+            raise ValueError(SUPPORTABILITY_REGRESSION_ERROR)
 
-    premium_rate_metrics["premium_rate_joined_row_count"] = int(df["premium_rate"].notna().sum())
-    total_price_rows = int(len(df))
-    premium_rate_metrics["premium_rate_join_coverage_ratio"] = (
-        premium_rate_metrics["premium_rate_joined_row_count"] / total_price_rows if total_price_rows else 0.0
-    )
+        raw_codes = [code for code in df["bond_code_raw"].dropna().astype(str).unique().tolist() if code]
+        if raw_codes:
+            q = jqdatasdk.query(jqdatasdk.bond.CONBOND_DAILY_CONVERT).filter(
+                jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_(raw_codes),
+                jqdatasdk.bond.CONBOND_DAILY_CONVERT.date >= start_date,
+                jqdatasdk.bond.CONBOND_DAILY_CONVERT.date <= end_date,
+            )
+            df_premium_raw = jqdatasdk.bond.run_query(q)
+            df_premium = _normalize_premium_source(df_premium_raw)
+            premium_rate_metrics["premium_rate_source_row_count"] = int(len(df_premium))
 
-    underlying_tickers = [ticker for ticker in df["underlying_ticker"].dropna().astype(str).unique().tolist() if ticker]
-    if underlying_tickers:
-        df_st = jqdatasdk.get_extras("is_st", underlying_tickers, start_date=start_date, end_date=end_date)
-        st_long = df_st.stack().reset_index()
-        st_long.columns = ["date", "underlying_ticker", "is_st"]
-        st_long["date"] = pd.to_datetime(st_long["date"])
+            if not df_premium.empty:
+                df = pd.merge(df, df_premium, on=["date", "bond_code_raw", "bond_exchange_code"], how="left")
+            else:
+                df["premium_rate"] = float("nan")
+        else:
+            df["premium_rate"] = float("nan")
 
-        df = pd.merge(df, st_long, on=["date", "underlying_ticker"], how="left")
+        premium_rate_metrics["premium_rate_joined_row_count"] = int(df["premium_rate"].notna().sum())
+        total_price_rows = int(len(df))
+        premium_rate_metrics["premium_rate_join_coverage_ratio"] = (
+            premium_rate_metrics["premium_rate_joined_row_count"] / total_price_rows if total_price_rows else 0.0
+        )
 
-    if "is_st" not in df.columns or df["is_st"].isna().any():
-        raise ValueError("Missing is_st for some records")
+        underlying_tickers = [
+            ticker for ticker in df["underlying_ticker"].dropna().astype(str).unique().tolist() if ticker
+        ]
+        if underlying_tickers:
+            df_st = jqdatasdk.get_extras("is_st", underlying_tickers, start_date=start_date, end_date=end_date)
+            st_long = df_st.stack().reset_index()
+            st_long.columns = ["date", "underlying_ticker", "is_st"]
+            st_long["date"] = pd.to_datetime(st_long["date"])
 
-    df["delist_Date"] = pd.to_datetime(df["bond_code_raw"].map(bond_to_delist), errors="coerce")
-    premium_rate_metrics["is_redeemed_missing_delist_count"] = int(df["delist_Date"].isna().sum())
-    # The first deterministic redemption contract is intentionally narrow:
-    # `delist_Date` is the only decision field, while `maturity_date`, `last_cash_date`,
-    # and `convert_end_date` remain fallback informational fields for observability only.
-    # When `delist_Date` is missing, AMS must keep `is_redeemed=False` instead of guessing.
-    df["is_redeemed"] = df["delist_Date"].notna() & (df["date"] >= df["delist_Date"])
-    if df["is_redeemed"].isna().any():
-        raise ValueError("Missing is_redeemed for some records")
+            df = pd.merge(df, st_long, on=["date", "underlying_ticker"], how="left")
 
-    num_redeemed = df["is_redeemed"].sum()
-    print(f"Total redeemed records marked: {num_redeemed}")
+        if "is_st" not in df.columns or df["is_st"].isna().any():
+            raise ValueError("Missing is_st for some records")
 
-    if "premium_rate" not in df.columns or df["premium_rate"].isna().any():
-        raise ValueError("Missing premium_rate for some records")
-    df["double_low"] = df["close"] + df["premium_rate"] * 100
+        df["delist_Date"] = pd.to_datetime(df["bond_code_raw"].map(bond_to_delist), errors="coerce")
+        premium_rate_metrics["is_redeemed_missing_delist_count"] = int(df["delist_Date"].isna().sum())
+        # The first deterministic redemption contract is intentionally narrow:
+        # `delist_Date` is the only decision field, while `maturity_date`, `last_cash_date`,
+        # and `convert_end_date` remain fallback informational fields for observability only.
+        # When `delist_Date` is missing, AMS must keep `is_redeemed=False` instead of guessing.
+        df["is_redeemed"] = df["delist_Date"].notna() & (df["date"] >= df["delist_Date"])
+        if df["is_redeemed"].isna().any():
+            raise ValueError("Missing is_redeemed for some records")
 
-    df = df[[
-        "ticker",
-        "date",
-        "open",
-        "high",
-        "low",
-        "close",
-        "volume",
-        "premium_rate",
-        "double_low",
-        "underlying_ticker",
-        "is_st",
-        "is_redeemed",
-    ]]
+        num_redeemed = df["is_redeemed"].sum()
+        print(f"Total redeemed records marked: {num_redeemed}")
+
+        if "premium_rate" not in df.columns or df["premium_rate"].isna().any():
+            raise ValueError("Missing premium_rate for some records")
+        df["double_low"] = df["close"] + df["premium_rate"] * 100
+
+        df = df[CANONICAL_CB_COLUMNS]
 
     metrics_bak_path = metrics_path + ".bak"
     tmp_metrics_path = metrics_path + ".tmp"
     
     import datetime
     premium_rate_metrics.update({
-        "row_count": int(len(df)),
-        "underlying_ticker_nonnull_ratio": float(df["underlying_ticker"].notna().mean()),
-        "premium_rate_nonzero_ratio": float((df["premium_rate"] != 0).mean()),
-        "premium_rate_zero_ratio": float((df["premium_rate"] == 0).mean()),
-        "is_st_true_count": int(df["is_st"].sum()),
-        "is_redeemed_true_count": int(df["is_redeemed"].sum()),
+        **_build_candidate_summary_metrics(df),
         **supportability_metrics,
         "generated_at": datetime.datetime.now().isoformat(),
         "source_lineage": "jqdata_sync_cb"
@@ -395,6 +440,8 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
 
     df_to_val = pd.read_csv(tmp_path)
     df_to_val["ticker"] = df_to_val["ticker"].astype(str)
+    df_to_val["close"] = df_to_val["close"].astype(float)
+    df_to_val["premium_rate"] = df_to_val["premium_rate"].astype(float)
     df_to_val["is_st"] = df_to_val["is_st"].astype(bool)
     df_to_val["is_redeemed"] = df_to_val["is_redeemed"].astype(bool)
 

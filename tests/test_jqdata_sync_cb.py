@@ -400,6 +400,133 @@ def test_sync_cb_data_reason_coded_metrics_survive_empty_price_rows(mock_jqdatas
 
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
 @patch("etl.jqdata_sync_cb.jqdatasdk")
+@patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+def test_sync_cb_data_exclusion_only_window_does_not_raise_false_missing_is_st_failure(
+    mock_semantic_validator, mock_jqdatasdk
+):
+    mock_semantic_validator.return_value.validate_dataframe.return_value = True
+    mock_jqdatasdk.auth.return_value = None
+
+    mock_df_bonds = pd.DataFrame(
+        {"code": ["125302.XSHG", "999999.XSHG"], "end_date": [pd.NaT, pd.NaT]}
+    )
+    mock_df_bonds.index = ["125302.XSHG", "999999.XSHG"]
+    mock_jqdatasdk.get_all_securities.return_value = mock_df_bonds
+
+    mock_jqdatasdk.bond.run_query.return_value = pd.DataFrame(
+        {
+            "code": ["125302"],
+            "company_code": [None],
+            "delist_Date": ["2004-01-01"],
+        }
+    )
+    mock_jqdatasdk.get_price.return_value = pd.DataFrame(
+        {
+            "time": ["2025-01-17", "2025-01-17"],
+            "code": ["125302.XSHG", "999999.XSHG"],
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.5, 101.5],
+            "volume": [1000, 1200],
+        }
+    ).set_index(["time", "code"])
+
+    sync_cb_data(start_date="2025-01-17", end_date="2025-01-17")
+
+    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+    assert list(df.columns) == [
+        "ticker",
+        "date",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "premium_rate",
+        "double_low",
+        "underlying_ticker",
+        "is_st",
+        "is_redeemed",
+    ]
+    assert df.empty
+
+
+@patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
+@patch("etl.jqdata_sync_cb.jqdatasdk")
+@patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+def test_sync_cb_data_exclusion_only_window_skips_downstream_premium_and_is_st_queries(
+    mock_semantic_validator, mock_jqdatasdk
+):
+    mock_semantic_validator.return_value.validate_dataframe.return_value = True
+    mock_jqdatasdk.auth.return_value = None
+
+    mock_df_bonds = pd.DataFrame(
+        {"code": ["125302.XSHG", "999999.XSHG"], "end_date": [pd.NaT, pd.NaT]}
+    )
+    mock_df_bonds.index = ["125302.XSHG", "999999.XSHG"]
+    mock_jqdatasdk.get_all_securities.return_value = mock_df_bonds
+
+    mock_jqdatasdk.bond.run_query.return_value = pd.DataFrame(
+        {
+            "code": ["125302"],
+            "company_code": [None],
+            "delist_Date": ["2004-01-01"],
+        }
+    )
+    mock_jqdatasdk.get_price.return_value = pd.DataFrame(
+        {
+            "time": ["2025-01-17", "2025-01-17"],
+            "code": ["125302.XSHG", "999999.XSHG"],
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.5, 101.5],
+            "volume": [1000, 1200],
+        }
+    ).set_index(["time", "code"])
+
+    sync_cb_data(start_date="2025-01-17", end_date="2025-01-17")
+
+    assert mock_jqdatasdk.bond.run_query.call_count == 1
+    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.assert_not_called()
+    mock_jqdatasdk.get_extras.assert_not_called()
+
+
+@patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
+@patch("etl.jqdata_sync_cb.jqdatasdk")
+def test_sync_cb_data_still_hard_fails_when_zero_survivors_are_not_legacy_allowed(mock_jqdatasdk):
+    mock_jqdatasdk.auth.return_value = None
+
+    mock_df_bonds = pd.DataFrame({"code": ["110059.XSHG"], "end_date": [pd.NaT]})
+    mock_df_bonds.index = ["110059.XSHG"]
+    mock_jqdatasdk.get_all_securities.return_value = mock_df_bonds
+
+    mock_jqdatasdk.bond.run_query.return_value = pd.DataFrame(
+        {
+            "code": ["110059"],
+            "company_code": [None],
+            "delist_Date": ["2025-12-31"],
+        }
+    )
+    mock_jqdatasdk.get_price.return_value = pd.DataFrame(
+        {
+            "time": ["2025-01-17"],
+            "code": ["110059.XSHG"],
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.5],
+            "volume": [1000],
+        }
+    ).set_index(["time", "code"])
+
+    with pytest.raises(ValueError, match=SUPPORTABILITY_REGRESSION_ERROR):
+        sync_cb_data(start_date="2025-01-17", end_date="2025-01-17")
+
+
+@patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
+@patch("etl.jqdata_sync_cb.jqdatasdk")
 def test_sync_cb_data_hard_fails_for_null_company_code_without_legacy_justification(mock_jqdatasdk):
     mock_jqdatasdk.auth.return_value = None
 
