@@ -16,6 +16,18 @@ LEGACY_REDEMPTION_SOURCE_FATAL = (
     "JQData table for AMS convertible-bond lifecycle semantics."
 )
 SUPPORTABILITY_REGRESSION_ERROR = "Missing underlying_ticker for supportable bonds in CONBOND_BASIC_INFO"
+SUPPORTABILITY_EXCLUSION_BUCKETS = {
+    "outside_basic_info": {
+        "count_key": "filtered_bonds_outside_basic_info_count",
+        "row_count_key": "filtered_rows_outside_basic_info_count",
+        "codes_key": "filtered_bond_codes_outside_basic_info",
+    },
+    "missing_company_code_legacy": {
+        "count_key": "filtered_bonds_missing_company_code_legacy_count",
+        "row_count_key": "filtered_rows_missing_company_code_legacy_count",
+        "codes_key": "filtered_bond_codes_missing_company_code_legacy",
+    },
+}
 REDEMPTION_SOURCE_CONTRACT = {
     "source_table": "bond.CONBOND_BASIC_INFO",
     "primary_field": "delist_Date",
@@ -183,6 +195,34 @@ def _write_metrics(metrics_path: str, metrics: dict) -> None:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
 
 
+def _extract_sorted_unique_codes(series: pd.Series) -> list[str]:
+    if series is None or series.empty:
+        return []
+
+    normalized = series.dropna().astype(str).str.strip()
+    normalized = normalized[
+        normalized.ne("")
+        & normalized.ne("nan")
+        & normalized.ne("None")
+    ]
+    return sorted(normalized.unique().tolist())
+
+
+def _build_supportability_exclusion_metrics(df: pd.DataFrame) -> dict:
+    metrics = {}
+    supportability_bucket = df.get("supportability_bucket", pd.Series(dtype="object"))
+    bond_codes = df.get("bond_code_raw", pd.Series(dtype="object"))
+
+    for bucket_name, metric_keys in SUPPORTABILITY_EXCLUSION_BUCKETS.items():
+        bucket_mask = supportability_bucket.eq(bucket_name)
+        filtered_codes = _extract_sorted_unique_codes(bond_codes.loc[bucket_mask])
+        metrics[metric_keys["count_key"]] = len(filtered_codes)
+        metrics[metric_keys["row_count_key"]] = int(bucket_mask.sum())
+        metrics[metric_keys["codes_key"]] = filtered_codes
+
+    return metrics
+
+
 def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     output_path = DATA_PATH
     bak_path = output_path + ".bak"
@@ -225,18 +265,8 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     df = _build_bond_key_columns(df, ticker_col="ticker")
     df = _classify_supportability(df, df_bonds_info, start_date)
 
-    outside_basic_info_mask = df["supportability_bucket"].eq("outside_basic_info")
-    missing_company_code_legacy_mask = df["supportability_bucket"].eq("missing_company_code_legacy")
+    supportability_metrics = _build_supportability_exclusion_metrics(df)
     unexpected_contract_regression_mask = df["supportability_bucket"].eq("unexpected_contract_regression")
-
-    filtered_rows_outside_basic_info = int(outside_basic_info_mask.sum())
-    filtered_bonds_outside_basic_info = sorted(
-        df.loc[outside_basic_info_mask, "bond_code_raw"].dropna().astype(str).unique().tolist()
-    )
-    filtered_rows_missing_company_code_legacy = int(missing_company_code_legacy_mask.sum())
-    filtered_bonds_missing_company_code_legacy = sorted(
-        df.loc[missing_company_code_legacy_mask, "bond_code_raw"].dropna().astype(str).unique().tolist()
-    )
 
     if unexpected_contract_regression_mask.any():
         raise ValueError(SUPPORTABILITY_REGRESSION_ERROR)
@@ -330,12 +360,7 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
         "premium_rate_zero_ratio": float((df["premium_rate"] == 0).mean()),
         "is_st_true_count": int(df["is_st"].sum()),
         "is_redeemed_true_count": int(df["is_redeemed"].sum()),
-        "filtered_bonds_outside_basic_info_count": len(filtered_bonds_outside_basic_info),
-        "filtered_rows_outside_basic_info_count": filtered_rows_outside_basic_info,
-        "filtered_bond_codes_outside_basic_info": filtered_bonds_outside_basic_info,
-        "filtered_bonds_missing_company_code_legacy_count": len(filtered_bonds_missing_company_code_legacy),
-        "filtered_rows_missing_company_code_legacy_count": filtered_rows_missing_company_code_legacy,
-        "filtered_bond_codes_missing_company_code_legacy": filtered_bonds_missing_company_code_legacy,
+        **supportability_metrics,
         "generated_at": datetime.datetime.now().isoformat(),
         "source_lineage": "jqdata_sync_cb"
     })
