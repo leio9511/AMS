@@ -197,7 +197,7 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
 
     in_basic_info = df["bond_code_raw"].isin(all_basic_info_codes)
     filtered_rows_outside_basic_info = int((~in_basic_info).sum())
-    filtered_bonds_outside_basic_info = list(
+    filtered_bonds_outside_basic_info = sorted(
         df.loc[~in_basic_info, "bond_code_raw"].dropna().astype(str).unique()
     )
     df = df[in_basic_info].copy()
