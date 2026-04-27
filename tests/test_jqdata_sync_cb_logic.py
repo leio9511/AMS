@@ -215,6 +215,82 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
     @patch("etl.jqdata_sync_cb.jqdatasdk")
     @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
     @patch("ams.validators.cb_data_validator.CBDataValidator")
+    def test_supportability_filtering_happens_before_premium_and_st_joins(
+        self, mock_validator, mock_semantic_validator, mock_jq
+    ):
+        mock_semantic_validator.return_value.validate_dataframe.return_value = True
+        os.environ["JQDATA_USER"] = "test"
+        os.environ["JQDATA_PWD"] = "test"
+        mock_jq.auth.return_value = None
+        mock_jq.get_all_securities.return_value = pd.DataFrame(
+            index=["123456.XSHG", "654321.XSHG", "999999.XSHG"]
+        )
+        mock_jq.get_security_info.side_effect = AssertionError("legacy get_security_info path must not be used")
+
+        mock_jq.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+        mock_jq.get_price.return_value = pd.DataFrame(
+            {
+                "open": [100.0, 101.0, 102.0],
+                "high": [101.0, 102.0, 103.0],
+                "low": [99.0, 100.0, 101.0],
+                "close": [100.0, 101.0, 102.0],
+                "volume": [1000, 1100, 1200],
+            },
+            index=pd.MultiIndex.from_tuples(
+                [
+                    (pd.to_datetime("2025-01-17"), "123456.XSHG"),
+                    (pd.to_datetime("2025-01-17"), "654321.XSHG"),
+                    (pd.to_datetime("2025-01-17"), "999999.XSHG"),
+                ],
+                names=["time", "code"],
+            ),
+        )
+
+        mock_jq.bond.run_query.side_effect = [
+            pd.DataFrame(
+                {
+                    "code": ["123456", "654321"],
+                    "company_code": ["600000.XSHG", None],
+                    "delist_Date": ["2026-12-31", "2004-01-01"],
+                }
+            ),
+            pd.DataFrame(
+                {
+                    "date": ["2025-01-17"],
+                    "code": ["123456"],
+                    "exchange_code": ["XSHG"],
+                    "convert_premium_rate": [10.0],
+                }
+            ),
+        ]
+        mock_jq.get_extras.return_value = pd.DataFrame(
+            {"600000.XSHG": [False]}, index=pd.to_datetime(["2025-01-17"])
+        )
+        mock_validator.return_value.validate_dataframe.return_value = True
+
+        sync_cb_data("2025-01-17", "2025-01-17")
+
+        queried_raw_codes = mock_jq.bond.CONBOND_DAILY_CONVERT.code.in_.call_args.args[0]
+        self.assertEqual(queried_raw_codes, ["123456"])
+        get_extras_args, get_extras_kwargs = mock_jq.get_extras.call_args
+        self.assertEqual(get_extras_args[0], "is_st")
+        self.assertEqual(get_extras_args[1], ["600000.XSHG"])
+        self.assertEqual(get_extras_kwargs["start_date"], "2025-01-17")
+        self.assertEqual(get_extras_kwargs["end_date"], "2025-01-17")
+
+        df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+        self.assertEqual(df["ticker"].tolist(), ["123456.XSHG"])
+
+        with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
+            metrics = json.load(f)
+        self.assertEqual(metrics["filtered_bond_codes_outside_basic_info"], ["999999"])
+        self.assertEqual(metrics["filtered_bond_codes_missing_company_code_legacy"], ["654321"])
+
+    @patch("etl.jqdata_sync_cb.jqdatasdk")
+    @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+    @patch("ams.validators.cb_data_validator.CBDataValidator")
     def test_fetch_st_status(self, mock_validator, mock_semantic_validator, mock_jq):
         mock_semantic_validator.return_value.validate_dataframe.return_value = True
         os.environ["JQDATA_USER"] = "test"

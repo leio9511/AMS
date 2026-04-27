@@ -15,6 +15,7 @@ LEGACY_REDEMPTION_SOURCE_FATAL = (
     "[FATAL] Invalid redemption source contract: finance.CCB_CALL is not a valid "
     "JQData table for AMS convertible-bond lifecycle semantics."
 )
+SUPPORTABILITY_REGRESSION_ERROR = "Missing underlying_ticker for supportable bonds in CONBOND_BASIC_INFO"
 REDEMPTION_SOURCE_CONTRACT = {
     "source_table": "bond.CONBOND_BASIC_INFO",
     "primary_field": "delist_Date",
@@ -47,21 +48,41 @@ def _raise_legacy_redemption_source_error() -> None:
     raise RuntimeError(LEGACY_REDEMPTION_SOURCE_FATAL)
 
 
-def _build_underlying_mapping(df_bonds_info: pd.DataFrame) -> dict:
-    if df_bonds_info is None or df_bonds_info.empty:
-        return {}
-    if "code" not in df_bonds_info.columns or "company_code" not in df_bonds_info.columns:
-        return {}
+def _prepare_basic_info_contract(df_bonds_info: pd.DataFrame) -> pd.DataFrame:
+    columns = ["bond_code_raw", "company_code", "delist_Date"]
+    if df_bonds_info is None or df_bonds_info.empty or "code" not in df_bonds_info.columns:
+        return pd.DataFrame(columns=columns)
 
-    mapping_df = df_bonds_info[["code", "company_code"]].dropna(subset=["code", "company_code"]).copy()
+    working = df_bonds_info.copy()
+    code_as_str = working["code"].apply(lambda value: str(value).strip() if pd.notna(value) else "")
+    split_keys = code_as_str.apply(_split_bond_ticker)
+    split_df = pd.DataFrame(
+        split_keys.tolist(),
+        columns=["bond_code_raw", "bond_exchange_code"],
+        index=working.index,
+    )
+    working["bond_code_raw"] = split_df["bond_code_raw"].where(split_df["bond_code_raw"].notna(), code_as_str)
+    working["bond_code_raw"] = working["bond_code_raw"].astype(str).str.strip()
+    working = working[working["bond_code_raw"].ne("") & working["bond_code_raw"].ne("nan")]
+    if working.empty:
+        return pd.DataFrame(columns=columns)
+
+    if "company_code" not in working.columns:
+        working["company_code"] = pd.NA
+    if "delist_Date" not in working.columns:
+        working["delist_Date"] = pd.NaT
+
+    working["delist_Date"] = pd.to_datetime(working["delist_Date"], errors="coerce")
+    working = working.drop_duplicates(subset=["bond_code_raw"], keep="last")
+    return working[columns].copy()
+
+
+def _build_underlying_mapping(df_bonds_info: pd.DataFrame) -> dict:
+    mapping_df = _prepare_basic_info_contract(df_bonds_info)
     if mapping_df.empty:
         return {}
 
-    code_as_str = mapping_df["code"].astype(str).str.strip()
-    split_keys = code_as_str.apply(_split_bond_ticker)
-    split_df = pd.DataFrame(split_keys.tolist(), columns=["bond_code_raw", "bond_exchange_code"], index=mapping_df.index)
-    mapping_df["bond_code_raw"] = split_df["bond_code_raw"].where(split_df["bond_code_raw"].notna(), code_as_str)
-    mapping_df = mapping_df[mapping_df["bond_code_raw"].astype(str).str.len() > 0]
+    mapping_df = mapping_df.dropna(subset=["company_code"]).copy()
     if mapping_df.empty:
         return {}
 
@@ -71,21 +92,10 @@ def _build_underlying_mapping(df_bonds_info: pd.DataFrame) -> dict:
 
 def _build_delist_mapping(df_bonds_info: pd.DataFrame) -> dict:
     contract = REDEMPTION_SOURCE_CONTRACT
-    if df_bonds_info is None or df_bonds_info.empty:
-        return {}
-    if "code" not in df_bonds_info.columns or contract["primary_field"] not in df_bonds_info.columns:
-        return {}
-
-    mapping_df = df_bonds_info[["code", contract["primary_field"]]].copy()
-    code_as_str = mapping_df["code"].astype(str).str.strip()
-    split_keys = code_as_str.apply(_split_bond_ticker)
-    split_df = pd.DataFrame(split_keys.tolist(), columns=["bond_code_raw", "bond_exchange_code"], index=mapping_df.index)
-    mapping_df["bond_code_raw"] = split_df["bond_code_raw"].where(split_df["bond_code_raw"].notna(), code_as_str)
-    mapping_df = mapping_df[mapping_df["bond_code_raw"].astype(str).str.len() > 0]
+    mapping_df = _prepare_basic_info_contract(df_bonds_info)
     if mapping_df.empty:
         return {}
 
-    mapping_df[contract["primary_field"]] = pd.to_datetime(mapping_df[contract["primary_field"]], errors="coerce")
     mapping_df = mapping_df.drop_duplicates(subset=["bond_code_raw"], keep="last")
     return mapping_df.set_index("bond_code_raw")[contract["primary_field"]].to_dict()
 
@@ -136,6 +146,38 @@ def _normalize_premium_source(df_premium: pd.DataFrame) -> pd.DataFrame:
     return working[["date", "bond_code_raw", "bond_exchange_code", "premium_rate"]]
 
 
+def _classify_supportability(df: pd.DataFrame, df_bonds_info: pd.DataFrame, start_date: str) -> pd.DataFrame:
+    result = df.copy()
+    contract_df = _prepare_basic_info_contract(df_bonds_info)
+    start_ts = pd.Timestamp(start_date)
+
+    basic_info_codes = set(contract_df["bond_code_raw"].astype(str).tolist())
+    supportable_codes = set(
+        contract_df.loc[contract_df["company_code"].notna(), "bond_code_raw"].astype(str).tolist()
+    )
+    legacy_missing_company_code_codes = set(
+        contract_df.loc[
+            contract_df["company_code"].isna()
+            & contract_df["delist_Date"].notna()
+            & (contract_df["delist_Date"] < start_ts),
+            "bond_code_raw",
+        ].astype(str).tolist()
+    )
+
+    normalized_code = result["bond_code_raw"].where(result["bond_code_raw"].notna(), "").astype(str).str.strip()
+    valid_code = normalized_code.ne("") & normalized_code.ne("nan") & normalized_code.ne("None")
+
+    is_supportable = valid_code & normalized_code.isin(supportable_codes)
+    is_outside_basic_info = valid_code & ~normalized_code.isin(basic_info_codes)
+    is_missing_company_code_legacy = valid_code & normalized_code.isin(legacy_missing_company_code_codes)
+
+    result["supportability_bucket"] = "unexpected_contract_regression"
+    result.loc[is_supportable, "supportability_bucket"] = "supportable"
+    result.loc[is_outside_basic_info, "supportability_bucket"] = "outside_basic_info"
+    result.loc[is_missing_company_code_legacy, "supportability_bucket"] = "missing_company_code_legacy"
+    return result
+
+
 def _write_metrics(metrics_path: str, metrics: dict) -> None:
     with open(metrics_path, "w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
@@ -181,30 +223,29 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     df["date"] = pd.to_datetime(df["date"])
 
     df = _build_bond_key_columns(df, ticker_col="ticker")
+    df = _classify_supportability(df, df_bonds_info, start_date)
 
-    # Pre-filter: build set of all bond codes known to CONBOND_BASIC_INFO
-    # (before _build_underlying_mapping drops rows with NaN company_code).
-    all_basic_info_codes = set()
-    if df_bonds_info is not None and not df_bonds_info.empty and "code" in df_bonds_info.columns:
-        for code_val in df_bonds_info["code"].dropna().astype(str):
-            bond_raw, _ = _split_bond_ticker(str(code_val))
-            if bond_raw is not None and bond_raw:
-                all_basic_info_codes.add(bond_raw)
-            else:
-                cleaned = str(code_val).strip()
-                if cleaned:
-                    all_basic_info_codes.add(cleaned)
+    outside_basic_info_mask = df["supportability_bucket"].eq("outside_basic_info")
+    missing_company_code_legacy_mask = df["supportability_bucket"].eq("missing_company_code_legacy")
+    unexpected_contract_regression_mask = df["supportability_bucket"].eq("unexpected_contract_regression")
 
-    in_basic_info = df["bond_code_raw"].isin(all_basic_info_codes)
-    filtered_rows_outside_basic_info = int((~in_basic_info).sum())
+    filtered_rows_outside_basic_info = int(outside_basic_info_mask.sum())
     filtered_bonds_outside_basic_info = sorted(
-        df.loc[~in_basic_info, "bond_code_raw"].dropna().astype(str).unique()
+        df.loc[outside_basic_info_mask, "bond_code_raw"].dropna().astype(str).unique().tolist()
     )
-    df = df[in_basic_info].copy()
+    filtered_rows_missing_company_code_legacy = int(missing_company_code_legacy_mask.sum())
+    filtered_bonds_missing_company_code_legacy = sorted(
+        df.loc[missing_company_code_legacy_mask, "bond_code_raw"].dropna().astype(str).unique().tolist()
+    )
+
+    if unexpected_contract_regression_mask.any():
+        raise ValueError(SUPPORTABILITY_REGRESSION_ERROR)
+
+    df = df[df["supportability_bucket"].eq("supportable")].copy()
 
     df["underlying_ticker"] = df["bond_code_raw"].map(bond_to_stock)
     if df["underlying_ticker"].isna().any():
-        raise ValueError("Missing underlying_ticker for bonds in CONBOND_BASIC_INFO")
+        raise ValueError(SUPPORTABILITY_REGRESSION_ERROR)
 
     premium_rate_metrics = {
         "premium_rate_source_row_count": 0,
@@ -291,6 +332,10 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
         "is_redeemed_true_count": int(df["is_redeemed"].sum()),
         "filtered_bonds_outside_basic_info_count": len(filtered_bonds_outside_basic_info),
         "filtered_rows_outside_basic_info_count": filtered_rows_outside_basic_info,
+        "filtered_bond_codes_outside_basic_info": filtered_bonds_outside_basic_info,
+        "filtered_bonds_missing_company_code_legacy_count": len(filtered_bonds_missing_company_code_legacy),
+        "filtered_rows_missing_company_code_legacy_count": filtered_rows_missing_company_code_legacy,
+        "filtered_bond_codes_missing_company_code_legacy": filtered_bonds_missing_company_code_legacy,
         "filtered_bond_codes": filtered_bonds_outside_basic_info,
         "generated_at": datetime.datetime.now().isoformat(),
         "source_lineage": "jqdata_sync_cb"
