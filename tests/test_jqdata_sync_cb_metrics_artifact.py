@@ -299,6 +299,27 @@ def test_metrics_artifact_emits_zero_counts_and_empty_lists_for_absent_exclusion
 @patch("etl.jqdata_sync_cb.jqdatasdk")
 @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
 @patch("ams.validators.cb_data_validator.CBDataValidator")
+def test_metrics_artifact_builder_emits_zeroed_reason_coded_fields_for_empty_inputs(
+    mock_validator_cls, mock_semantic_validator_cls, mock_jqdatasdk
+):
+    del mock_validator_cls, mock_semantic_validator_cls, mock_jqdatasdk
+
+    metrics = etl.jqdata_sync_cb._build_supportability_exclusion_metrics(pd.DataFrame())
+
+    assert metrics == {
+        "filtered_bonds_outside_basic_info_count": 0,
+        "filtered_rows_outside_basic_info_count": 0,
+        "filtered_bond_codes_outside_basic_info": [],
+        "filtered_bonds_missing_company_code_legacy_count": 0,
+        "filtered_rows_missing_company_code_legacy_count": 0,
+        "filtered_bond_codes_missing_company_code_legacy": [],
+    }
+
+
+@patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
+@patch("etl.jqdata_sync_cb.jqdatasdk")
+@patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+@patch("ams.validators.cb_data_validator.CBDataValidator")
 def test_metrics_artifact_code_lists_are_deterministically_sorted(
     mock_validator_cls, mock_semantic_validator_cls, mock_jqdatasdk
 ):

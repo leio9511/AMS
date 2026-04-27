@@ -374,6 +374,32 @@ def test_sync_cb_data_real_window_known_legacy_case_is_accounted_for_in_reason_c
 
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
 @patch("etl.jqdata_sync_cb.jqdatasdk")
+def test_sync_cb_data_reason_coded_metrics_survive_empty_price_rows(mock_jqdatasdk):
+    mock_jqdatasdk.auth.return_value = None
+    mock_jqdatasdk.bond.run_query.return_value = pd.DataFrame(
+        {
+            "code": ["125302", "110059"],
+            "company_code": [None, "000001.XSHE"],
+            "delist_Date": ["2004-01-01", "2025-12-31"],
+        }
+    )
+    mock_jqdatasdk.get_all_securities.return_value = pd.DataFrame(index=["125302.XSHG", "110059.XSHG"])
+    mock_jqdatasdk.get_price.return_value = pd.DataFrame()
+
+    with pytest.raises(ValueError, match="No price data found for the given range"):
+        sync_cb_data(start_date="2025-01-17", end_date="2025-01-17")
+
+    metrics = etl.jqdata_sync_cb._build_supportability_exclusion_metrics(pd.DataFrame())
+    assert metrics["filtered_bonds_outside_basic_info_count"] == 0
+    assert metrics["filtered_rows_outside_basic_info_count"] == 0
+    assert metrics["filtered_bond_codes_outside_basic_info"] == []
+    assert metrics["filtered_bonds_missing_company_code_legacy_count"] == 0
+    assert metrics["filtered_rows_missing_company_code_legacy_count"] == 0
+    assert metrics["filtered_bond_codes_missing_company_code_legacy"] == []
+
+
+@patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
+@patch("etl.jqdata_sync_cb.jqdatasdk")
 def test_sync_cb_data_hard_fails_for_null_company_code_without_legacy_justification(mock_jqdatasdk):
     mock_jqdatasdk.auth.return_value = None
 

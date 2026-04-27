@@ -1,0 +1,797 @@
+diff --git a/etl/jqdata_sync_cb.py b/etl/jqdata_sync_cb.py
+index efe55f5..69d7461 100644
+--- a/etl/jqdata_sync_cb.py
++++ b/etl/jqdata_sync_cb.py
+@@ -15,6 +15,23 @@ LEGACY_REDEMPTION_SOURCE_FATAL = (
+     "[FATAL] Invalid redemption source contract: finance.CCB_CALL is not a valid "
+     "JQData table for AMS convertible-bond lifecycle semantics."
+ )
++SUPPORTABILITY_REGRESSION_ERROR = "Missing underlying_ticker for supportable bonds in CONBOND_BASIC_INFO"
++SUPPORTABILITY_BUCKET_SUPPORTABLE = "supportable"
++SUPPORTABILITY_BUCKET_OUTSIDE_BASIC_INFO = "outside_basic_info"
++SUPPORTABILITY_BUCKET_MISSING_COMPANY_CODE_LEGACY = "missing_company_code_legacy"
++SUPPORTABILITY_BUCKET_UNEXPECTED_CONTRACT_REGRESSION = "unexpected_contract_regression"
++SUPPORTABILITY_EXCLUSION_BUCKETS = {
++    SUPPORTABILITY_BUCKET_OUTSIDE_BASIC_INFO: {
++        "count_key": "filtered_bonds_outside_basic_info_count",
++        "row_count_key": "filtered_rows_outside_basic_info_count",
++        "codes_key": "filtered_bond_codes_outside_basic_info",
++    },
++    SUPPORTABILITY_BUCKET_MISSING_COMPANY_CODE_LEGACY: {
++        "count_key": "filtered_bonds_missing_company_code_legacy_count",
++        "row_count_key": "filtered_rows_missing_company_code_legacy_count",
++        "codes_key": "filtered_bond_codes_missing_company_code_legacy",
++    },
++}
+ REDEMPTION_SOURCE_CONTRACT = {
+     "source_table": "bond.CONBOND_BASIC_INFO",
+     "primary_field": "delist_Date",
+@@ -47,21 +64,41 @@ def _raise_legacy_redemption_source_error() -> None:
+     raise RuntimeError(LEGACY_REDEMPTION_SOURCE_FATAL)
+ 
+ 
+-def _build_underlying_mapping(df_bonds_info: pd.DataFrame) -> dict:
+-    if df_bonds_info is None or df_bonds_info.empty:
+-        return {}
+-    if "code" not in df_bonds_info.columns or "company_code" not in df_bonds_info.columns:
+-        return {}
++def _prepare_basic_info_contract(df_bonds_info: pd.DataFrame) -> pd.DataFrame:
++    columns = ["bond_code_raw", "company_code", "delist_Date"]
++    if df_bonds_info is None or df_bonds_info.empty or "code" not in df_bonds_info.columns:
++        return pd.DataFrame(columns=columns)
++
++    working = df_bonds_info.copy()
++    code_as_str = working["code"].apply(lambda value: str(value).strip() if pd.notna(value) else "")
++    split_keys = code_as_str.apply(_split_bond_ticker)
++    split_df = pd.DataFrame(
++        split_keys.tolist(),
++        columns=["bond_code_raw", "bond_exchange_code"],
++        index=working.index,
++    )
++    working["bond_code_raw"] = split_df["bond_code_raw"].where(split_df["bond_code_raw"].notna(), code_as_str)
++    working["bond_code_raw"] = working["bond_code_raw"].astype(str).str.strip()
++    working = working[working["bond_code_raw"].ne("") & working["bond_code_raw"].ne("nan")]
++    if working.empty:
++        return pd.DataFrame(columns=columns)
+ 
+-    mapping_df = df_bonds_info[["code", "company_code"]].dropna(subset=["code", "company_code"]).copy()
++    if "company_code" not in working.columns:
++        working["company_code"] = pd.NA
++    if "delist_Date" not in working.columns:
++        working["delist_Date"] = pd.NaT
++
++    working["delist_Date"] = pd.to_datetime(working["delist_Date"], errors="coerce")
++    working = working.drop_duplicates(subset=["bond_code_raw"], keep="last")
++    return working[columns].copy()
++
++
++def _build_underlying_mapping(df_bonds_info: pd.DataFrame) -> dict:
++    mapping_df = _prepare_basic_info_contract(df_bonds_info)
+     if mapping_df.empty:
+         return {}
+ 
+-    code_as_str = mapping_df["code"].astype(str).str.strip()
+-    split_keys = code_as_str.apply(_split_bond_ticker)
+-    split_df = pd.DataFrame(split_keys.tolist(), columns=["bond_code_raw", "bond_exchange_code"], index=mapping_df.index)
+-    mapping_df["bond_code_raw"] = split_df["bond_code_raw"].where(split_df["bond_code_raw"].notna(), code_as_str)
+-    mapping_df = mapping_df[mapping_df["bond_code_raw"].astype(str).str.len() > 0]
++    mapping_df = mapping_df.dropna(subset=["company_code"]).copy()
+     if mapping_df.empty:
+         return {}
+ 
+@@ -71,21 +108,10 @@ def _build_underlying_mapping(df_bonds_info: pd.DataFrame) -> dict:
+ 
+ def _build_delist_mapping(df_bonds_info: pd.DataFrame) -> dict:
+     contract = REDEMPTION_SOURCE_CONTRACT
+-    if df_bonds_info is None or df_bonds_info.empty:
+-        return {}
+-    if "code" not in df_bonds_info.columns or contract["primary_field"] not in df_bonds_info.columns:
+-        return {}
+-
+-    mapping_df = df_bonds_info[["code", contract["primary_field"]]].copy()
+-    code_as_str = mapping_df["code"].astype(str).str.strip()
+-    split_keys = code_as_str.apply(_split_bond_ticker)
+-    split_df = pd.DataFrame(split_keys.tolist(), columns=["bond_code_raw", "bond_exchange_code"], index=mapping_df.index)
+-    mapping_df["bond_code_raw"] = split_df["bond_code_raw"].where(split_df["bond_code_raw"].notna(), code_as_str)
+-    mapping_df = mapping_df[mapping_df["bond_code_raw"].astype(str).str.len() > 0]
++    mapping_df = _prepare_basic_info_contract(df_bonds_info)
+     if mapping_df.empty:
+         return {}
+ 
+-    mapping_df[contract["primary_field"]] = pd.to_datetime(mapping_df[contract["primary_field"]], errors="coerce")
+     mapping_df = mapping_df.drop_duplicates(subset=["bond_code_raw"], keep="last")
+     return mapping_df.set_index("bond_code_raw")[contract["primary_field"]].to_dict()
+ 
+@@ -136,11 +162,83 @@ def _normalize_premium_source(df_premium: pd.DataFrame) -> pd.DataFrame:
+     return working[["date", "bond_code_raw", "bond_exchange_code", "premium_rate"]]
+ 
+ 
++def _classify_supportability(df: pd.DataFrame, df_bonds_info: pd.DataFrame, start_date: str) -> pd.DataFrame:
++    result = df.copy()
++    contract_df = _prepare_basic_info_contract(df_bonds_info)
++    start_ts = pd.Timestamp(start_date)
++
++    basic_info_codes = set(contract_df["bond_code_raw"].astype(str).tolist())
++    supportable_codes = set(
++        contract_df.loc[contract_df["company_code"].notna(), "bond_code_raw"].astype(str).tolist()
++    )
++    legacy_missing_company_code_codes = set(
++        contract_df.loc[
++            contract_df["company_code"].isna()
++            & contract_df["delist_Date"].notna()
++            & (contract_df["delist_Date"] < start_ts),
++            "bond_code_raw",
++        ].astype(str).tolist()
++    )
++
++    normalized_code = result["bond_code_raw"].where(result["bond_code_raw"].notna(), "").astype(str).str.strip()
++    valid_code = normalized_code.ne("") & normalized_code.ne("nan") & normalized_code.ne("None")
++
++    is_supportable = valid_code & normalized_code.isin(supportable_codes)
++    is_outside_basic_info = valid_code & ~normalized_code.isin(basic_info_codes)
++    is_missing_company_code_legacy = valid_code & normalized_code.isin(legacy_missing_company_code_codes)
++
++    result["supportability_bucket"] = SUPPORTABILITY_BUCKET_UNEXPECTED_CONTRACT_REGRESSION
++    result.loc[is_supportable, "supportability_bucket"] = SUPPORTABILITY_BUCKET_SUPPORTABLE
++    result.loc[is_outside_basic_info, "supportability_bucket"] = SUPPORTABILITY_BUCKET_OUTSIDE_BASIC_INFO
++    result.loc[is_missing_company_code_legacy, "supportability_bucket"] = SUPPORTABILITY_BUCKET_MISSING_COMPANY_CODE_LEGACY
++    return result
++
++
+ def _write_metrics(metrics_path: str, metrics: dict) -> None:
+     with open(metrics_path, "w", encoding="utf-8") as f:
+         json.dump(metrics, f, ensure_ascii=False, indent=2)
+ 
+ 
++def _extract_sorted_unique_codes(series: pd.Series) -> list[str]:
++    if series is None or series.empty:
++        return []
++
++    normalized = series.dropna().astype(str).str.strip()
++    normalized = normalized[
++        normalized.ne("")
++        & normalized.ne("nan")
++        & normalized.ne("None")
++    ]
++    return sorted(normalized.unique().tolist())
++
++
++def _initialize_supportability_exclusion_metrics() -> dict:
++    metrics = {}
++    for metric_keys in SUPPORTABILITY_EXCLUSION_BUCKETS.values():
++        metrics[metric_keys["count_key"]] = 0
++        metrics[metric_keys["row_count_key"]] = 0
++        metrics[metric_keys["codes_key"]] = []
++    return metrics
++
++
++def _build_supportability_exclusion_metrics(df: pd.DataFrame) -> dict:
++    metrics = _initialize_supportability_exclusion_metrics()
++    if df is None or df.empty:
++        return metrics
++
++    supportability_bucket = df["supportability_bucket"] if "supportability_bucket" in df.columns else pd.Series("", index=df.index, dtype="object")
++    bond_codes = df["bond_code_raw"] if "bond_code_raw" in df.columns else pd.Series("", index=df.index, dtype="object")
++
++    for bucket_name, metric_keys in SUPPORTABILITY_EXCLUSION_BUCKETS.items():
++        bucket_mask = supportability_bucket.eq(bucket_name)
++        filtered_codes = _extract_sorted_unique_codes(bond_codes.loc[bucket_mask])
++        metrics[metric_keys["count_key"]] = len(filtered_codes)
++        metrics[metric_keys["row_count_key"]] = int(bucket_mask.sum())
++        metrics[metric_keys["codes_key"]] = filtered_codes
++
++    return metrics
++
++
+ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
+     output_path = DATA_PATH
+     bak_path = output_path + ".bak"
+@@ -181,30 +279,21 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
+     df["date"] = pd.to_datetime(df["date"])
+ 
+     df = _build_bond_key_columns(df, ticker_col="ticker")
++    df = _classify_supportability(df, df_bonds_info, start_date)
+ 
+-    # Pre-filter: build set of all bond codes known to CONBOND_BASIC_INFO
+-    # (before _build_underlying_mapping drops rows with NaN company_code).
+-    all_basic_info_codes = set()
+-    if df_bonds_info is not None and not df_bonds_info.empty and "code" in df_bonds_info.columns:
+-        for code_val in df_bonds_info["code"].dropna().astype(str):
+-            bond_raw, _ = _split_bond_ticker(str(code_val))
+-            if bond_raw is not None and bond_raw:
+-                all_basic_info_codes.add(bond_raw)
+-            else:
+-                cleaned = str(code_val).strip()
+-                if cleaned:
+-                    all_basic_info_codes.add(cleaned)
+-
+-    in_basic_info = df["bond_code_raw"].isin(all_basic_info_codes)
+-    filtered_rows_outside_basic_info = int((~in_basic_info).sum())
+-    filtered_bonds_outside_basic_info = sorted(
+-        df.loc[~in_basic_info, "bond_code_raw"].dropna().astype(str).unique()
++    supportability_metrics = _build_supportability_exclusion_metrics(df)
++    unexpected_contract_regression_mask = df["supportability_bucket"].eq(
++        SUPPORTABILITY_BUCKET_UNEXPECTED_CONTRACT_REGRESSION
+     )
+-    df = df[in_basic_info].copy()
++
++    if unexpected_contract_regression_mask.any():
++        raise ValueError(SUPPORTABILITY_REGRESSION_ERROR)
++
++    df = df[df["supportability_bucket"].eq(SUPPORTABILITY_BUCKET_SUPPORTABLE)].copy()
+ 
+     df["underlying_ticker"] = df["bond_code_raw"].map(bond_to_stock)
+     if df["underlying_ticker"].isna().any():
+-        raise ValueError("Missing underlying_ticker for bonds in CONBOND_BASIC_INFO")
++        raise ValueError(SUPPORTABILITY_REGRESSION_ERROR)
+ 
+     premium_rate_metrics = {
+         "premium_rate_source_row_count": 0,
+@@ -289,9 +378,7 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
+         "premium_rate_zero_ratio": float((df["premium_rate"] == 0).mean()),
+         "is_st_true_count": int(df["is_st"].sum()),
+         "is_redeemed_true_count": int(df["is_redeemed"].sum()),
+-        "filtered_bonds_outside_basic_info_count": len(filtered_bonds_outside_basic_info),
+-        "filtered_rows_outside_basic_info_count": filtered_rows_outside_basic_info,
+-        "filtered_bond_codes": filtered_bonds_outside_basic_info,
++        **supportability_metrics,
+         "generated_at": datetime.datetime.now().isoformat(),
+         "source_lineage": "jqdata_sync_cb"
+     })
+diff --git a/tests/test_jqdata_sync_cb.py b/tests/test_jqdata_sync_cb.py
+index 43afa3a..fa85312 100644
+--- a/tests/test_jqdata_sync_cb.py
++++ b/tests/test_jqdata_sync_cb.py
+@@ -6,7 +6,7 @@ from unittest.mock import patch
+ import pandas as pd
+ import pytest
+ 
+-from etl.jqdata_sync_cb import sync_cb_data
++from etl.jqdata_sync_cb import SUPPORTABILITY_REGRESSION_ERROR, sync_cb_data
+ 
+ 
+ @patch.dict(os.environ, {}, clear=True)
+@@ -203,7 +203,7 @@ def test_sync_cb_data_raises_when_normalized_underlying_mapping_is_missing(mock_
+         }
+     ).set_index(["time", "code"])
+ 
+-    with pytest.raises(ValueError, match="Missing underlying_ticker for bonds in CONBOND_BASIC_INFO"):
++    with pytest.raises(ValueError, match="Missing underlying_ticker for supportable bonds in CONBOND_BASIC_INFO"):
+         sync_cb_data()
+ 
+ 
+@@ -240,7 +240,7 @@ def test_full_ticker_cannot_be_used_as_underlying_map_key(
+         }
+     ).set_index(["time", "code"])
+ 
+-    with pytest.raises(ValueError, match="Missing underlying_ticker for bonds in CONBOND_BASIC_INFO"):
++    with pytest.raises(ValueError, match="Missing underlying_ticker for supportable bonds in CONBOND_BASIC_INFO"):
+         sync_cb_data()
+ 
+ 
+@@ -308,6 +308,192 @@ def test_bonds_outside_basic_info_are_filtered_not_blocking(mock_semantic_valida
+     assert "125302.XSHG" not in df["ticker"].values
+ 
+ 
++@patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
++@patch("etl.jqdata_sync_cb.jqdatasdk")
++@patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
++def test_sync_cb_data_real_window_known_legacy_case_is_accounted_for_in_reason_coded_metrics(
++    mock_semantic_validator, mock_jqdatasdk
++):
++    mock_semantic_validator.return_value.validate_dataframe.return_value = True
++    mock_jqdatasdk.auth.return_value = None
++
++    mock_df_bonds = pd.DataFrame(
++        {"code": ["125302.XSHG", "110059.XSHG"], "end_date": [pd.NaT, pd.NaT]}
++    )
++    mock_df_bonds.index = ["125302.XSHG", "110059.XSHG"]
++    mock_jqdatasdk.get_all_securities.return_value = mock_df_bonds
++
++    mock_jqdatasdk.bond.run_query.side_effect = [
++        pd.DataFrame(
++            {
++                "code": ["125302", "110059"],
++                "company_code": [None, "000001.XSHE"],
++                "delist_Date": ["2004-01-01", "2025-12-31"],
++            }
++        ),
++        pd.DataFrame(
++            {
++                "date": ["2025-01-17"],
++                "code": ["110059"],
++                "exchange_code": ["XSHG"],
++                "convert_premium_rate": [10.0],
++            }
++        ),
++    ]
++
++    mock_jqdatasdk.get_price.return_value = pd.DataFrame(
++        {
++            "time": ["2025-01-17", "2025-01-17"],
++            "code": ["125302.XSHG", "110059.XSHG"],
++            "open": [100.0, 101.0],
++            "high": [101.0, 102.0],
++            "low": [99.0, 100.0],
++            "close": [100.5, 101.5],
++            "volume": [1000, 1200],
++        }
++    ).set_index(["time", "code"])
++    mock_jqdatasdk.get_extras.return_value = pd.DataFrame(
++        {"000001.XSHE": [False]}, index=pd.to_datetime(["2025-01-17"])
++    )
++    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
++    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
++    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
++
++    sync_cb_data(start_date="2025-01-17", end_date="2025-01-17")
++
++    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
++    assert set(df["ticker"].unique()) == {"110059.XSHG"}
++    with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
++        metrics = json.load(f)
++    assert metrics["filtered_bonds_missing_company_code_legacy_count"] == 1
++    assert metrics["filtered_rows_missing_company_code_legacy_count"] == 1
++    assert metrics["filtered_bond_codes_missing_company_code_legacy"] == ["125302"]
++    assert metrics["filtered_bonds_outside_basic_info_count"] == 0
++    assert metrics["filtered_bond_codes_outside_basic_info"] == []
++
++
++@patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
++@patch("etl.jqdata_sync_cb.jqdatasdk")
++def test_sync_cb_data_reason_coded_metrics_survive_empty_price_rows(mock_jqdatasdk):
++    mock_jqdatasdk.auth.return_value = None
++    mock_jqdatasdk.bond.run_query.return_value = pd.DataFrame(
++        {
++            "code": ["125302", "110059"],
++            "company_code": [None, "000001.XSHE"],
++            "delist_Date": ["2004-01-01", "2025-12-31"],
++        }
++    )
++    mock_jqdatasdk.get_all_securities.return_value = pd.DataFrame(index=["125302.XSHG", "110059.XSHG"])
++    mock_jqdatasdk.get_price.return_value = pd.DataFrame()
++
++    with pytest.raises(ValueError, match="No price data found for the given range"):
++        sync_cb_data(start_date="2025-01-17", end_date="2025-01-17")
++
++    metrics = etl.jqdata_sync_cb._build_supportability_exclusion_metrics(pd.DataFrame())
++    assert metrics["filtered_bonds_outside_basic_info_count"] == 0
++    assert metrics["filtered_rows_outside_basic_info_count"] == 0
++    assert metrics["filtered_bond_codes_outside_basic_info"] == []
++    assert metrics["filtered_bonds_missing_company_code_legacy_count"] == 0
++    assert metrics["filtered_rows_missing_company_code_legacy_count"] == 0
++    assert metrics["filtered_bond_codes_missing_company_code_legacy"] == []
++
++
++@patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
++@patch("etl.jqdata_sync_cb.jqdatasdk")
++def test_sync_cb_data_hard_fails_for_null_company_code_without_legacy_justification(mock_jqdatasdk):
++    mock_jqdatasdk.auth.return_value = None
++
++    mock_df_bonds = pd.DataFrame({"code": ["110059.XSHG"], "end_date": [pd.NaT]})
++    mock_df_bonds.index = ["110059.XSHG"]
++    mock_jqdatasdk.get_all_securities.return_value = mock_df_bonds
++
++    mock_jqdatasdk.bond.run_query.side_effect = [
++        pd.DataFrame(
++            {"code": ["110059"], "company_code": [None], "delist_Date": [None]}
++        ),
++        pd.DataFrame(
++            {
++                "date": ["2025-01-17"],
++                "code": ["110059"],
++                "exchange_code": ["XSHG"],
++                "convert_premium_rate": [10.0],
++            }
++        ),
++    ]
++    mock_jqdatasdk.get_price.return_value = pd.DataFrame(
++        {
++            "time": ["2025-01-17"],
++            "code": ["110059.XSHG"],
++            "open": [100.0],
++            "high": [101.0],
++            "low": [99.0],
++            "close": [100.5],
++            "volume": [1000],
++        }
++    ).set_index(["time", "code"])
++
++    with pytest.raises(ValueError, match=SUPPORTABILITY_REGRESSION_ERROR):
++        sync_cb_data(start_date="2025-01-17", end_date="2025-01-17")
++
++
++@patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
++@patch("etl.jqdata_sync_cb.jqdatasdk")
++@patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
++def test_sync_cb_data_keeps_outside_basic_info_filtering_and_supportable_rows_green(
++    mock_semantic_validator, mock_jqdatasdk
++):
++    mock_semantic_validator.return_value.validate_dataframe.return_value = True
++    mock_jqdatasdk.auth.return_value = None
++
++    mock_df_bonds = pd.DataFrame(
++        {"code": ["999999.XSHG", "110059.XSHG"], "end_date": [pd.NaT, pd.NaT]}
++    )
++    mock_df_bonds.index = ["999999.XSHG", "110059.XSHG"]
++    mock_jqdatasdk.get_all_securities.return_value = mock_df_bonds
++
++    mock_jqdatasdk.bond.run_query.side_effect = [
++        pd.DataFrame(
++            {"code": ["110059"], "company_code": ["000001.XSHE"], "delist_Date": ["2025-12-31"]}
++        ),
++        pd.DataFrame(
++            {
++                "date": ["2025-01-17"],
++                "code": ["110059"],
++                "exchange_code": ["XSHG"],
++                "convert_premium_rate": [10.0],
++            }
++        ),
++    ]
++
++    mock_jqdatasdk.get_price.return_value = pd.DataFrame(
++        {
++            "time": ["2025-01-17", "2025-01-17"],
++            "code": ["999999.XSHG", "110059.XSHG"],
++            "open": [100.0, 101.0],
++            "high": [101.0, 102.0],
++            "low": [99.0, 100.0],
++            "close": [100.5, 101.5],
++            "volume": [1000, 1200],
++        }
++    ).set_index(["time", "code"])
++    mock_jqdatasdk.get_extras.return_value = pd.DataFrame(
++        {"000001.XSHE": [False]}, index=pd.to_datetime(["2025-01-17"])
++    )
++    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
++    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
++    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
++
++    sync_cb_data(start_date="2025-01-17", end_date="2025-01-17")
++
++    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
++    assert len(df) == 1
++    assert set(df["ticker"].unique()) == {"110059.XSHG"}
++    with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
++        metrics = json.load(f)
++    assert metrics["filtered_bond_codes_outside_basic_info"] == ["999999"]
++    assert metrics["filtered_bonds_missing_company_code_legacy_count"] == 0
++
++
+ @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
+ @patch("etl.jqdata_sync_cb.jqdatasdk")
+ def test_fail_fast_still_fires_for_bonds_in_basic_info_with_missing_mapping(mock_jqdatasdk):
+@@ -348,5 +534,5 @@ def test_fail_fast_still_fires_for_bonds_in_basic_info_with_missing_mapping(mock
+     ).set_index(["time", "code"])
+ 
+     # Fail-fast must fire with the NEW error message
+-    with pytest.raises(ValueError, match="Missing underlying_ticker for bonds in CONBOND_BASIC_INFO"):
++    with pytest.raises(ValueError, match="Missing underlying_ticker for supportable bonds in CONBOND_BASIC_INFO"):
+         sync_cb_data()
+diff --git a/tests/test_jqdata_sync_cb_metrics_artifact.py b/tests/test_jqdata_sync_cb_metrics_artifact.py
+index 65b4a5b..1742a04 100644
+--- a/tests/test_jqdata_sync_cb_metrics_artifact.py
++++ b/tests/test_jqdata_sync_cb_metrics_artifact.py
+@@ -1,10 +1,10 @@
+-import etl.jqdata_sync_cb
+ import json
+ import os
+ from unittest.mock import patch
+ 
+ import pandas as pd
+ 
++import etl.jqdata_sync_cb
+ from etl.jqdata_sync_cb import sync_cb_data
+ 
+ 
+@@ -12,7 +12,9 @@ from etl.jqdata_sync_cb import sync_cb_data
+ @patch("etl.jqdata_sync_cb.jqdatasdk")
+ @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+ @patch("ams.validators.cb_data_validator.CBDataValidator")
+-def test_metrics_artifact_contains_required_premium_and_redemption_contract_fields(mock_validator_cls, mock_semantic_validator_cls, mock_jqdatasdk):
++def test_metrics_artifact_contains_required_premium_and_redemption_contract_fields(
++    mock_validator_cls, mock_semantic_validator_cls, mock_jqdatasdk
++):
+     mock_validator_cls.return_value.validate_dataframe.return_value = True
+     mock_semantic_validator_cls.return_value.validate_dataframe.return_value = True
+     mock_jqdatasdk.auth.return_value = None
+@@ -75,6 +77,7 @@ def test_metrics_artifact_contains_required_premium_and_redemption_contract_fiel
+     assert metrics["premium_rate_join_coverage_ratio"] == 1.0
+     assert metrics["is_redeemed_missing_delist_count"] == 1
+ 
++
+ @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
+ @patch("etl.jqdata_sync_cb.jqdatasdk")
+ @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+@@ -152,54 +155,54 @@ def test_etl_writes_all_required_metrics(mock_validator_cls, mock_semantic_valid
+ @patch("etl.jqdata_sync_cb.jqdatasdk")
+ @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+ @patch("ams.validators.cb_data_validator.CBDataValidator")
+-def test_metrics_artifact_includes_filtered_bond_fields(mock_validator_cls, mock_semantic_validator_cls, mock_jqdatasdk):
+-    """Verify that when some bonds are filtered out (outside CONBOND_BASIC_INFO),
+-    the metrics artifact includes the three filtering fields with correct values."""
++def test_metrics_artifact_separates_outside_basic_info_and_missing_company_code_legacy_buckets(
++    mock_validator_cls, mock_semantic_validator_cls, mock_jqdatasdk
++):
+     mock_validator_cls.return_value.validate_dataframe.return_value = True
+     mock_semantic_validator_cls.return_value.validate_dataframe.return_value = True
+     mock_jqdatasdk.auth.return_value = None
+ 
+-    # One bond inside basic_info (110059), one outside (125302)
+     mock_jqdatasdk.get_all_securities.return_value = pd.DataFrame(
+-        index=["125302.XSHG", "110059.XSHG"]
++        index=["999999.XSHG", "125302.XSHG", "110059.XSHG"]
+     )
+     mock_jqdatasdk.get_price.return_value = pd.DataFrame(
+         {
+-            "open": [100.0, 101.0],
+-            "high": [101.0, 102.0],
+-            "low": [99.0, 100.0],
+-            "close": [100.5, 101.5],
+-            "volume": [1000, 1200],
++            "open": [100.0, 101.0, 102.0],
++            "high": [101.0, 102.0, 103.0],
++            "low": [99.0, 100.0, 101.0],
++            "close": [100.5, 101.5, 102.5],
++            "volume": [1000, 1200, 1500],
+         },
+         index=pd.MultiIndex.from_tuples(
+             [
+-                (pd.to_datetime("2020-01-02"), "125302.XSHG"),
+-                (pd.to_datetime("2020-01-02"), "110059.XSHG"),
++                (pd.to_datetime("2025-01-17"), "999999.XSHG"),
++                (pd.to_datetime("2025-01-17"), "125302.XSHG"),
++                (pd.to_datetime("2025-01-17"), "110059.XSHG"),
+             ],
+             names=["time", "code"],
+         ),
+     )
+     mock_jqdatasdk.get_extras.return_value = pd.DataFrame(
+         {"000001.XSHE": [False]},
+-        index=pd.to_datetime(["2020-01-02"]),
++        index=pd.to_datetime(["2025-01-17"]),
+     )
++    mock_jqdatasdk.get_security_info.side_effect = AssertionError("legacy get_security_info path must not be used")
++    mock_jqdatasdk.finance.run_query.side_effect = AssertionError("finance.CCB_CALL must not be queried")
++
+     mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+     mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+     mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+-    mock_jqdatasdk.get_security_info.side_effect = AssertionError("legacy get_security_info path must not be used")
+-    mock_jqdatasdk.finance.run_query.side_effect = AssertionError("finance.CCB_CALL must not be queried")
+ 
+-    # CONBOND_BASIC_INFO only has 110059 — NOT 125302
+     bonds_info = pd.DataFrame(
+         {
+-            "code": ["110059"],
+-            "company_code": ["000001.XSHE"],
+-            "delist_Date": ["2025-12-31"],
++            "code": ["125302", "110059"],
++            "company_code": [None, "000001.XSHE"],
++            "delist_Date": ["2004-01-01", "2025-12-31"],
+         }
+     )
+     premium = pd.DataFrame(
+         {
+-            "date": ["2020-01-02"],
++            "date": ["2025-01-17"],
+             "code": ["110059"],
+             "exchange_code": ["XSHG"],
+             "convert_premium_rate": [10.0],
+@@ -208,47 +211,33 @@ def test_metrics_artifact_includes_filtered_bond_fields(mock_validator_cls, mock
+     mock_jqdatasdk.bond.run_query.side_effect = [bonds_info, premium]
+ 
+     with patch("os.replace"):
+-        sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
++        sync_cb_data(start_date="2025-01-17", end_date="2025-01-17")
+ 
+     tmp_metrics_path = etl.jqdata_sync_cb.METRICS_PATH + ".tmp"
+-    assert os.path.exists(tmp_metrics_path)
+     with open(tmp_metrics_path, "r", encoding="utf-8") as f:
+         metrics = json.load(f)
+ 
+-    # Verify the three new filtering fields
+     assert metrics["filtered_bonds_outside_basic_info_count"] == 1
+     assert metrics["filtered_rows_outside_basic_info_count"] == 1
+-    assert "125302" in metrics["filtered_bond_codes"]
+-
+-    # Verify all other required metrics fields are still present
+-    assert "row_count" in metrics
+-    assert "underlying_ticker_nonnull_ratio" in metrics
+-    assert "premium_rate_nonzero_ratio" in metrics
+-    assert "premium_rate_zero_ratio" in metrics
+-    assert "is_st_true_count" in metrics
+-    assert "is_redeemed_true_count" in metrics
+-    assert "generated_at" in metrics
+-    assert "source_lineage" in metrics
+-    assert metrics["source_lineage"] == "jqdata_sync_cb"
+-    assert metrics["row_count"] == 1
++    assert metrics["filtered_bond_codes_outside_basic_info"] == ["999999"]
++    assert metrics["filtered_bonds_missing_company_code_legacy_count"] == 1
++    assert metrics["filtered_rows_missing_company_code_legacy_count"] == 1
++    assert metrics["filtered_bond_codes_missing_company_code_legacy"] == ["125302"]
++    assert "filtered_bond_codes" not in metrics
+ 
+ 
+ @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
+ @patch("etl.jqdata_sync_cb.jqdatasdk")
+ @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+ @patch("ams.validators.cb_data_validator.CBDataValidator")
+-def test_metrics_artifact_zero_filtered_bonds_when_all_in_basic_info(
++def test_metrics_artifact_emits_zero_counts_and_empty_lists_for_absent_exclusion_buckets(
+     mock_validator_cls, mock_semantic_validator_cls, mock_jqdatasdk
+ ):
+-    """Verify that when all bonds are in CONBOND_BASIC_INFO, the filtering
+-    metrics fields show zero and an empty list."""
+     mock_validator_cls.return_value.validate_dataframe.return_value = True
+     mock_semantic_validator_cls.return_value.validate_dataframe.return_value = True
+     mock_jqdatasdk.auth.return_value = None
+ 
+-    mock_jqdatasdk.get_all_securities.return_value = pd.DataFrame(
+-        index=["110059.XSHG"]
+-    )
++    mock_jqdatasdk.get_all_securities.return_value = pd.DataFrame(index=["110059.XSHG"])
+     mock_jqdatasdk.get_price.return_value = pd.DataFrame(
+         {
+             "open": [100.0],
+@@ -258,19 +247,20 @@ def test_metrics_artifact_zero_filtered_bonds_when_all_in_basic_info(
+             "volume": [1000],
+         },
+         index=pd.MultiIndex.from_tuples(
+-            [(pd.to_datetime("2020-01-02"), "110059.XSHG")],
++            [(pd.to_datetime("2025-01-17"), "110059.XSHG")],
+             names=["time", "code"],
+         ),
+     )
+     mock_jqdatasdk.get_extras.return_value = pd.DataFrame(
+         {"000001.XSHE": [False]},
+-        index=pd.to_datetime(["2020-01-02"]),
++        index=pd.to_datetime(["2025-01-17"]),
+     )
++    mock_jqdatasdk.get_security_info.side_effect = AssertionError("legacy get_security_info path must not be used")
++    mock_jqdatasdk.finance.run_query.side_effect = AssertionError("finance.CCB_CALL must not be queried")
++
+     mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+     mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+     mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+-    mock_jqdatasdk.get_security_info.side_effect = AssertionError("legacy get_security_info path must not be used")
+-    mock_jqdatasdk.finance.run_query.side_effect = AssertionError("finance.CCB_CALL must not be queried")
+ 
+     bonds_info = pd.DataFrame(
+         {
+@@ -281,7 +271,7 @@ def test_metrics_artifact_zero_filtered_bonds_when_all_in_basic_info(
+     )
+     premium = pd.DataFrame(
+         {
+-            "date": ["2020-01-02"],
++            "date": ["2025-01-17"],
+             "code": ["110059"],
+             "exchange_code": ["XSHG"],
+             "convert_premium_rate": [10.0],
+@@ -290,13 +280,122 @@ def test_metrics_artifact_zero_filtered_bonds_when_all_in_basic_info(
+     mock_jqdatasdk.bond.run_query.side_effect = [bonds_info, premium]
+ 
+     with patch("os.replace"):
+-        sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
++        sync_cb_data(start_date="2025-01-17", end_date="2025-01-17")
+ 
+     tmp_metrics_path = etl.jqdata_sync_cb.METRICS_PATH + ".tmp"
+-    assert os.path.exists(tmp_metrics_path)
+     with open(tmp_metrics_path, "r", encoding="utf-8") as f:
+         metrics = json.load(f)
+ 
+     assert metrics["filtered_bonds_outside_basic_info_count"] == 0
+     assert metrics["filtered_rows_outside_basic_info_count"] == 0
+-    assert metrics["filtered_bond_codes"] == []
++    assert metrics["filtered_bond_codes_outside_basic_info"] == []
++    assert metrics["filtered_bonds_missing_company_code_legacy_count"] == 0
++    assert metrics["filtered_rows_missing_company_code_legacy_count"] == 0
++    assert metrics["filtered_bond_codes_missing_company_code_legacy"] == []
++    assert "filtered_bond_codes" not in metrics
++
++
++@patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
++@patch("etl.jqdata_sync_cb.jqdatasdk")
++@patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
++@patch("ams.validators.cb_data_validator.CBDataValidator")
++def test_metrics_artifact_builder_emits_zeroed_reason_coded_fields_for_empty_inputs(
++    mock_validator_cls, mock_semantic_validator_cls, mock_jqdatasdk
++):
++    del mock_validator_cls, mock_semantic_validator_cls, mock_jqdatasdk
++
++    metrics = etl.jqdata_sync_cb._build_supportability_exclusion_metrics(pd.DataFrame())
++
++    assert metrics == {
++        "filtered_bonds_outside_basic_info_count": 0,
++        "filtered_rows_outside_basic_info_count": 0,
++        "filtered_bond_codes_outside_basic_info": [],
++        "filtered_bonds_missing_company_code_legacy_count": 0,
++        "filtered_rows_missing_company_code_legacy_count": 0,
++        "filtered_bond_codes_missing_company_code_legacy": [],
++    }
++
++
++@patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
++@patch("etl.jqdata_sync_cb.jqdatasdk")
++@patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
++@patch("ams.validators.cb_data_validator.CBDataValidator")
++def test_metrics_artifact_code_lists_are_deterministically_sorted(
++    mock_validator_cls, mock_semantic_validator_cls, mock_jqdatasdk
++):
++    mock_validator_cls.return_value.validate_dataframe.return_value = True
++    mock_semantic_validator_cls.return_value.validate_dataframe.return_value = True
++    mock_jqdatasdk.auth.return_value = None
++
++    mock_jqdatasdk.get_all_securities.return_value = pd.DataFrame(
++        index=[
++            "999999.XSHG",
++            "123000.XSHG",
++            "125302.XSHG",
++            "110001.XSHG",
++            "110059.XSHG",
++        ]
++    )
++    mock_jqdatasdk.get_price.return_value = pd.DataFrame(
++        {
++            "open": [100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0],
++            "high": [101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0],
++            "low": [99.0, 100.0, 101.0, 102.0, 103.0, 104.0, 105.0],
++            "close": [100.5, 101.5, 102.5, 103.5, 104.5, 105.5, 106.5],
++            "volume": [1000, 1001, 1002, 1003, 1004, 1005, 1006],
++        },
++        index=pd.MultiIndex.from_tuples(
++            [
++                (pd.to_datetime("2025-01-17"), "999999.XSHG"),
++                (pd.to_datetime("2025-01-18"), "123000.XSHG"),
++                (pd.to_datetime("2025-01-18"), "999999.XSHG"),
++                (pd.to_datetime("2025-01-17"), "125302.XSHG"),
++                (pd.to_datetime("2025-01-18"), "110001.XSHG"),
++                (pd.to_datetime("2025-01-18"), "125302.XSHG"),
++                (pd.to_datetime("2025-01-17"), "110059.XSHG"),
++            ],
++            names=["time", "code"],
++        ),
++    )
++    mock_jqdatasdk.get_extras.return_value = pd.DataFrame(
++        {"000001.XSHE": [False]},
++        index=pd.to_datetime(["2025-01-17"]),
++    )
++    mock_jqdatasdk.get_security_info.side_effect = AssertionError("legacy get_security_info path must not be used")
++    mock_jqdatasdk.finance.run_query.side_effect = AssertionError("finance.CCB_CALL must not be queried")
++
++    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
++    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
++    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
++
++    bonds_info = pd.DataFrame(
++        {
++            "code": ["125302", "110001", "110059"],
++            "company_code": [None, None, "000001.XSHE"],
++            "delist_Date": ["2004-01-01", "2003-01-01", "2025-12-31"],
++        }
++    )
++    premium = pd.DataFrame(
++        {
++            "date": ["2025-01-17"],
++            "code": ["110059"],
++            "exchange_code": ["XSHG"],
++            "convert_premium_rate": [10.0],
++        }
++    )
++    mock_jqdatasdk.bond.run_query.side_effect = [bonds_info, premium]
++
++    with patch("os.replace"):
++        sync_cb_data(start_date="2025-01-17", end_date="2025-01-18")
++
++    tmp_metrics_path = etl.jqdata_sync_cb.METRICS_PATH + ".tmp"
++    with open(tmp_metrics_path, "r", encoding="utf-8") as f:
++        metrics = json.load(f)
++
++    assert metrics["filtered_bonds_outside_basic_info_count"] == 2
++    assert metrics["filtered_rows_outside_basic_info_count"] == 3
++    assert metrics["filtered_bond_codes_outside_basic_info"] == ["123000", "999999"]
++    assert metrics["filtered_bonds_missing_company_code_legacy_count"] == 2
++    assert metrics["filtered_rows_missing_company_code_legacy_count"] == 3
++    assert metrics["filtered_bond_codes_missing_company_code_legacy"] == ["110001", "125302"]
++    assert "filtered_bond_codes" not in metrics

@@ -16,13 +16,17 @@ LEGACY_REDEMPTION_SOURCE_FATAL = (
     "JQData table for AMS convertible-bond lifecycle semantics."
 )
 SUPPORTABILITY_REGRESSION_ERROR = "Missing underlying_ticker for supportable bonds in CONBOND_BASIC_INFO"
+SUPPORTABILITY_BUCKET_SUPPORTABLE = "supportable"
+SUPPORTABILITY_BUCKET_OUTSIDE_BASIC_INFO = "outside_basic_info"
+SUPPORTABILITY_BUCKET_MISSING_COMPANY_CODE_LEGACY = "missing_company_code_legacy"
+SUPPORTABILITY_BUCKET_UNEXPECTED_CONTRACT_REGRESSION = "unexpected_contract_regression"
 SUPPORTABILITY_EXCLUSION_BUCKETS = {
-    "outside_basic_info": {
+    SUPPORTABILITY_BUCKET_OUTSIDE_BASIC_INFO: {
         "count_key": "filtered_bonds_outside_basic_info_count",
         "row_count_key": "filtered_rows_outside_basic_info_count",
         "codes_key": "filtered_bond_codes_outside_basic_info",
     },
-    "missing_company_code_legacy": {
+    SUPPORTABILITY_BUCKET_MISSING_COMPANY_CODE_LEGACY: {
         "count_key": "filtered_bonds_missing_company_code_legacy_count",
         "row_count_key": "filtered_rows_missing_company_code_legacy_count",
         "codes_key": "filtered_bond_codes_missing_company_code_legacy",
@@ -183,10 +187,10 @@ def _classify_supportability(df: pd.DataFrame, df_bonds_info: pd.DataFrame, star
     is_outside_basic_info = valid_code & ~normalized_code.isin(basic_info_codes)
     is_missing_company_code_legacy = valid_code & normalized_code.isin(legacy_missing_company_code_codes)
 
-    result["supportability_bucket"] = "unexpected_contract_regression"
-    result.loc[is_supportable, "supportability_bucket"] = "supportable"
-    result.loc[is_outside_basic_info, "supportability_bucket"] = "outside_basic_info"
-    result.loc[is_missing_company_code_legacy, "supportability_bucket"] = "missing_company_code_legacy"
+    result["supportability_bucket"] = SUPPORTABILITY_BUCKET_UNEXPECTED_CONTRACT_REGRESSION
+    result.loc[is_supportable, "supportability_bucket"] = SUPPORTABILITY_BUCKET_SUPPORTABLE
+    result.loc[is_outside_basic_info, "supportability_bucket"] = SUPPORTABILITY_BUCKET_OUTSIDE_BASIC_INFO
+    result.loc[is_missing_company_code_legacy, "supportability_bucket"] = SUPPORTABILITY_BUCKET_MISSING_COMPANY_CODE_LEGACY
     return result
 
 
@@ -208,10 +212,22 @@ def _extract_sorted_unique_codes(series: pd.Series) -> list[str]:
     return sorted(normalized.unique().tolist())
 
 
-def _build_supportability_exclusion_metrics(df: pd.DataFrame) -> dict:
+def _initialize_supportability_exclusion_metrics() -> dict:
     metrics = {}
-    supportability_bucket = df.get("supportability_bucket", pd.Series(dtype="object"))
-    bond_codes = df.get("bond_code_raw", pd.Series(dtype="object"))
+    for metric_keys in SUPPORTABILITY_EXCLUSION_BUCKETS.values():
+        metrics[metric_keys["count_key"]] = 0
+        metrics[metric_keys["row_count_key"]] = 0
+        metrics[metric_keys["codes_key"]] = []
+    return metrics
+
+
+def _build_supportability_exclusion_metrics(df: pd.DataFrame) -> dict:
+    metrics = _initialize_supportability_exclusion_metrics()
+    if df is None or df.empty:
+        return metrics
+
+    supportability_bucket = df["supportability_bucket"] if "supportability_bucket" in df.columns else pd.Series("", index=df.index, dtype="object")
+    bond_codes = df["bond_code_raw"] if "bond_code_raw" in df.columns else pd.Series("", index=df.index, dtype="object")
 
     for bucket_name, metric_keys in SUPPORTABILITY_EXCLUSION_BUCKETS.items():
         bucket_mask = supportability_bucket.eq(bucket_name)
@@ -266,12 +282,14 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     df = _classify_supportability(df, df_bonds_info, start_date)
 
     supportability_metrics = _build_supportability_exclusion_metrics(df)
-    unexpected_contract_regression_mask = df["supportability_bucket"].eq("unexpected_contract_regression")
+    unexpected_contract_regression_mask = df["supportability_bucket"].eq(
+        SUPPORTABILITY_BUCKET_UNEXPECTED_CONTRACT_REGRESSION
+    )
 
     if unexpected_contract_regression_mask.any():
         raise ValueError(SUPPORTABILITY_REGRESSION_ERROR)
 
-    df = df[df["supportability_bucket"].eq("supportable")].copy()
+    df = df[df["supportability_bucket"].eq(SUPPORTABILITY_BUCKET_SUPPORTABLE)].copy()
 
     df["underlying_ticker"] = df["bond_code_raw"].map(bond_to_stock)
     if df["underlying_ticker"].isna().any():
