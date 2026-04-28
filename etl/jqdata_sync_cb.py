@@ -1,5 +1,6 @@
 import json
 import os
+import datetime
 
 import jqdatasdk
 import pandas as pd
@@ -56,6 +57,251 @@ REDEMPTION_SOURCE_CONTRACT = {
     ],
     "null_primary_behavior": "is_redeemed=False",
 }
+
+
+class ETLStage:
+    def __init__(self, name: str):
+        self.name = name
+
+    def run(self, context: dict) -> dict:
+        raise NotImplementedError
+
+
+class SourceAcquisitionStage(ETLStage):
+    def __init__(self, start_date: str, end_date: str):
+        super().__init__("source_coverage")
+        self.start_date = start_date
+        self.end_date = end_date
+
+    def run(self, context: dict) -> dict:
+        summary = {
+            "status": "PASS",
+            "failure_type": "NONE",
+            "basic_info_row_count": 0,
+            "all_bond_security_count": 0,
+            "price_row_count": 0,
+            "price_unique_bond_count": 0,
+            "premium_source_row_count": 0,
+            "premium_source_unique_bond_count": 0,
+            "is_st_source_row_count": 0,
+            "is_st_source_unique_underlying_count": 0,
+            "redemption_source_row_count": 0,
+            "redemption_source_unique_bond_count": 0,
+            "message": "",
+        }
+
+        user = os.environ.get("JQDATA_USER")
+        pwd = os.environ.get("JQDATA_PWD")
+
+        if not user or not pwd:
+            summary["status"] = "FAIL"
+            summary["failure_type"] = "SOURCE_AUTH_FAILURE"
+            summary["message"] = "Missing JQDATA_USER or JQDATA_PWD environment variables"
+            return summary
+
+        try:
+            jqdatasdk.auth(user, pwd)
+        except Exception as e:
+            summary["status"] = "FAIL"
+            summary["failure_type"] = "SOURCE_AUTH_FAILURE"
+            summary["message"] = f"JQData auth failed: {e}"
+            return summary
+
+        try:
+            df_bonds_info = jqdatasdk.bond.run_query(jqdatasdk.query(jqdatasdk.bond.CONBOND_BASIC_INFO))
+            context["df_bonds_info"] = df_bonds_info
+            summary["basic_info_row_count"] = len(df_bonds_info)
+
+            df_all_bonds = jqdatasdk.get_all_securities(["conbond"])
+            tickers = df_all_bonds.index.tolist()
+            summary["all_bond_security_count"] = len(tickers)
+
+            df_price = jqdatasdk.get_price(
+                tickers,
+                start_date=self.start_date,
+                end_date=self.end_date,
+                frequency="daily",
+                fields=["open", "high", "low", "close", "volume"],
+            )
+            if df_price.empty:
+                summary["status"] = "FAIL"
+                summary["failure_type"] = "PRICE_SOURCE_UNREADABLE"
+                summary["message"] = "No price data found for the given range"
+                return summary
+
+            df = df_price.reset_index()
+            df.rename(columns={"time": "date", "code": "ticker"}, inplace=True)
+            df["date"] = pd.to_datetime(df["date"])
+            context["df"] = df
+            summary["price_row_count"] = len(df)
+            summary["price_unique_bond_count"] = len(df["ticker"].unique())
+
+        except Exception as e:
+            summary["status"] = "FAIL"
+            summary["failure_type"] = "PRICE_SOURCE_UNREADABLE"
+            summary["message"] = f"Source acquisition failed: {e}"
+            return summary
+
+        return summary
+
+
+class SupportabilityStage(ETLStage):
+    def __init__(self, start_date: str):
+        super().__init__("supportability_summary")
+        self.start_date = start_date
+
+    def run(self, context: dict) -> dict:
+        summary = {
+            "status": "PASS",
+            "failure_type": "NONE",
+            "supportable_row_count": 0,
+            "supportable_unique_bond_count": 0,
+            "outside_basic_info_row_count": 0,
+            "outside_basic_info_unique_bond_count": 0,
+            "missing_company_code_legacy_row_count": 0,
+            "missing_company_code_legacy_unique_bond_count": 0,
+            "unexpected_contract_regression_row_count": 0,
+            "unexpected_contract_regression_unique_bond_count": 0,
+            "missing_underlying_row_count": 0,
+            "missing_underlying_unique_bond_count": 0,
+            "message": "",
+        }
+
+        df = context.get("df")
+        df_bonds_info = context.get("df_bonds_info")
+
+        if df is None or df_bonds_info is None:
+            summary["status"] = "NOT_RUN"
+            summary["message"] = "Skipped because Stage A failed."
+            return summary
+
+        df = _build_bond_key_columns(df, ticker_col="ticker")
+        df = _classify_supportability(df, df_bonds_info, self.start_date)
+        context["df"] = df
+
+        # Populate summary counts
+        for bucket in [
+            SUPPORTABILITY_BUCKET_SUPPORTABLE,
+            SUPPORTABILITY_BUCKET_OUTSIDE_BASIC_INFO,
+            SUPPORTABILITY_BUCKET_MISSING_COMPANY_CODE_LEGACY,
+            SUPPORTABILITY_BUCKET_UNEXPECTED_CONTRACT_REGRESSION
+        ]:
+            mask = df["supportability_bucket"] == bucket
+            count = int(mask.sum())
+            unique_count = len(df.loc[mask, "ticker"].unique()) if "ticker" in df.columns else 0
+            
+            if bucket == SUPPORTABILITY_BUCKET_SUPPORTABLE:
+                summary["supportable_row_count"] = count
+                summary["supportable_unique_bond_count"] = unique_count
+            elif bucket == SUPPORTABILITY_BUCKET_OUTSIDE_BASIC_INFO:
+                summary["outside_basic_info_row_count"] = count
+                summary["outside_basic_info_unique_bond_count"] = unique_count
+            elif bucket == SUPPORTABILITY_BUCKET_MISSING_COMPANY_CODE_LEGACY:
+                summary["missing_company_code_legacy_row_count"] = count
+                summary["missing_company_code_legacy_unique_bond_count"] = unique_count
+            elif bucket == SUPPORTABILITY_BUCKET_UNEXPECTED_CONTRACT_REGRESSION:
+                summary["unexpected_contract_regression_row_count"] = count
+                summary["unexpected_contract_regression_unique_bond_count"] = unique_count
+
+        if summary["unexpected_contract_regression_row_count"] > 0:
+            summary["status"] = "FAIL"
+            summary["failure_type"] = "SUPPORTABILITY_REGRESSION"
+            summary["message"] = SUPPORTABILITY_REGRESSION_ERROR
+
+        return summary
+
+
+class StagedPipeline:
+    def __init__(self, stages: list[ETLStage]):
+        self.stages = stages
+        self.context = {
+            "df": None,
+            "df_bonds_info": None,
+            "metrics": {},
+            "stage_results": {}
+        }
+
+    def run(self, stop_on_failure: bool = True) -> dict:
+        for stage in self.stages:
+            result = stage.run(self.context)
+            self.context["stage_results"][stage.name] = result
+            if result.get("status") == "FAIL":
+                if stop_on_failure:
+                    self._mark_remaining_not_run(self.stages.index(stage) + 1)
+                    break
+        return self.context["stage_results"]
+
+    def _mark_remaining_not_run(self, start_index: int):
+        for i in range(start_index, len(self.stages)):
+            stage = self.stages[i]
+            self.context["stage_results"][stage.name] = {
+                "status": "NOT_RUN",
+                "failure_type": "NONE",
+                "message": "Skipped because Stage A failed."
+            }
+
+
+class CBETLAuditRunner:
+    def __init__(self, start_date: str, end_date: str):
+        self.start_date = start_date
+        self.end_date = end_date
+        self.pipeline = StagedPipeline([
+            SourceAcquisitionStage(start_date, end_date),
+            SupportabilityStage(start_date),
+        ])
+
+    def run(self) -> dict:
+        stage_results = self.pipeline.run(stop_on_failure=False)
+        
+        # Build the final report according to PRD
+        report = {
+            "execution_mode": "audit",
+            "start_date": self.start_date,
+            "end_date": self.end_date,
+            "final_status": "PASS",
+            "non_promotion_disclaimer": "[AUDIT-ONLY] This run is diagnostic only. No canonical dataset promotion was attempted.",
+            "source_coverage": stage_results.get("source_coverage", {}),
+            "supportability_summary": stage_results.get("supportability_summary", {}),
+            "premium_join_summary": {"status": "NOT_RUN", "message": "Stage C not implemented in v1 PR-001"},
+            "is_st_join_summary": {"status": "NOT_RUN", "message": "Stage D not implemented in v1 PR-001"},
+            "redemption_summary": {"status": "NOT_RUN", "message": "Stage E not implemented in v1 PR-001"},
+            "validator_summary": {"status": "NOT_RUN", "message": "Stage F not implemented in v1 PR-001"},
+            "root_blockers": [],
+            "secondary_findings": []
+        }
+
+        # Root blockers calculation
+        if report["source_coverage"].get("failure_type") == "SOURCE_AUTH_FAILURE":
+            report["root_blockers"].append({
+                "type": "SOURCE_AUTH_FAILURE",
+                "stage": "A",
+                "trigger": report["source_coverage"].get("message"),
+                "evidence": {}
+            })
+        if report["source_coverage"].get("failure_type") == "PRICE_SOURCE_UNREADABLE":
+            report["root_blockers"].append({
+                "type": "PRICE_SOURCE_UNREADABLE",
+                "stage": "A",
+                "trigger": report["source_coverage"].get("message"),
+                "evidence": {}
+            })
+        if report["supportability_summary"].get("failure_type") == "SUPPORTABILITY_REGRESSION":
+            report["root_blockers"].append({
+                "type": "SUPPORTABILITY_REGRESSION",
+                "stage": "B",
+                "trigger": report["supportability_summary"].get("message"),
+                "evidence": {"unexpected_contract_regression_row_count": report["supportability_summary"].get("unexpected_contract_regression_row_count")}
+            })
+
+        # Final status
+        if report["root_blockers"]:
+            report["final_status"] = "FAIL_ROOT_BLOCKER"
+        elif report["secondary_findings"]:
+            report["final_status"] = "FAIL_SECONDARY_ONLY"
+        else:
+            report["final_status"] = "PASS"
+
+        return report
 
 
 def _split_bond_ticker(ticker: str) -> tuple[str | None, str | None]:
@@ -327,48 +573,31 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    user = os.environ.get("JQDATA_USER")
-    pwd = os.environ.get("JQDATA_PWD")
+    pipeline = StagedPipeline([
+        SourceAcquisitionStage(start_date, end_date),
+        SupportabilityStage(start_date),
+    ])
 
-    if not user or not pwd:
-        raise ValueError("Missing JQDATA_USER or JQDATA_PWD environment variables")
+    stage_results = pipeline.run(stop_on_failure=True)
 
-    try:
-        jqdatasdk.auth(user, pwd)
-    except Exception as e:
-        raise RuntimeError(f"JQData auth failed: {e}")
+    if stage_results["source_coverage"]["status"] == "FAIL":
+        message = stage_results["source_coverage"]["message"]
+        if "Missing JQDATA_USER or JQDATA_PWD" in message:
+            raise ValueError(message)
+        if stage_results["source_coverage"]["failure_type"] == "SOURCE_AUTH_FAILURE":
+            raise RuntimeError(message)
+        else:
+            raise ValueError(message)
 
-    df_bonds_info = jqdatasdk.bond.run_query(jqdatasdk.query(jqdatasdk.bond.CONBOND_BASIC_INFO))
+    if stage_results["supportability_summary"]["status"] == "FAIL":
+        raise ValueError(stage_results["supportability_summary"]["message"])
+
+    df = pipeline.context["df"]
+    df_bonds_info = pipeline.context["df_bonds_info"]
     bond_to_stock = _build_underlying_mapping(df_bonds_info)
     bond_to_delist = _build_delist_mapping(df_bonds_info)
 
-    df_all_bonds = jqdatasdk.get_all_securities(["conbond"])
-    tickers = df_all_bonds.index.tolist()
-
-    df_price = jqdatasdk.get_price(
-        tickers,
-        start_date=start_date,
-        end_date=end_date,
-        frequency="daily",
-        fields=["open", "high", "low", "close", "volume"],
-    )
-    if df_price.empty:
-        raise ValueError("No price data found for the given range")
-
-    df = df_price.reset_index()
-    df.rename(columns={"time": "date", "code": "ticker"}, inplace=True)
-    df["date"] = pd.to_datetime(df["date"])
-
-    df = _build_bond_key_columns(df, ticker_col="ticker")
-    df = _classify_supportability(df, df_bonds_info, start_date)
-
     supportability_metrics = _build_supportability_exclusion_metrics(df)
-    unexpected_contract_regression_mask = df["supportability_bucket"].eq(
-        SUPPORTABILITY_BUCKET_UNEXPECTED_CONTRACT_REGRESSION
-    )
-
-    if unexpected_contract_regression_mask.any():
-        raise ValueError(SUPPORTABILITY_REGRESSION_ERROR)
 
     df = df[df["supportability_bucket"].eq(SUPPORTABILITY_BUCKET_SUPPORTABLE)].copy()
 
