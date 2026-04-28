@@ -203,6 +203,13 @@ class SupportabilityStage(ETLStage):
                 summary["unexpected_contract_regression_row_count"] = count
                 summary["unexpected_contract_regression_unique_bond_count"] = unique_count
 
+        # Calculate missing underlying ticker counts (PRD 3.3 and Reviewer Feedback)
+        bond_to_stock = _build_underlying_mapping(df_bonds_info)
+        temp_underlying = df["bond_code_raw"].map(bond_to_stock)
+        missing_mask = temp_underlying.isna()
+        summary["missing_underlying_row_count"] = int(missing_mask.sum())
+        summary["missing_underlying_unique_bond_count"] = len(df.loc[missing_mask, "ticker"].unique()) if "ticker" in df.columns else 0
+
         if summary["unexpected_contract_regression_row_count"] > 0:
             summary["status"] = "FAIL"
             summary["failure_type"] = "SUPPORTABILITY_REGRESSION"
@@ -227,17 +234,18 @@ class StagedPipeline:
             self.context["stage_results"][stage.name] = result
             if result.get("status") == "FAIL":
                 if stop_on_failure:
-                    self._mark_remaining_not_run(self.stages.index(stage) + 1)
+                    self._mark_remaining_not_run(self.stages.index(stage) + 1, stage.name)
                     break
         return self.context["stage_results"]
 
-    def _mark_remaining_not_run(self, start_index: int):
+    def _mark_remaining_not_run(self, start_index: int, failing_stage_name: str = "Stage A"):
+        message = "Skipped because Stage A failed." if failing_stage_name == "source_coverage" else f"Skipped because {failing_stage_name} failed."
         for i in range(start_index, len(self.stages)):
             stage = self.stages[i]
             self.context["stage_results"][stage.name] = {
                 "status": "NOT_RUN",
                 "failure_type": "NONE",
-                "message": "Skipped because Stage A failed."
+                "message": message
             }
 
 
@@ -250,9 +258,69 @@ class CBETLAuditRunner:
             SupportabilityStage(start_date),
         ])
 
+    def _get_default_stage_c_summary(self, status="NOT_RUN", message=""):
+        return {
+            "status": status,
+            "failure_type": "NONE",
+            "premium_joined_row_count": 0,
+            "premium_joined_unique_bond_count": 0,
+            "missing_premium_row_count": 0,
+            "missing_premium_unique_bond_count": 0,
+            "missing_premium_ratio": 0.0,
+            "message": message
+        }
+
+    def _get_default_stage_d_summary(self, status="NOT_RUN", message=""):
+        return {
+            "status": status,
+            "failure_type": "NONE",
+            "is_st_joined_row_count": 0,
+            "is_st_joined_unique_bond_count": 0,
+            "missing_is_st_row_count": 0,
+            "missing_is_st_unique_bond_count": 0,
+            "missing_is_st_ratio": 0.0,
+            "message": message
+        }
+
+    def _get_default_stage_e_summary(self, status="NOT_RUN", message=""):
+        return {
+            "status": status,
+            "failure_type": "NONE",
+            "redemption_joined_row_count": 0,
+            "redemption_joined_unique_bond_count": 0,
+            "missing_redemption_row_count": 0,
+            "missing_redemption_unique_bond_count": 0,
+            "missing_redemption_ratio": 0.0,
+            "message": message
+        }
+
+    def _get_default_stage_f_summary(self, status="NOT_RUN", message=""):
+        return {
+            "status": status,
+            "failure_type": "NONE",
+            "schema_validator_status": "NOT_RUN",
+            "semantic_validator_status": "NOT_RUN",
+            "drift_validator_status": "NOT_RUN",
+            "schema_validator_message": "",
+            "semantic_validator_message": "",
+            "drift_validator_message": "",
+            "message": message
+        }
+
     def run(self) -> dict:
         stage_results = self.pipeline.run(stop_on_failure=False)
         
+        source_coverage = stage_results.get("source_coverage", {})
+        supportability_summary = stage_results.get("supportability_summary", {})
+        
+        # Handle NOT_RUN propagation for hardcoded stages C-F
+        if source_coverage.get("status") == "FAIL":
+            not_run_message = "Skipped because Stage A failed."
+        elif supportability_summary.get("status") == "FAIL":
+            not_run_message = "Skipped because supportability_summary failed."
+        else:
+            not_run_message = "Stage not implemented in v1 PR-001"
+
         # Build the final report according to PRD
         report = {
             "execution_mode": "audit",
@@ -260,12 +328,12 @@ class CBETLAuditRunner:
             "end_date": self.end_date,
             "final_status": "PASS",
             "non_promotion_disclaimer": "[AUDIT-ONLY] This run is diagnostic only. No canonical dataset promotion was attempted.",
-            "source_coverage": stage_results.get("source_coverage", {}),
-            "supportability_summary": stage_results.get("supportability_summary", {}),
-            "premium_join_summary": {"status": "NOT_RUN", "message": "Stage C not implemented in v1 PR-001"},
-            "is_st_join_summary": {"status": "NOT_RUN", "message": "Stage D not implemented in v1 PR-001"},
-            "redemption_summary": {"status": "NOT_RUN", "message": "Stage E not implemented in v1 PR-001"},
-            "validator_summary": {"status": "NOT_RUN", "message": "Stage F not implemented in v1 PR-001"},
+            "source_coverage": source_coverage,
+            "supportability_summary": supportability_summary,
+            "premium_join_summary": self._get_default_stage_c_summary(message=not_run_message),
+            "is_st_join_summary": self._get_default_stage_d_summary(message=not_run_message),
+            "redemption_summary": self._get_default_stage_e_summary(message=not_run_message),
+            "validator_summary": self._get_default_stage_f_summary(message=not_run_message),
             "root_blockers": [],
             "secondary_findings": []
         }
@@ -293,6 +361,18 @@ class CBETLAuditRunner:
                 "evidence": {"unexpected_contract_regression_row_count": report["supportability_summary"].get("unexpected_contract_regression_row_count")}
             })
 
+        # Secondary findings implementation (PRD 3.6)
+        if report["supportability_summary"].get("missing_underlying_row_count", 0) > 0:
+            report["secondary_findings"].append({
+                "type": "MISSING_UNDERLYING_TICKER_ROWS",
+                "stage": "B",
+                "trigger": "missing_underlying_row_count > 0",
+                "evidence": {
+                    "missing_underlying_row_count": report["supportability_summary"].get("missing_underlying_row_count"),
+                    "missing_underlying_unique_bond_count": report["supportability_summary"].get("missing_underlying_unique_bond_count")
+                }
+            })
+
         # Final status
         if report["root_blockers"]:
             report["final_status"] = "FAIL_ROOT_BLOCKER"
@@ -300,6 +380,13 @@ class CBETLAuditRunner:
             report["final_status"] = "FAIL_SECONDARY_ONLY"
         else:
             report["final_status"] = "PASS"
+
+        # File writing side effect (PRD 3.10)
+        report_filename = f"cb_etl_audit_{self.start_date}_{self.end_date}.json"
+        report_path = os.path.join("/root/projects/AMS/reports", report_filename)
+        os.makedirs(os.path.dirname(report_path), exist_ok=True)
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
 
         return report
 
