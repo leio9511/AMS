@@ -9,6 +9,13 @@ def mock_dataset_semantic_validator():
         mock_validator.return_value.validate_dataframe.return_value = True
         yield mock_validator
 
+
+@pytest.fixture(autouse=True)
+def mock_cb_data_validator():
+    with patch("ams.validators.cb_data_validator.CBDataValidator") as mock_validator:
+        mock_validator.return_value.validate_dataframe.return_value = True
+        yield mock_validator
+
 @pytest.fixture(autouse=True)
 def mock_dataset_paths():
     with tempfile.TemporaryDirectory() as tmpdir:

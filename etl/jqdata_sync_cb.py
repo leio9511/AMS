@@ -218,6 +218,293 @@ class SupportabilityStage(ETLStage):
         return summary
 
 
+class PremiumJoinStage(ETLStage):
+    """Stage C: Premium join from CONBOND_DAILY_CONVERT."""
+    def __init__(self, start_date: str, end_date: str):
+        super().__init__("premium_join_summary")
+        self.start_date = start_date
+        self.end_date = end_date
+
+    def run(self, context: dict) -> dict:
+        summary = {
+            "status": "PASS",
+            "failure_type": "NONE",
+            "premium_joined_row_count": 0,
+            "premium_joined_unique_bond_count": 0,
+            "missing_premium_row_count": 0,
+            "missing_premium_unique_bond_count": 0,
+            "missing_premium_ratio": 0.0,
+            "message": "",
+        }
+
+        df = context.get("df")
+        df_bonds_info = context.get("df_bonds_info")
+
+        if df is None or df_bonds_info is None:
+            summary["status"] = "NOT_RUN"
+            summary["message"] = "Skipped because Stage A failed."
+            return summary
+
+        supportable_mask = df["supportability_bucket"] == SUPPORTABILITY_BUCKET_SUPPORTABLE
+        df_supportable = df[supportable_mask].copy()
+        context["df_supportable"] = df_supportable
+        context["df_excluded"] = df[~supportable_mask].copy()
+
+        if df_supportable.empty:
+            summary["message"] = "No supportable bonds found; premium join skipped."
+            return summary
+
+        raw_codes = [
+            code
+            for code in df_supportable["bond_code_raw"].dropna().astype(str).unique().tolist()
+            if code
+        ]
+
+        premium_source_row_count = 0
+        if raw_codes:
+            try:
+                q = jqdatasdk.query(jqdatasdk.bond.CONBOND_DAILY_CONVERT).filter(
+                    jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_(raw_codes),
+                    jqdatasdk.bond.CONBOND_DAILY_CONVERT.date >= self.start_date,
+                    jqdatasdk.bond.CONBOND_DAILY_CONVERT.date <= self.end_date,
+                )
+                df_premium_raw = jqdatasdk.bond.run_query(q)
+                df_premium = _normalize_premium_source(df_premium_raw)
+                premium_source_row_count = int(len(df_premium))
+
+                if not df_premium.empty:
+                    df_merged = pd.merge(
+                        df_supportable,
+                        df_premium,
+                        on=["date", "bond_code_raw", "bond_exchange_code"],
+                        how="left",
+                    )
+                else:
+                    df_merged = df_supportable.copy()
+                    df_merged["premium_rate"] = float("nan")
+            except Exception:
+                df_merged = df_supportable.copy()
+                df_merged["premium_rate"] = float("nan")
+        else:
+            df_merged = df_supportable.copy()
+            df_merged["premium_rate"] = float("nan")
+
+        context["df"] = df_merged
+        context["premium_source_row_count"] = premium_source_row_count
+
+        total = int(len(df_merged))
+        premium_joined = int(df_merged["premium_rate"].notna().sum())
+        missing = total - premium_joined
+
+        summary["premium_joined_row_count"] = premium_joined
+        summary["premium_joined_unique_bond_count"] = (
+            len(df_merged.loc[df_merged["premium_rate"].notna(), "ticker"].unique())
+            if "ticker" in df_merged.columns
+            else 0
+        )
+        summary["missing_premium_row_count"] = missing
+        summary["missing_premium_unique_bond_count"] = (
+            len(df_merged.loc[df_merged["premium_rate"].isna(), "ticker"].unique())
+            if "ticker" in df_merged.columns
+            else 0
+        )
+
+        if total > 0:
+            summary["missing_premium_ratio"] = round(missing / total, 4)
+
+        supportable_row_count = (
+            context.get("stage_results", {})
+            .get("supportability_summary", {})
+            .get("supportable_row_count", 0)
+        )
+
+        if (
+            supportable_row_count >= 50000
+            and premium_source_row_count == 5000
+            and summary["missing_premium_ratio"] >= 0.80
+        ):
+            summary["status"] = "FAIL"
+            summary["failure_type"] = "PREMIUM_SOURCE_TRUNCATION"
+            summary["message"] = (
+                "Premium source appears truncated "
+                "(supportable>=50000, source_rows==5000, missing_ratio>=0.80)"
+            )
+        elif supportable_row_count > 0 and summary["missing_premium_ratio"] >= 0.20:
+            summary["status"] = "FAIL"
+            summary["failure_type"] = "PREMIUM_RATE_MISSING_BROAD_COVERAGE"
+            summary["message"] = "Premium rate coverage is low."
+
+        return summary
+
+
+class STJoinStage(ETLStage):
+    """Stage D: is_st join via get_extras."""
+    def __init__(self, start_date: str, end_date: str):
+        super().__init__("is_st_join_summary")
+        self.start_date = start_date
+        self.end_date = end_date
+
+    def run(self, context: dict) -> dict:
+        summary = {
+            "status": "PASS",
+            "failure_type": "NONE",
+            "is_st_joined_row_count": 0,
+            "is_st_joined_unique_bond_count": 0,
+            "missing_is_st_row_count": 0,
+            "missing_is_st_unique_bond_count": 0,
+            "missing_is_st_ratio": 0.0,
+            "message": "",
+        }
+
+        df = context.get("df")
+        df_bonds_info = context.get("df_bonds_info")
+
+        if df is None or df_bonds_info is None:
+            summary["status"] = "NOT_RUN"
+            summary["message"] = "Skipped because Stage A failed."
+            return summary
+
+        df_supportable = context.get("df_supportable", df)
+        if df_supportable.empty:
+            summary["message"] = "No supportable bonds found; is_st join skipped."
+            return summary
+
+        if "underlying_ticker" not in df.columns:
+            bond_to_stock = _build_underlying_mapping(df_bonds_info)
+            df["underlying_ticker"] = df["bond_code_raw"].map(bond_to_stock)
+            context["df"] = df
+
+        underlying_tickers = [
+            t
+            for t in df["underlying_ticker"].dropna().astype(str).unique().tolist()
+            if t
+        ]
+
+        if underlying_tickers:
+            try:
+                df_st = jqdatasdk.get_extras(
+                    "is_st", underlying_tickers,
+                    start_date=self.start_date, end_date=self.end_date
+                )
+                st_long = df_st.stack().reset_index()
+                st_long.columns = ["date", "underlying_ticker", "is_st"]
+                st_long["date"] = pd.to_datetime(st_long["date"])
+
+                df_merged = pd.merge(df, st_long, on=["date", "underlying_ticker"], how="left")
+            except Exception:
+                df_merged = df.copy()
+                if "is_st" not in df_merged.columns:
+                    df_merged["is_st"] = pd.NA
+        else:
+            df_merged = df.copy()
+            if "is_st" not in df_merged.columns:
+                df_merged["is_st"] = pd.NA
+
+        context["df"] = df_merged
+
+        total = int(len(df_merged))
+        is_st_joined = int(df_merged["is_st"].notna().sum())
+        missing = total - is_st_joined
+
+        summary["is_st_joined_row_count"] = is_st_joined
+        summary["is_st_joined_unique_bond_count"] = (
+            len(df_merged.loc[df_merged["is_st"].notna(), "ticker"].unique())
+            if "ticker" in df_merged.columns
+            else 0
+        )
+        summary["missing_is_st_row_count"] = missing
+        summary["missing_is_st_unique_bond_count"] = (
+            len(df_merged.loc[df_merged["is_st"].isna(), "ticker"].unique())
+            if "ticker" in df_merged.columns
+            else 0
+        )
+
+        if total > 0:
+            summary["missing_is_st_ratio"] = round(missing / total, 4)
+
+        supportable_row_count = (
+            context.get("stage_results", {})
+            .get("supportability_summary", {})
+            .get("supportable_row_count", 0)
+        )
+
+        if supportable_row_count > 0 and summary["missing_is_st_ratio"] >= 0.20:
+            summary["status"] = "FAIL"
+            summary["failure_type"] = "IS_ST_SOURCE_GAP"
+            summary["message"] = "is_st coverage is low."
+
+        return summary
+
+
+class RedemptionStage(ETLStage):
+    """Stage E: Redemption / delist derivation."""
+    def __init__(self):
+        super().__init__("redemption_summary")
+
+    def run(self, context: dict) -> dict:
+        summary = {
+            "status": "PASS",
+            "failure_type": "NONE",
+            "redemption_joined_row_count": 0,
+            "redemption_joined_unique_bond_count": 0,
+            "missing_redemption_row_count": 0,
+            "missing_redemption_unique_bond_count": 0,
+            "missing_redemption_ratio": 0.0,
+            "message": "",
+        }
+
+        df = context.get("df")
+        df_bonds_info = context.get("df_bonds_info")
+
+        if df is None or df_bonds_info is None:
+            summary["status"] = "NOT_RUN"
+            summary["message"] = "Skipped because Stage A failed."
+            return summary
+
+        bond_to_delist = _build_delist_mapping(df_bonds_info)
+        df["delist_Date"] = pd.to_datetime(
+            df["bond_code_raw"].map(bond_to_delist), errors="coerce"
+        )
+        df["is_redeemed"] = df["delist_Date"].notna() & (df["date"] >= df["delist_Date"])
+        context["df"] = df
+
+        redemption_possible = df["delist_Date"].notna()
+        redemption_applicable = redemption_possible & (df["date"] >= df["delist_Date"])
+
+        redemption_joined = int(redemption_possible.sum())
+        missing_redemption = int((~redemption_possible).sum())
+        total = int(len(df))
+
+        summary["redemption_joined_row_count"] = redemption_joined
+        summary["redemption_joined_unique_bond_count"] = (
+            len(df.loc[redemption_possible, "ticker"].unique())
+            if "ticker" in df.columns
+            else 0
+        )
+        summary["missing_redemption_row_count"] = missing_redemption
+        summary["missing_redemption_unique_bond_count"] = (
+            len(df.loc[~redemption_possible, "ticker"].unique())
+            if "ticker" in df.columns
+            else 0
+        )
+
+        if total > 0:
+            summary["missing_redemption_ratio"] = round(missing_redemption / total, 4)
+
+        supportable_row_count = (
+            context.get("stage_results", {})
+            .get("supportability_summary", {})
+            .get("supportable_row_count", 0)
+        )
+
+        if supportable_row_count > 0 and summary["missing_redemption_ratio"] >= 0.20:
+            summary["status"] = "FAIL"
+            summary["failure_type"] = "REDEMPTION_SOURCE_GAP"
+            summary["message"] = "Redemption/delist coverage is low."
+
+        return summary
+
+
 class StagedPipeline:
     def __init__(self, stages: list[ETLStage]):
         self.stages = stages
@@ -249,54 +536,18 @@ class StagedPipeline:
             }
 
 
-class CBETLAuditRunner:
-    def __init__(self, start_date: str, end_date: str):
-        self.start_date = start_date
-        self.end_date = end_date
-        self.pipeline = StagedPipeline([
-            SourceAcquisitionStage(start_date, end_date),
-            SupportabilityStage(start_date),
-        ])
+class ValidatorStage(ETLStage):
+    """Stage F: Validator mapping stage.
 
-    def _get_default_stage_c_summary(self, status="NOT_RUN", message=""):
-        return {
-            "status": status,
-            "failure_type": "NONE",
-            "premium_joined_row_count": 0,
-            "premium_joined_unique_bond_count": 0,
-            "missing_premium_row_count": 0,
-            "missing_premium_unique_bond_count": 0,
-            "missing_premium_ratio": 0.0,
-            "message": message
-        }
+    Calls existing validators and maps their results to structured fields
+    per the validator mapping contract (PRD 3.7).
+    """
+    def __init__(self):
+        super().__init__("validator_summary")
 
-    def _get_default_stage_d_summary(self, status="NOT_RUN", message=""):
-        return {
-            "status": status,
-            "failure_type": "NONE",
-            "is_st_joined_row_count": 0,
-            "is_st_joined_unique_bond_count": 0,
-            "missing_is_st_row_count": 0,
-            "missing_is_st_unique_bond_count": 0,
-            "missing_is_st_ratio": 0.0,
-            "message": message
-        }
-
-    def _get_default_stage_e_summary(self, status="NOT_RUN", message=""):
-        return {
-            "status": status,
-            "failure_type": "NONE",
-            "redemption_joined_row_count": 0,
-            "redemption_joined_unique_bond_count": 0,
-            "missing_redemption_row_count": 0,
-            "missing_redemption_unique_bond_count": 0,
-            "missing_redemption_ratio": 0.0,
-            "message": message
-        }
-
-    def _get_default_stage_f_summary(self, status="NOT_RUN", message=""):
-        return {
-            "status": status,
+    def run(self, context: dict) -> dict:
+        summary = {
+            "status": "PASS",
             "failure_type": "NONE",
             "schema_validator_status": "NOT_RUN",
             "semantic_validator_status": "NOT_RUN",
@@ -304,76 +555,353 @@ class CBETLAuditRunner:
             "schema_validator_message": "",
             "semantic_validator_message": "",
             "drift_validator_message": "",
-            "message": message
+            "message": "",
         }
+
+        df = context.get("df")
+        if df is None or context.get("df_bonds_info") is None:
+            summary["status"] = "NOT_RUN"
+            summary["message"] = "Skipped because Stage A failed."
+            return summary
+
+        if df.empty:
+            summary["status"] = "NOT_RUN"
+            summary["message"] = "No data available for validation."
+            return summary
+
+        # --- Schema validator (CBDataValidator) ---
+        schema_pass = False
+        schema_error_msg = ""
+        try:
+            from ams.validators.cb_data_validator import CBDataValidator
+            validator_schema = CBDataValidator()
+            df_schema = df.copy()
+            if "ticker" in df_schema.columns:
+                df_schema["ticker"] = df_schema["ticker"].astype(str)
+            if "close" in df_schema.columns:
+                df_schema["close"] = df_schema["close"].astype(float)
+            if "premium_rate" in df_schema.columns:
+                df_schema["premium_rate"] = df_schema["premium_rate"].astype(float)
+            if "is_st" in df_schema.columns:
+                df_schema["is_st"] = df_schema["is_st"].astype(bool)
+            if "is_redeemed" in df_schema.columns:
+                df_schema["is_redeemed"] = df_schema["is_redeemed"].astype(bool)
+            schema_pass = validator_schema.validate_dataframe(df_schema)
+        except Exception as e:
+            schema_error_msg = str(e)
+
+        if schema_pass:
+            summary["schema_validator_status"] = "PASS"
+        elif schema_error_msg:
+            summary["schema_validator_status"] = "FAIL"
+            summary["schema_validator_message"] = schema_error_msg
+        else:
+            summary["schema_validator_status"] = "FAIL"
+            summary["schema_validator_message"] = "Schema validation returned False."
+
+        # --- Semantic + Drift validator (DatasetSemanticValidator) ---
+        semantic_pass = True
+        semantic_error_msg = ""
+        drift_error_msg = ""
+        try:
+            from ams.validators.cb_data_validator import DatasetSemanticValidator
+            validator_semantic = DatasetSemanticValidator()
+            df_semantic = df.copy()
+            if "ticker" in df_semantic.columns:
+                df_semantic["ticker"] = df_semantic["ticker"].astype(str)
+            if "close" in df_semantic.columns:
+                df_semantic["close"] = df_semantic["close"].astype(float)
+            if "premium_rate" in df_semantic.columns:
+                df_semantic["premium_rate"] = df_semantic["premium_rate"].astype(float)
+            if "is_st" in df_semantic.columns:
+                df_semantic["is_st"] = df_semantic["is_st"].astype(bool)
+            if "is_redeemed" in df_semantic.columns:
+                df_semantic["is_redeemed"] = df_semantic["is_redeemed"].astype(bool)
+            validator_semantic.validate_dataframe(df_semantic)
+        except Exception as e:
+            error_str = str(e)
+            if "DataDriftViolation" in error_str:
+                drift_error_msg = error_str
+                summary["drift_validator_status"] = "FAIL"
+                summary["drift_validator_message"] = drift_error_msg
+                summary["semantic_validator_status"] = "PASS"
+            else:
+                semantic_pass = False
+                semantic_error_msg = error_str
+                summary["semantic_validator_status"] = "FAIL"
+                summary["semantic_validator_message"] = semantic_error_msg
+
+        if semantic_pass and not drift_error_msg:
+            summary["semantic_validator_status"] = "PASS"
+            summary["drift_validator_status"] = "PASS"
+
+        # --- Determine overall stage status ---
+        if summary["schema_validator_status"] == "FAIL":
+            summary["status"] = "FAIL"
+            summary["failure_type"] = "VALIDATOR_SCHEMA_FAILURE"
+            summary["message"] = summary["schema_validator_message"]
+        elif summary["semantic_validator_status"] == "FAIL":
+            summary["status"] = "FAIL"
+            summary["failure_type"] = "VALIDATOR_SEMANTIC_FAILURE"
+            summary["message"] = summary["semantic_validator_message"]
+        elif summary["drift_validator_status"] == "FAIL":
+            summary["status"] = "FAIL"
+            summary["failure_type"] = "VALIDATOR_DRIFT_FAILURE"
+            summary["message"] = summary["drift_validator_message"]
+
+        return summary
+
+
+class CBETLAuditRunner:
+    def __init__(self, start_date: str, end_date: str):
+        self.start_date = start_date
+        self.end_date = end_date
+        self.pipeline = StagedPipeline([
+            SourceAcquisitionStage(start_date, end_date),
+            SupportabilityStage(start_date),
+            PremiumJoinStage(start_date, end_date),
+            STJoinStage(start_date, end_date),
+            RedemptionStage(),
+            ValidatorStage(),
+        ])
 
     def run(self) -> dict:
         stage_results = self.pipeline.run(stop_on_failure=False)
-        
+
         source_coverage = stage_results.get("source_coverage", {})
         supportability_summary = stage_results.get("supportability_summary", {})
-        
-        # Handle NOT_RUN propagation for hardcoded stages C-F
-        if source_coverage.get("status") == "FAIL":
-            not_run_message = "Skipped because Stage A failed."
-        elif supportability_summary.get("status") == "FAIL":
-            not_run_message = "Skipped because supportability_summary failed."
-        else:
-            not_run_message = "Stage not implemented in v1 PR-001"
+        premium_join_summary = stage_results.get("premium_join_summary", {})
+        is_st_join_summary = stage_results.get("is_st_join_summary", {})
+        redemption_summary = stage_results.get("redemption_summary", {})
+        validator_summary = stage_results.get("validator_summary", {})
 
-        # Build the final report according to PRD
+        # --- Exclusion-only window (PRD 3.4.6 & 3.6.5) ---
+        # Only applies when Stage B status is PASS (not regression) AND
+        # no supportable bonds survive classification.
+        supportable_row_count = supportability_summary.get("supportable_row_count", 0)
+        supportability_status = supportability_summary.get("status", "")
+        if supportable_row_count == 0 and supportability_status == "PASS" and source_coverage.get("status") == "PASS":
+            for key, name in [
+                ("premium_join_summary", "Premium join"),
+                ("is_st_join_summary", "is_st join"),
+                ("redemption_summary", "Redemption / delist"),
+            ]:
+                existing = stage_results.get(key, {})
+                existing["status"] = "NOT_RUN"
+                existing["failure_type"] = "NONE"
+                existing["message"] = (
+                    f"{name} skipped: no supportable bonds in window."
+                )
+
+        # --- Build report ---
         report = {
             "execution_mode": "audit",
             "start_date": self.start_date,
             "end_date": self.end_date,
             "final_status": "PASS",
-            "non_promotion_disclaimer": "[AUDIT-ONLY] This run is diagnostic only. No canonical dataset promotion was attempted.",
+            "non_promotion_disclaimer": (
+                "[AUDIT-ONLY] This run is diagnostic only. "
+                "No canonical dataset promotion was attempted."
+            ),
             "source_coverage": source_coverage,
             "supportability_summary": supportability_summary,
-            "premium_join_summary": self._get_default_stage_c_summary(message=not_run_message),
-            "is_st_join_summary": self._get_default_stage_d_summary(message=not_run_message),
-            "redemption_summary": self._get_default_stage_e_summary(message=not_run_message),
-            "validator_summary": self._get_default_stage_f_summary(message=not_run_message),
+            "premium_join_summary": premium_join_summary,
+            "is_st_join_summary": is_st_join_summary,
+            "redemption_summary": redemption_summary,
+            "validator_summary": validator_summary,
             "root_blockers": [],
-            "secondary_findings": []
+            "secondary_findings": [],
         }
 
-        # Root blockers calculation
-        if report["source_coverage"].get("failure_type") == "SOURCE_AUTH_FAILURE":
+        # --- Root blockers (PRD 3.5) ---
+        # Stage A
+        if source_coverage.get("failure_type") == "SOURCE_AUTH_FAILURE":
             report["root_blockers"].append({
                 "type": "SOURCE_AUTH_FAILURE",
                 "stage": "A",
-                "trigger": report["source_coverage"].get("message"),
-                "evidence": {}
+                "trigger": source_coverage.get("message", ""),
+                "evidence": {},
             })
-        if report["source_coverage"].get("failure_type") == "PRICE_SOURCE_UNREADABLE":
+        if source_coverage.get("failure_type") == "PRICE_SOURCE_UNREADABLE":
             report["root_blockers"].append({
                 "type": "PRICE_SOURCE_UNREADABLE",
                 "stage": "A",
-                "trigger": report["source_coverage"].get("message"),
-                "evidence": {}
+                "trigger": source_coverage.get("message", ""),
+                "evidence": {},
             })
-        if report["supportability_summary"].get("failure_type") == "SUPPORTABILITY_REGRESSION":
+
+        # Stage B
+        if supportability_summary.get("failure_type") == "SUPPORTABILITY_REGRESSION":
             report["root_blockers"].append({
                 "type": "SUPPORTABILITY_REGRESSION",
                 "stage": "B",
-                "trigger": report["supportability_summary"].get("message"),
-                "evidence": {"unexpected_contract_regression_row_count": report["supportability_summary"].get("unexpected_contract_regression_row_count")}
+                "trigger": supportability_summary.get("message", ""),
+                "evidence": {
+                    "unexpected_contract_regression_row_count": (
+                        supportability_summary.get(
+                            "unexpected_contract_regression_row_count", 0
+                        )
+                    ),
+                },
             })
 
-        # Secondary findings implementation (PRD 3.6)
-        if report["supportability_summary"].get("missing_underlying_row_count", 0) > 0:
+        # Stage C
+        if premium_join_summary.get("failure_type") == "PREMIUM_SOURCE_TRUNCATION":
+            report["root_blockers"].append({
+                "type": "PREMIUM_SOURCE_TRUNCATION",
+                "stage": "C",
+                "trigger": premium_join_summary.get("message", ""),
+                "evidence": {
+                    "supportable_row_count": supportable_row_count,
+                    "premium_source_row_count": (
+                        self.pipeline.context.get("premium_source_row_count", 0)
+                    ),
+                    "missing_premium_ratio": premium_join_summary.get(
+                        "missing_premium_ratio", 0
+                    ),
+                },
+            })
+        if premium_join_summary.get("failure_type") == "PREMIUM_RATE_MISSING_BROAD_COVERAGE":
+            report["root_blockers"].append({
+                "type": "PREMIUM_RATE_MISSING_BROAD_COVERAGE",
+                "stage": "C",
+                "trigger": premium_join_summary.get("message", ""),
+                "evidence": {
+                    "supportable_row_count": supportable_row_count,
+                    "missing_premium_ratio": premium_join_summary.get(
+                        "missing_premium_ratio", 0
+                    ),
+                },
+            })
+
+        # Stage D
+        if is_st_join_summary.get("failure_type") == "IS_ST_SOURCE_GAP":
+            report["root_blockers"].append({
+                "type": "IS_ST_SOURCE_GAP",
+                "stage": "D",
+                "trigger": is_st_join_summary.get("message", ""),
+                "evidence": {
+                    "supportable_row_count": supportable_row_count,
+                    "missing_is_st_ratio": is_st_join_summary.get(
+                        "missing_is_st_ratio", 0
+                    ),
+                },
+            })
+
+        # Stage E
+        if redemption_summary.get("failure_type") == "REDEMPTION_SOURCE_GAP":
+            report["root_blockers"].append({
+                "type": "REDEMPTION_SOURCE_GAP",
+                "stage": "E",
+                "trigger": redemption_summary.get("message", ""),
+                "evidence": {
+                    "supportable_row_count": supportable_row_count,
+                    "missing_redemption_ratio": redemption_summary.get(
+                        "missing_redemption_ratio", 0
+                    ),
+                },
+            })
+
+        # Stage F
+        if validator_summary.get("failure_type") == "VALIDATOR_SCHEMA_FAILURE":
+            report["root_blockers"].append({
+                "type": "VALIDATOR_SCHEMA_FAILURE",
+                "stage": "F",
+                "trigger": validator_summary.get("message", ""),
+                "evidence": {},
+            })
+        if validator_summary.get("failure_type") == "VALIDATOR_SEMANTIC_FAILURE":
+            report["root_blockers"].append({
+                "type": "VALIDATOR_SEMANTIC_FAILURE",
+                "stage": "F",
+                "trigger": validator_summary.get("message", ""),
+                "evidence": {},
+            })
+        if validator_summary.get("failure_type") == "VALIDATOR_DRIFT_FAILURE":
+            report["root_blockers"].append({
+                "type": "VALIDATOR_DRIFT_FAILURE",
+                "stage": "F",
+                "trigger": validator_summary.get("message", ""),
+                "evidence": {},
+            })
+
+        # --- Secondary findings (PRD 3.6) ---
+        # Stage B
+        if supportability_summary.get("missing_underlying_row_count", 0) > 0:
             report["secondary_findings"].append({
                 "type": "MISSING_UNDERLYING_TICKER_ROWS",
                 "stage": "B",
                 "trigger": "missing_underlying_row_count > 0",
                 "evidence": {
-                    "missing_underlying_row_count": report["supportability_summary"].get("missing_underlying_row_count"),
-                    "missing_underlying_unique_bond_count": report["supportability_summary"].get("missing_underlying_unique_bond_count")
-                }
+                    "missing_underlying_row_count": supportability_summary.get(
+                        "missing_underlying_row_count", 0
+                    ),
+                    "missing_underlying_unique_bond_count": supportability_summary.get(
+                        "missing_underlying_unique_bond_count", 0
+                    ),
+                },
             })
 
-        # Final status
+        # Stage C
+        if premium_join_summary.get("missing_premium_row_count", 0) > 0:
+            report["secondary_findings"].append({
+                "type": "MISSING_PREMIUM_RATE_ROWS",
+                "stage": "C",
+                "trigger": "missing_premium_row_count > 0",
+                "evidence": {
+                    "missing_premium_row_count": premium_join_summary.get(
+                        "missing_premium_row_count", 0
+                    ),
+                    "missing_premium_unique_bond_count": premium_join_summary.get(
+                        "missing_premium_unique_bond_count", 0
+                    ),
+                },
+            })
+
+        # Stage D
+        if is_st_join_summary.get("missing_is_st_row_count", 0) > 0:
+            report["secondary_findings"].append({
+                "type": "MISSING_IS_ST_ROWS",
+                "stage": "D",
+                "trigger": "missing_is_st_row_count > 0",
+                "evidence": {
+                    "missing_is_st_row_count": is_st_join_summary.get(
+                        "missing_is_st_row_count", 0
+                    ),
+                    "missing_is_st_unique_bond_count": is_st_join_summary.get(
+                        "missing_is_st_unique_bond_count", 0
+                    ),
+                },
+            })
+
+        # Stage E
+        if redemption_summary.get("missing_redemption_row_count", 0) > 0:
+            report["secondary_findings"].append({
+                "type": "MISSING_REDEMPTION_ROWS",
+                "stage": "E",
+                "trigger": "missing_redemption_row_count > 0",
+                "evidence": {
+                    "missing_redemption_row_count": redemption_summary.get(
+                        "missing_redemption_row_count", 0
+                    ),
+                    "missing_redemption_unique_bond_count": redemption_summary.get(
+                        "missing_redemption_unique_bond_count", 0
+                    ),
+                },
+            })
+
+        # Exclusion-only window (secondary finding, PRD 3.6.5)
+        if supportable_row_count == 0 and supportability_status == "PASS" and source_coverage.get("status") == "PASS":
+            report["secondary_findings"].append({
+                "type": "EXCLUSION_ONLY_WINDOW",
+                "stage": "B",
+                "trigger": "No supportable bonds survived classification.",
+                "evidence": {
+                    "supportable_row_count": 0,
+                },
+            })
+
+        # --- Final status (PRD 3.8) ---
         if report["root_blockers"]:
             report["final_status"] = "FAIL_ROOT_BLOCKER"
         elif report["secondary_findings"]:
@@ -381,7 +909,7 @@ class CBETLAuditRunner:
         else:
             report["final_status"] = "PASS"
 
-        # File writing side effect (PRD 3.10)
+        # --- File writing side effect (PRD 3.10) ---
         report_filename = f"cb_etl_audit_{self.start_date}_{self.end_date}.json"
         report_path = os.path.join("/root/projects/AMS/reports", report_filename)
         os.makedirs(os.path.dirname(report_path), exist_ok=True)

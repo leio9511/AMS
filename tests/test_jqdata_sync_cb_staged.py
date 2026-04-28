@@ -99,11 +99,14 @@ def test_audit_runner_full_schema_and_file_output(mock_jqdata, tmp_path):
     from etl.jqdata_sync_cb import CBETLAuditRunner
     import os
     import json
-    
-    # Mock Stage A responses
-    mock_jqdata.bond.run_query.return_value = pd.DataFrame({"code": ["123456.SH"], "company_code": ["600000"]})
+
+    # Mock Stage A: basic info (with company_code so bond is supportable)
+    mock_jqdata.bond.run_query.side_effect = [
+        # First call: basic info for Stage A
+        pd.DataFrame({"code": ["123456.SH"], "company_code": ["600000"], "delist_Date": ["2025-12-31"]}),
+    ]
     mock_jqdata.get_all_securities.return_value = pd.DataFrame(index=["123456.SH"])
-    
+
     index = pd.MultiIndex.from_tuples(
         [(pd.to_datetime("2025-01-06"), "123456.SH")],
         names=["time", "code"]
@@ -112,9 +115,15 @@ def test_audit_runner_full_schema_and_file_output(mock_jqdata, tmp_path):
         "open": [100.0], "high": [101.0], "low": [99.0], "close": [100.5], "volume": [1000]
     }, index=index)
 
+    # Mock is_st data
+    mock_jqdata.get_extras.return_value = pd.DataFrame(
+        {"600000.XSHE": [False]},
+        index=pd.to_datetime(["2025-01-06"]),
+    )
+
     with patch("etl.jqdata_sync_cb.os.makedirs"), \
          patch("etl.jqdata_sync_cb.open", create=True) as mock_open:
-        
+
         runner = CBETLAuditRunner(start_date="2025-01-06", end_date="2025-01-07")
         report = runner.run()
 
@@ -122,14 +131,32 @@ def test_audit_runner_full_schema_and_file_output(mock_jqdata, tmp_path):
         assert "missing_underlying_row_count" in report["supportability_summary"]
         assert report["supportability_summary"]["missing_underlying_row_count"] == 0
 
-        # Check full schema for Stage C (Premium)
+        # Check full schema for Stage C (Premium) — now fully implemented
         premium = report["premium_join_summary"]
-        for field in ["status", "failure_type", "premium_joined_row_count", "missing_premium_row_count", "missing_premium_ratio"]:
-            assert field in premium
-        
-        # Check NOT_RUN propagation message
-        assert premium["status"] == "NOT_RUN"
-        assert "Stage not implemented" in premium["message"]
+        for field in ["status", "failure_type", "premium_joined_row_count",
+                       "missing_premium_row_count", "missing_premium_ratio"]:
+            assert field in premium, f"Missing field '{field}' in premium_join_summary"
+
+        # Check full schema for Stage D (is_st)
+        is_st = report["is_st_join_summary"]
+        for field in ["status", "failure_type", "is_st_joined_row_count",
+                       "missing_is_st_row_count", "missing_is_st_ratio"]:
+            assert field in is_st, f"Missing field '{field}' in is_st_join_summary"
+
+        # Check full schema for Stage E (Redemption)
+        redemption = report["redemption_summary"]
+        for field in ["status", "failure_type", "redemption_joined_row_count",
+                       "missing_redemption_row_count", "missing_redemption_ratio"]:
+            assert field in redemption, f"Missing field '{field}' in redemption_summary"
+
+        # Check full schema for Stage F (Validator)
+        validator = report["validator_summary"]
+        for field in ["status", "failure_type", "schema_validator_status",
+                       "semantic_validator_status", "drift_validator_status"]:
+            assert field in validator, f"Missing field '{field}' in validator_summary"
+
+        # All stages should have real status (not NOT_RUN with old stub message)
+        assert premium["status"] != "NOT_RUN" or "Stage not implemented" not in premium.get("message", "")
 
         # Verify file output was attempted
         assert mock_open.called
