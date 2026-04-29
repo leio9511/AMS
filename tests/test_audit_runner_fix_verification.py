@@ -110,7 +110,7 @@ def test_audit_report_write_failure_does_not_touch_canonical_or_promotion_rollba
     assert not os.path.exists(metrics_path + ".tmp")
     assert not os.path.exists(metrics_path + ".bak")
 
-def test_audit_runner_report_contains_non_promotion_disclaimer_and_deterministic_output_path(mock_env, mock_jqdata, mock_validators):
+def test_audit_runner_report_contains_non_promotion_disclaimer_and_deterministic_output_path(mock_env, mock_jqdata, mock_validators, isolated_paths):
     start_date = "2025-02-18"
     end_date = "2025-02-25"
     
@@ -125,7 +125,7 @@ def test_audit_runner_report_contains_non_promotion_disclaimer_and_deterministic
     assert report["non_promotion_disclaimer"] == NON_PROMOTION_DISCLAIMER
     assert report["execution_mode"] == "audit"
 
-def test_audit_runner_live_probe_smoke_contract_is_callable_for_real_window(mock_env, mock_jqdata, mock_validators):
+def test_audit_runner_live_probe_smoke_contract_is_callable_for_real_window(mock_env, mock_jqdata, mock_validators, isolated_paths):
     # This test proves the audit runner can be invoked and yields a parseable JSON report
     start_date = "2025-01-01"
     end_date = "2025-01-31"

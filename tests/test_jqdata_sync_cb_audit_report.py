@@ -45,7 +45,36 @@ def mock_validators():
         mock_v2.return_value.validate_dataframe.return_value = True
         yield mock_v1, mock_v2
 
-def test_audit_runner_emits_required_top_level_and_stage_summary_schema(mock_env, mock_jqdata, mock_validators):
+@pytest.fixture
+def isolated_paths(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+    
+    mock_data_path = str(data_dir / "cb_history_factors.csv")
+    mock_metrics_path = str(data_dir / "cb_history_factors.metrics.json")
+    mock_reports_dir = str(reports_dir)
+    
+    import os
+    original_os_path_join = os.path.join
+    
+    def mock_join(d, f):
+        if "reports" in d:
+            return original_os_path_join(mock_reports_dir, f)
+        return original_os_path_join(d, f)
+
+    with patch("etl.jqdata_sync_cb.DATA_PATH", mock_data_path), \
+         patch("etl.jqdata_sync_cb.METRICS_PATH", mock_metrics_path), \
+         patch("os.makedirs"), \
+         patch("os.path.join", side_effect=mock_join):
+             yield {
+                 "data": mock_data_path,
+                 "metrics": mock_metrics_path,
+                 "reports": mock_reports_dir
+             }
+
+def test_audit_runner_emits_required_top_level_and_stage_summary_schema(mock_env, mock_jqdata, mock_validators, isolated_paths):
     start_date = "2025-01-06"
     end_date = "2025-01-07"
     
@@ -91,7 +120,7 @@ def test_audit_runner_emits_required_top_level_and_stage_summary_schema(mock_env
         assert "failure_type" in report[stage]
         assert "message" in report[stage]
 
-def test_stage_a_failure_forces_fixed_not_run_propagation_for_stage_b_to_f(mock_env, mock_jqdata, mock_validators):
+def test_stage_a_failure_forces_fixed_not_run_propagation_for_stage_b_to_f(mock_env, mock_jqdata, mock_validators, isolated_paths):
     start_date = "2025-01-06"
     end_date = "2025-01-07"
     
@@ -112,7 +141,7 @@ def test_stage_a_failure_forces_fixed_not_run_propagation_for_stage_b_to_f(mock_
         assert report[stage]["failure_type"] == "NONE"
         assert report[stage]["message"] == "Skipped because Stage A failed."
 
-def test_audit_runner_classifies_premium_source_truncation_by_exact_formula(mock_env, mock_jqdata, mock_validators):
+def test_audit_runner_classifies_premium_source_truncation_by_exact_formula(mock_env, mock_jqdata, mock_validators, isolated_paths):
     start_date = "2025-01-06"
     end_date = "2025-01-07"
     
@@ -170,7 +199,7 @@ def test_audit_runner_classifies_premium_source_truncation_by_exact_formula(mock
     assert report["premium_join_summary"]["failure_type"] == "PREMIUM_SOURCE_TRUNCATION"
     assert any(b["type"] == "PREMIUM_SOURCE_TRUNCATION" for b in report["root_blockers"])
 
-def test_audit_runner_separates_root_blockers_from_secondary_symptoms(mock_env, mock_jqdata, mock_validators):
+def test_audit_runner_separates_root_blockers_from_secondary_symptoms(mock_env, mock_jqdata, mock_validators, isolated_paths):
     # Same as truncation case, check that missing premium rows are in secondary findings
     start_date = "2025-01-06"
     end_date = "2025-01-07"
@@ -208,7 +237,7 @@ def test_audit_runner_separates_root_blockers_from_secondary_symptoms(mock_env, 
     # Secondary finding should have missing premium rows
     assert any(s["type"] == "MISSING_PREMIUM_RATE_ROWS" for s in report["secondary_findings"])
 
-def test_exclusion_only_window_becomes_fail_secondary_only_with_no_canonical_promotion(mock_env, mock_jqdata, mock_validators):
+def test_exclusion_only_window_becomes_fail_secondary_only_with_no_canonical_promotion(mock_env, mock_jqdata, mock_validators, isolated_paths):
     start_date = "2025-01-06"
     end_date = "2025-01-07"
     
@@ -234,7 +263,7 @@ def test_exclusion_only_window_becomes_fail_secondary_only_with_no_canonical_pro
     assert report["supportability_summary"]["supportable_row_count"] == 0
     assert report["supportability_summary"]["outside_basic_info_row_count"] > 0
 
-def test_validator_summary_maps_existing_validator_outcomes_without_copying_rules(mock_env, mock_jqdata, mock_validators):
+def test_validator_summary_maps_existing_validator_outcomes_without_copying_rules(mock_env, mock_jqdata, mock_validators, isolated_paths):
     mock_v1, mock_v2 = mock_validators
     start_date = "2025-01-06"
     end_date = "2025-01-07"
@@ -264,7 +293,7 @@ def test_validator_summary_maps_existing_validator_outcomes_without_copying_rule
     assert report["validator_summary"]["status"] == STAGE_STATUS_FAIL
     assert report["validator_summary"]["failure_type"] == "VALIDATOR_SEMANTIC_FAILURE"
 
-def test_validator_summary_uses_not_run_message_when_no_dedicated_validator_path_exists(mock_env, mock_jqdata, mock_validators):
+def test_validator_summary_uses_not_run_message_when_no_dedicated_validator_path_exists(mock_env, mock_jqdata, mock_validators, isolated_paths):
     start_date = "2025-01-06"
     end_date = "2025-01-07"
     
