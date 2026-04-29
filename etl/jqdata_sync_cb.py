@@ -271,15 +271,15 @@ def audit_cb_data(start_date, end_date):
 
     try:
         jqdatasdk.auth(user, pwd)
-    except Exception as e:
+    except Exception:
+        # Auth might already be active or fail in a way that allows read-only probe
         pass
 
     pipeline = CBETLPipeline(start_date, end_date, jqdata_provider=jqdatasdk)
     
     pipeline.run_stage_a_source_acquisition()
     
-    # Audit runner should also use potentially patched helpers if called in a test context,
-    # though it's less critical than for sync_cb_data.
+    # Audit runner should also use potentially patched helpers if called in a test context
     pipeline.bond_to_stock = _build_underlying_mapping(pipeline.df_bonds_info)
     pipeline.bond_to_delist = _build_delist_mapping(pipeline.df_bonds_info)
 
@@ -296,8 +296,14 @@ def audit_cb_data(start_date, end_date):
     os.makedirs(report_dir, exist_ok=True)
     report_path = os.path.join(report_dir, report_filename)
     
-    with open(report_path, "w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=False, indent=2)
+    try:
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        # CRITICAL: Audit-mode report write failure must not trigger promotion rollback logic.
+        # Since we are in audit_cb_data, we just fail explicitly.
+        print(f"[AuditRunnerError] Failed to write audit report: {e}")
+        raise RuntimeError(f"Audit report persistence failed: {e}")
     
     print(f"[AuditRunner] Audit report written to {report_path}")
     return report_path

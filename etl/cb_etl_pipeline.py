@@ -592,6 +592,7 @@ class CBETLPipeline:
             df_to_val["is_st"] = df_to_val["is_st"].astype(bool)
             df_to_val["is_redeemed"] = df_to_val["is_redeemed"].astype(bool)
 
+            # Stage F.1: Schema Validator
             try:
                 val_l1 = validator_l1.validate_dataframe(df_to_val)
                 stage["schema_validator_status"] = STAGE_STATUS_PASS if val_l1 else STAGE_STATUS_FAIL
@@ -599,6 +600,7 @@ class CBETLPipeline:
                 stage["schema_validator_status"] = STAGE_STATUS_FAIL
                 stage["schema_validator_message"] = str(e)
             
+            # Stage F.2: Semantic Validator
             try:
                 val_l2 = validator_l2.validate_dataframe(df_to_val)
                 stage["semantic_validator_status"] = STAGE_STATUS_PASS if val_l2 else STAGE_STATUS_FAIL
@@ -606,15 +608,18 @@ class CBETLPipeline:
                 stage["semantic_validator_status"] = STAGE_STATUS_FAIL
                 stage["semantic_validator_message"] = str(e)
 
+            # Stage F.3: Drift Validator (NOT_RUN in v1 runtime)
             stage["drift_validator_status"] = STAGE_STATUS_NOT_RUN
             stage["drift_validator_message"] = "No dedicated validator path exists in v1 runtime."
 
             if stage["schema_validator_status"] == STAGE_STATUS_FAIL:
                 stage["status"] = STAGE_STATUS_FAIL
                 stage["failure_type"] = "VALIDATOR_SCHEMA_FAILURE"
+                stage["message"] = f"Schema validation failed: {stage['schema_validator_message']}" if stage['schema_validator_message'] else "Schema validation failed"
             elif stage["semantic_validator_status"] == STAGE_STATUS_FAIL:
                 stage["status"] = STAGE_STATUS_FAIL
                 stage["failure_type"] = "VALIDATOR_SEMANTIC_FAILURE"
+                stage["message"] = f"Semantic validation failed: {stage['semantic_validator_message']}" if stage['semantic_validator_message'] else "Semantic validation failed"
             else:
                 stage["status"] = STAGE_STATUS_PASS
             

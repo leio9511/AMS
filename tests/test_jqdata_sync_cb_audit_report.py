@@ -233,3 +233,58 @@ def test_exclusion_only_window_becomes_fail_secondary_only_with_no_canonical_pro
     assert any(s["type"] == "EXCLUSION_ONLY_WINDOW" for s in report["secondary_findings"])
     assert report["supportability_summary"]["supportable_row_count"] == 0
     assert report["supportability_summary"]["outside_basic_info_row_count"] > 0
+
+def test_validator_summary_maps_existing_validator_outcomes_without_copying_rules(mock_env, mock_jqdata, mock_validators):
+    mock_v1, mock_v2 = mock_validators
+    start_date = "2025-01-06"
+    end_date = "2025-01-07"
+    
+    # Mock Stage A: success
+    df_basic = pd.DataFrame({"code": ["110059"], "company_code": ["600001.XSHG"], "delist_Date": [None]})
+    df_premium = pd.DataFrame({"date": ["2025-01-06"], "code": ["110059"], "convert_premium_rate": [10.0]})
+    
+    mock_jqdata.bond.run_query.side_effect = [df_basic, df_premium]
+    mock_jqdata.get_all_securities.return_value = pd.DataFrame({"code": ["110059.XSHG"]}, index=["110059.XSHG"])
+    mock_jqdata.get_price.return_value = pd.DataFrame(
+        {"time": ["2025-01-06"], "code": ["110059.XSHG"], "open": [100.0], "high": [101.0], "low": [99.0], "close": [100.0], "volume": [1000]}
+    ).set_index(["time", "code"])
+    
+    # Force semantic validator failure with a message
+    mock_v2.return_value.validate_dataframe.side_effect = Exception("Custom Semantic Error")
+    
+    report_path = audit_cb_data(start_date, end_date)
+    
+    with open(report_path, "r") as f:
+        report = json.load(f)
+    
+    assert report["supportability_summary"]["supportable_row_count"] > 0
+    assert report["validator_summary"]["schema_validator_status"] == STAGE_STATUS_PASS
+    assert report["validator_summary"]["semantic_validator_status"] == STAGE_STATUS_FAIL
+    assert "Custom Semantic Error" in report["validator_summary"]["semantic_validator_message"]
+    assert report["validator_summary"]["status"] == STAGE_STATUS_FAIL
+    assert report["validator_summary"]["failure_type"] == "VALIDATOR_SEMANTIC_FAILURE"
+
+def test_validator_summary_uses_not_run_message_when_no_dedicated_validator_path_exists(mock_env, mock_jqdata, mock_validators):
+    start_date = "2025-01-06"
+    end_date = "2025-01-07"
+    
+    # Mock Stage A: success
+    df_basic = pd.DataFrame({"code": ["110059"], "company_code": ["600001.XSHG"], "delist_Date": [None]})
+    df_premium = pd.DataFrame({"date": ["2025-01-06"], "code": ["110059"], "convert_premium_rate": [10.0]})
+    
+    mock_jqdata.bond.run_query.side_effect = [df_basic, df_premium]
+    mock_jqdata.get_all_securities.return_value = pd.DataFrame({"code": ["110059.XSHG"]}, index=["110059.XSHG"])
+    mock_jqdata.get_price.return_value = pd.DataFrame(
+        {"time": ["2025-01-06"], "code": ["110059.XSHG"], "open": [100.0], "high": [101.0], "low": [99.0], "close": [100.0], "volume": [1000]}
+    ).set_index(["time", "code"])
+    
+    report_path = audit_cb_data(start_date, end_date)
+    
+    with open(report_path, "r") as f:
+        report = json.load(f)
+    
+    assert report["supportability_summary"]["supportable_row_count"] > 0
+    # Drift validator is currently not implemented in v1 runtime
+    assert report["validator_summary"]["drift_validator_status"] == STAGE_STATUS_NOT_RUN
+    assert report["validator_summary"]["drift_validator_message"] == "No dedicated validator path exists in v1 runtime."
+
