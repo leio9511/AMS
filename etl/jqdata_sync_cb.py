@@ -1,9 +1,26 @@
 import json
 import os
-
-import jqdatasdk
+import datetime
+import sys
 import pandas as pd
+import jqdatasdk
 
+from etl.cb_etl_pipeline import (
+    CBETLPipeline,
+    STAGE_STATUS_PASS,
+    STAGE_STATUS_FAIL,
+    STAGE_STATUS_NOT_RUN,
+    SUPPORTABILITY_BUCKET_SUPPORTABLE,
+    SUPPORTABILITY_BUCKET_UNEXPECTED_CONTRACT_REGRESSION,
+    CANONICAL_CB_COLUMNS,
+    _split_bond_ticker,
+    _prepare_basic_info_contract,
+    _build_underlying_mapping,
+    _build_delist_mapping,
+    _build_bond_key_columns,
+    _normalize_premium_source,
+    REDEMPTION_SOURCE_CONTRACT,
+)
 
 METRICS_PATH = "/root/projects/AMS/data/cb_history_factors.metrics.json"
 DATA_PATH = "/root/projects/AMS/data/cb_history_factors.csv"
@@ -16,261 +33,16 @@ LEGACY_REDEMPTION_SOURCE_FATAL = (
     "JQData table for AMS convertible-bond lifecycle semantics."
 )
 SUPPORTABILITY_REGRESSION_ERROR = "Missing underlying_ticker for supportable bonds in CONBOND_BASIC_INFO"
-SUPPORTABILITY_BUCKET_SUPPORTABLE = "supportable"
-SUPPORTABILITY_BUCKET_OUTSIDE_BASIC_INFO = "outside_basic_info"
-SUPPORTABILITY_BUCKET_MISSING_COMPANY_CODE_LEGACY = "missing_company_code_legacy"
-SUPPORTABILITY_BUCKET_UNEXPECTED_CONTRACT_REGRESSION = "unexpected_contract_regression"
-SUPPORTABILITY_EXCLUSION_BUCKETS = {
-    SUPPORTABILITY_BUCKET_OUTSIDE_BASIC_INFO: {
-        "count_key": "filtered_bonds_outside_basic_info_count",
-        "row_count_key": "filtered_rows_outside_basic_info_count",
-        "codes_key": "filtered_bond_codes_outside_basic_info",
-    },
-    SUPPORTABILITY_BUCKET_MISSING_COMPANY_CODE_LEGACY: {
-        "count_key": "filtered_bonds_missing_company_code_legacy_count",
-        "row_count_key": "filtered_rows_missing_company_code_legacy_count",
-        "codes_key": "filtered_bond_codes_missing_company_code_legacy",
-    },
-}
-CANONICAL_CB_COLUMNS = [
-    "ticker",
-    "date",
-    "open",
-    "high",
-    "low",
-    "close",
-    "volume",
-    "premium_rate",
-    "double_low",
-    "underlying_ticker",
-    "is_st",
-    "is_redeemed",
-]
-REDEMPTION_SOURCE_CONTRACT = {
-    "source_table": "bond.CONBOND_BASIC_INFO",
-    "primary_field": "delist_Date",
-    "fallback_informational_fields": [
-        "maturity_date",
-        "last_cash_date",
-        "convert_end_date",
-    ],
-    "null_primary_behavior": "is_redeemed=False",
-}
-
-
-def _split_bond_ticker(ticker: str) -> tuple[str | None, str | None]:
-    if not isinstance(ticker, str) or "." not in ticker:
-        return None, None
-
-    bond_code_raw, bond_exchange_code = ticker.split(".", 1)
-    bond_code_raw = bond_code_raw.strip()
-    bond_exchange_code = bond_exchange_code.strip()
-    if not bond_code_raw or not bond_exchange_code:
-        return None, None
-    return bond_code_raw, bond_exchange_code
-
 
 def _raise_legacy_underlying_source_error() -> None:
     raise RuntimeError(LEGACY_UNDERLYING_SOURCE_FATAL)
 
-
 def _raise_legacy_redemption_source_error() -> None:
     raise RuntimeError(LEGACY_REDEMPTION_SOURCE_FATAL)
-
-
-def _prepare_basic_info_contract(df_bonds_info: pd.DataFrame) -> pd.DataFrame:
-    columns = ["bond_code_raw", "company_code", "delist_Date"]
-    if df_bonds_info is None or df_bonds_info.empty or "code" not in df_bonds_info.columns:
-        return pd.DataFrame(columns=columns)
-
-    working = df_bonds_info.copy()
-    code_as_str = working["code"].apply(lambda value: str(value).strip() if pd.notna(value) else "")
-    split_keys = code_as_str.apply(_split_bond_ticker)
-    split_df = pd.DataFrame(
-        split_keys.tolist(),
-        columns=["bond_code_raw", "bond_exchange_code"],
-        index=working.index,
-    )
-    working["bond_code_raw"] = split_df["bond_code_raw"].where(split_df["bond_code_raw"].notna(), code_as_str)
-    working["bond_code_raw"] = working["bond_code_raw"].astype(str).str.strip()
-    working = working[working["bond_code_raw"].ne("") & working["bond_code_raw"].ne("nan")]
-    if working.empty:
-        return pd.DataFrame(columns=columns)
-
-    if "company_code" not in working.columns:
-        working["company_code"] = pd.NA
-    if "delist_Date" not in working.columns:
-        working["delist_Date"] = pd.NaT
-
-    working["delist_Date"] = pd.to_datetime(working["delist_Date"], errors="coerce")
-    working = working.drop_duplicates(subset=["bond_code_raw"], keep="last")
-    return working[columns].copy()
-
-
-def _build_underlying_mapping(df_bonds_info: pd.DataFrame) -> dict:
-    mapping_df = _prepare_basic_info_contract(df_bonds_info)
-    if mapping_df.empty:
-        return {}
-
-    mapping_df = mapping_df.dropna(subset=["company_code"]).copy()
-    if mapping_df.empty:
-        return {}
-
-    mapping_df = mapping_df.drop_duplicates(subset=["bond_code_raw"], keep="last")
-    return mapping_df.set_index("bond_code_raw")["company_code"].to_dict()
-
-
-def _build_delist_mapping(df_bonds_info: pd.DataFrame) -> dict:
-    contract = REDEMPTION_SOURCE_CONTRACT
-    mapping_df = _prepare_basic_info_contract(df_bonds_info)
-    if mapping_df.empty:
-        return {}
-
-    mapping_df = mapping_df.drop_duplicates(subset=["bond_code_raw"], keep="last")
-    return mapping_df.set_index("bond_code_raw")[contract["primary_field"]].to_dict()
-
-
-def _build_bond_key_columns(df: pd.DataFrame, ticker_col: str = "ticker") -> pd.DataFrame:
-    result = df.copy()
-    if ticker_col not in result.columns:
-        result["bond_code_raw"] = None
-        result["bond_exchange_code"] = None
-        return result
-
-    normalized = result[ticker_col].apply(_split_bond_ticker)
-    normalized_df = pd.DataFrame(
-        normalized.tolist(),
-        columns=["bond_code_raw", "bond_exchange_code"],
-        index=result.index,
-    )
-    result[["bond_code_raw", "bond_exchange_code"]] = normalized_df
-    return result
-
-
-def _normalize_premium_source(df_premium: pd.DataFrame) -> pd.DataFrame:
-    if df_premium is None or df_premium.empty:
-        return pd.DataFrame(columns=["date", "bond_code_raw", "bond_exchange_code", "premium_rate"])
-
-    required_columns = {"code", "date", "convert_premium_rate"}
-    if not required_columns.issubset(df_premium.columns):
-        raise ValueError("CONBOND_DAILY_CONVERT response missing required premium-rate columns")
-
-    working = df_premium.copy()
-    code_as_str = working["code"].astype(str)
-    split_keys = code_as_str.apply(_split_bond_ticker)
-    split_df = pd.DataFrame(
-        split_keys.tolist(),
-        columns=["code_from_ticker", "exchange_from_ticker"],
-        index=working.index,
-    )
-
-    working["bond_code_raw"] = split_df["code_from_ticker"].where(split_df["code_from_ticker"].notna(), code_as_str)
-    if "exchange_code" in working.columns:
-        exchange_code = working["exchange_code"].astype(str)
-        working["bond_exchange_code"] = exchange_code.where(exchange_code.ne("nan"), split_df["exchange_from_ticker"])
-    else:
-        working["bond_exchange_code"] = split_df["exchange_from_ticker"]
-
-    working["date"] = pd.to_datetime(working["date"])
-    working["premium_rate"] = working["convert_premium_rate"] / 100.0
-    return working[["date", "bond_code_raw", "bond_exchange_code", "premium_rate"]]
-
-
-def _classify_supportability(df: pd.DataFrame, df_bonds_info: pd.DataFrame, start_date: str) -> pd.DataFrame:
-    result = df.copy()
-    contract_df = _prepare_basic_info_contract(df_bonds_info)
-    start_ts = pd.Timestamp(start_date)
-
-    basic_info_codes = set(contract_df["bond_code_raw"].astype(str).tolist())
-    supportable_codes = set(
-        contract_df.loc[contract_df["company_code"].notna(), "bond_code_raw"].astype(str).tolist()
-    )
-    legacy_missing_company_code_codes = set(
-        contract_df.loc[
-            contract_df["company_code"].isna()
-            & contract_df["delist_Date"].notna()
-            & (contract_df["delist_Date"] < start_ts),
-            "bond_code_raw",
-        ].astype(str).tolist()
-    )
-
-    normalized_code = result["bond_code_raw"].where(result["bond_code_raw"].notna(), "").astype(str).str.strip()
-    valid_code = normalized_code.ne("") & normalized_code.ne("nan") & normalized_code.ne("None")
-
-    is_supportable = valid_code & normalized_code.isin(supportable_codes)
-    is_outside_basic_info = valid_code & ~normalized_code.isin(basic_info_codes)
-    is_missing_company_code_legacy = valid_code & normalized_code.isin(legacy_missing_company_code_codes)
-
-    result["supportability_bucket"] = SUPPORTABILITY_BUCKET_UNEXPECTED_CONTRACT_REGRESSION
-    result.loc[is_supportable, "supportability_bucket"] = SUPPORTABILITY_BUCKET_SUPPORTABLE
-    result.loc[is_outside_basic_info, "supportability_bucket"] = SUPPORTABILITY_BUCKET_OUTSIDE_BASIC_INFO
-    result.loc[is_missing_company_code_legacy, "supportability_bucket"] = SUPPORTABILITY_BUCKET_MISSING_COMPANY_CODE_LEGACY
-    return result
-
 
 def _write_metrics(metrics_path: str, metrics: dict) -> None:
     with open(metrics_path, "w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
-
-
-def _extract_sorted_unique_codes(series: pd.Series) -> list[str]:
-    if series is None or series.empty:
-        return []
-
-    normalized = series.dropna().astype(str).str.strip()
-    normalized = normalized[
-        normalized.ne("")
-        & normalized.ne("nan")
-        & normalized.ne("None")
-    ]
-    return sorted(normalized.unique().tolist())
-
-
-def _initialize_supportability_exclusion_metrics() -> dict:
-    metrics = {}
-    for metric_keys in SUPPORTABILITY_EXCLUSION_BUCKETS.values():
-        metrics[metric_keys["count_key"]] = 0
-        metrics[metric_keys["row_count_key"]] = 0
-        metrics[metric_keys["codes_key"]] = []
-    return metrics
-
-
-def _build_supportability_exclusion_metrics(df: pd.DataFrame) -> dict:
-    metrics = _initialize_supportability_exclusion_metrics()
-    if df is None or df.empty:
-        return metrics
-
-    supportability_bucket = df["supportability_bucket"] if "supportability_bucket" in df.columns else pd.Series("", index=df.index, dtype="object")
-    bond_codes = df["bond_code_raw"] if "bond_code_raw" in df.columns else pd.Series("", index=df.index, dtype="object")
-
-    for bucket_name, metric_keys in SUPPORTABILITY_EXCLUSION_BUCKETS.items():
-        bucket_mask = supportability_bucket.eq(bucket_name)
-        filtered_codes = _extract_sorted_unique_codes(bond_codes.loc[bucket_mask])
-        metrics[metric_keys["count_key"]] = len(filtered_codes)
-        metrics[metric_keys["row_count_key"]] = int(bucket_mask.sum())
-        metrics[metric_keys["codes_key"]] = filtered_codes
-
-    return metrics
-
-
-def _build_empty_canonical_cb_frame() -> pd.DataFrame:
-    return pd.DataFrame(
-        {
-            "ticker": pd.Series(dtype="object"),
-            "date": pd.Series(dtype="datetime64[ns]"),
-            "open": pd.Series(dtype="float64"),
-            "high": pd.Series(dtype="float64"),
-            "low": pd.Series(dtype="float64"),
-            "close": pd.Series(dtype="float64"),
-            "volume": pd.Series(dtype="float64"),
-            "premium_rate": pd.Series(dtype="float64"),
-            "double_low": pd.Series(dtype="float64"),
-            "underlying_ticker": pd.Series(dtype="object"),
-            "is_st": pd.Series(dtype="bool"),
-            "is_redeemed": pd.Series(dtype="bool"),
-        }
-    )[CANONICAL_CB_COLUMNS]
-
 
 def _build_candidate_summary_metrics(df: pd.DataFrame) -> dict:
     row_count = int(len(df))
@@ -292,7 +64,6 @@ def _build_candidate_summary_metrics(df: pd.DataFrame) -> dict:
         "is_st_true_count": int(df["is_st"].sum()),
         "is_redeemed_true_count": int(df["is_redeemed"].sum()),
     }
-
 
 def _promote_exclusion_only_metrics(tmp_metrics_path: str, metrics_path: str) -> None:
     metrics_bak_path = metrics_path + ".bak"
@@ -319,8 +90,31 @@ def _promote_exclusion_only_metrics(tmp_metrics_path: str, metrics_path: str) ->
 
         sys.exit(1)
 
+def _build_supportability_exclusion_metrics(df: pd.DataFrame) -> dict:
+    if df is None or df.empty or "supportability_bucket" not in df.columns:
+        return {
+            "filtered_bonds_outside_basic_info_count": 0,
+            "filtered_rows_outside_basic_info_count": 0,
+            "filtered_bond_codes_outside_basic_info": [],
+            "filtered_bonds_missing_company_code_legacy_count": 0,
+            "filtered_rows_missing_company_code_legacy_count": 0,
+            "filtered_bond_codes_missing_company_code_legacy": [],
+        }
+
+    from etl.cb_etl_pipeline import SUPPORTABILITY_EXCLUSION_BUCKETS, _extract_sorted_unique_codes
+    metrics = {}
+    for bucket_name, metric_keys in SUPPORTABILITY_EXCLUSION_BUCKETS.items():
+        bucket_mask = df["supportability_bucket"].eq(bucket_name)
+        filtered_codes = _extract_sorted_unique_codes(df.loc[bucket_mask, "bond_code_raw"])
+        metrics[metric_keys["count_key"]] = len(filtered_codes)
+        metrics[metric_keys["row_count_key"]] = int(bucket_mask.sum())
+        metrics[metric_keys["codes_key"]] = filtered_codes
+    return metrics
 
 def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
+    """
+    Production Promote Runner: fail-fast + promotion.
+    """
     output_path = DATA_PATH
     bak_path = output_path + ".bak"
     metrics_path = METRICS_PATH
@@ -338,124 +132,79 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     except Exception as e:
         raise RuntimeError(f"JQData auth failed: {e}")
 
-    df_bonds_info = jqdatasdk.bond.run_query(jqdatasdk.query(jqdatasdk.bond.CONBOND_BASIC_INFO))
-    bond_to_stock = _build_underlying_mapping(df_bonds_info)
-    bond_to_delist = _build_delist_mapping(df_bonds_info)
+    pipeline = CBETLPipeline(start_date, end_date, jqdata_provider=jqdatasdk)
 
-    df_all_bonds = jqdatasdk.get_all_securities(["conbond"])
-    tickers = df_all_bonds.index.tolist()
+    # Stage A: Source acquisition
+    if not pipeline.run_stage_a_source_acquisition():
+        # Match old error type/message
+        raise ValueError(pipeline.results["source_coverage"]["message"])
 
-    df_price = jqdatasdk.get_price(
-        tickers,
-        start_date=start_date,
-        end_date=end_date,
-        frequency="daily",
-        fields=["open", "high", "low", "close", "volume"],
-    )
-    if df_price.empty:
-        raise ValueError("No price data found for the given range")
+    # Ensure pipeline uses potentially patched helper functions from this module
+    pipeline.bond_to_stock = _build_underlying_mapping(pipeline.df_bonds_info)
+    pipeline.bond_to_delist = _build_delist_mapping(pipeline.df_bonds_info)
 
-    df = df_price.reset_index()
-    df.rename(columns={"time": "date", "code": "ticker"}, inplace=True)
-    df["date"] = pd.to_datetime(df["date"])
+    # Stage B: Supportability classification
+    if not pipeline.run_stage_b_supportability_classification():
+         raise ValueError(SUPPORTABILITY_REGRESSION_ERROR)
 
-    df = _build_bond_key_columns(df, ticker_col="ticker")
-    df = _classify_supportability(df, df_bonds_info, start_date)
+    # Stage C: Premium join
+    if not pipeline.run_stage_c_premium_join():
+         # In production, we might still want to proceed if it's not a fatal error 
+         # but the old code would fail if ANY record is missing premium rate.
+         pass
 
-    supportability_metrics = _build_supportability_exclusion_metrics(df)
-    unexpected_contract_regression_mask = df["supportability_bucket"].eq(
-        SUPPORTABILITY_BUCKET_UNEXPECTED_CONTRACT_REGRESSION
-    )
+    # Stage D: is_st join
+    if not pipeline.run_stage_d_is_st_join():
+         pass
 
-    if unexpected_contract_regression_mask.any():
-        raise ValueError(SUPPORTABILITY_REGRESSION_ERROR)
+    # Stage E: Redemption/delist
+    if not pipeline.run_stage_e_redemption_delist():
+         pass
 
-    df = df[df["supportability_bucket"].eq(SUPPORTABILITY_BUCKET_SUPPORTABLE)].copy()
+    # Strict production checks (ANY NA fails)
+    df = pipeline.df
+    df_supportable = df[df["supportability_bucket"].eq(SUPPORTABILITY_BUCKET_SUPPORTABLE)].copy()
+    
+    if not df_supportable.empty:
+        # Check for underlying_ticker missing (regression)
+        # Note: run_stage_b already checks for supportable bonds in basic info, 
+        # but if the mapping itself failed for some reason...
+        if "underlying_ticker" not in df_supportable.columns or df_supportable["underlying_ticker"].isna().any():
+             raise ValueError(SUPPORTABILITY_REGRESSION_ERROR)
 
-    premium_rate_metrics = {
-        "premium_rate_source_row_count": 0,
-        "premium_rate_joined_row_count": 0,
-        "premium_rate_join_coverage_ratio": 0.0,
-        "is_redeemed_missing_delist_count": 0,
-    }
-    exclusion_only_window = False
-
-    if df.empty:
-        exclusion_only_window = True
-        df = _build_empty_canonical_cb_frame()
-    else:
-        df["underlying_ticker"] = df["bond_code_raw"].map(bond_to_stock)
-        if df["underlying_ticker"].isna().any():
-            raise ValueError(SUPPORTABILITY_REGRESSION_ERROR)
-
-        raw_codes = [code for code in df["bond_code_raw"].dropna().astype(str).unique().tolist() if code]
-        if raw_codes:
-            q = jqdatasdk.query(jqdatasdk.bond.CONBOND_DAILY_CONVERT).filter(
-                jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_(raw_codes),
-                jqdatasdk.bond.CONBOND_DAILY_CONVERT.date >= start_date,
-                jqdatasdk.bond.CONBOND_DAILY_CONVERT.date <= end_date,
-            )
-            df_premium_raw = jqdatasdk.bond.run_query(q)
-            df_premium = _normalize_premium_source(df_premium_raw)
-            premium_rate_metrics["premium_rate_source_row_count"] = int(len(df_premium))
-
-            if not df_premium.empty:
-                df = pd.merge(df, df_premium, on=["date", "bond_code_raw", "bond_exchange_code"], how="left")
-            else:
-                df["premium_rate"] = float("nan")
-        else:
-            df["premium_rate"] = float("nan")
-
-        premium_rate_metrics["premium_rate_joined_row_count"] = int(df["premium_rate"].notna().sum())
-        total_price_rows = int(len(df))
-        premium_rate_metrics["premium_rate_join_coverage_ratio"] = (
-            premium_rate_metrics["premium_rate_joined_row_count"] / total_price_rows if total_price_rows else 0.0
-        )
-
-        underlying_tickers = [
-            ticker for ticker in df["underlying_ticker"].dropna().astype(str).unique().tolist() if ticker
-        ]
-        if underlying_tickers:
-            df_st = jqdatasdk.get_extras("is_st", underlying_tickers, start_date=start_date, end_date=end_date)
-            st_long = df_st.stack().reset_index()
-            st_long.columns = ["date", "underlying_ticker", "is_st"]
-            st_long["date"] = pd.to_datetime(st_long["date"])
-
-            df = pd.merge(df, st_long, on=["date", "underlying_ticker"], how="left")
-
-        if "is_st" not in df.columns or df["is_st"].isna().any():
+        if "premium_rate" not in df_supportable.columns or df_supportable["premium_rate"].isna().any():
+            raise ValueError("Missing premium_rate for some records")
+        if "is_st" not in df_supportable.columns or df_supportable["is_st"].isna().any():
             raise ValueError("Missing is_st for some records")
-
-        df["delist_Date"] = pd.to_datetime(df["bond_code_raw"].map(bond_to_delist), errors="coerce")
-        premium_rate_metrics["is_redeemed_missing_delist_count"] = int(df["delist_Date"].isna().sum())
-        # The first deterministic redemption contract is intentionally narrow:
-        # `delist_Date` is the only decision field, while `maturity_date`, `last_cash_date`,
-        # and `convert_end_date` remain fallback informational fields for observability only.
-        # When `delist_Date` is missing, AMS must keep `is_redeemed=False` instead of guessing.
-        df["is_redeemed"] = df["delist_Date"].notna() & (df["date"] >= df["delist_Date"])
-        if df["is_redeemed"].isna().any():
+        if "is_redeemed" not in df_supportable.columns or df_supportable["is_redeemed"].isna().any():
             raise ValueError("Missing is_redeemed for some records")
 
-        num_redeemed = df["is_redeemed"].sum()
-        print(f"Total redeemed records marked: {num_redeemed}")
+    # Post-stages processing for promotion
+    supportability_metrics = _build_supportability_exclusion_metrics(df)
 
-        if "premium_rate" not in df.columns or df["premium_rate"].isna().any():
-            raise ValueError("Missing premium_rate for some records")
-        df["double_low"] = df["close"] + df["premium_rate"] * 100
+    if df_supportable.empty:
+        from etl.cb_etl_pipeline import _build_empty_canonical_cb_frame
+        df_supportable_final = _build_empty_canonical_cb_frame()
+        exclusion_only_window = True
+    else:
+        df_supportable_final = df_supportable[CANONICAL_CB_COLUMNS]
+        exclusion_only_window = False
 
-        df = df[CANONICAL_CB_COLUMNS]
-
-    metrics_bak_path = metrics_path + ".bak"
-    tmp_metrics_path = metrics_path + ".tmp"
+    premium_rate_metrics = {
+        "premium_rate_source_row_count": pipeline.results["source_coverage"].get("premium_source_row_count", 0),
+        "premium_rate_joined_row_count": pipeline.results["premium_join_summary"].get("premium_joined_row_count", 0),
+        "premium_rate_join_coverage_ratio": 1.0 - pipeline.results["premium_join_summary"].get("missing_premium_ratio", 0.0) if not df_supportable.empty else 0.0,
+        "is_redeemed_missing_delist_count": pipeline.results["redemption_summary"].get("missing_redemption_row_count", 0),
+    }
     
-    import datetime
     premium_rate_metrics.update({
-        **_build_candidate_summary_metrics(df),
+        **_build_candidate_summary_metrics(df_supportable_final),
         **supportability_metrics,
         "generated_at": datetime.datetime.now().isoformat(),
         "source_lineage": "jqdata_sync_cb"
     })
 
+    tmp_metrics_path = metrics_path + ".tmp"
     _write_metrics(tmp_metrics_path, premium_rate_metrics)
 
     if exclusion_only_window:
@@ -465,64 +214,98 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
         )
         return
 
-    from ams.validators.cb_data_validator import CBDataValidator, DatasetSemanticValidator
+    # Stage F: Validator
+    if not pipeline.run_stage_f_validator():
+         val_summary = pipeline.results["validator_summary"]
+         if val_summary.get("schema_validator_message"):
+             print(val_summary["schema_validator_message"])
+         if val_summary.get("semantic_validator_message"):
+             print(val_summary["semantic_validator_message"])
+         print("[DataPromotionBlocked] Candidate research dataset failed validation. Canonical dataset remains unchanged.")
+         sys.exit(1)
 
-    validator_l1 = CBDataValidator()
-    validator_l2 = DatasetSemanticValidator()
+    # Promotion
     tmp_path = output_path + ".tmp"
+    df_supportable_final.to_csv(tmp_path, index=False)
 
-    df.to_csv(tmp_path, index=False)
-
-    df_to_val = pd.read_csv(tmp_path)
-    df_to_val["ticker"] = df_to_val["ticker"].astype(str)
-    df_to_val["close"] = df_to_val["close"].astype(float)
-    df_to_val["premium_rate"] = df_to_val["premium_rate"].astype(float)
-    df_to_val["is_st"] = df_to_val["is_st"].astype(bool)
-    df_to_val["is_redeemed"] = df_to_val["is_redeemed"].astype(bool)
-
-    validation_passed = False
+    canonical_backed_up = False
+    metrics_backed_up = False
+    metrics_bak_path = metrics_path + ".bak"
+    canonical_existed = os.path.exists(output_path)
+    metrics_existed = os.path.exists(metrics_path)
+    
     try:
-        val_l1 = validator_l1.validate_dataframe(df_to_val)
-        val_l2 = validator_l2.validate_dataframe(df_to_val)
-        validation_passed = val_l1 and val_l2
+        if canonical_existed:
+            os.replace(output_path, bak_path)
+            canonical_backed_up = True
+        if metrics_existed:
+            os.replace(metrics_path, metrics_bak_path)
+            metrics_backed_up = True
+        
+        os.replace(tmp_path, output_path)
+        os.replace(tmp_metrics_path, metrics_path)
+        print(f"Successfully synced data to {output_path}")
     except Exception as e:
-        print(e)
-        validation_passed = False
-
-    import sys
-    if validation_passed:
-        canonical_backed_up = False
-        metrics_backed_up = False
-        canonical_existed = os.path.exists(output_path)
-        metrics_existed = os.path.exists(metrics_path)
-        try:
-            if canonical_existed:
-                os.replace(output_path, bak_path)
-                canonical_backed_up = True
-            if metrics_existed:
-                os.replace(metrics_path, metrics_bak_path)
-                metrics_backed_up = True
+        if canonical_backed_up:
+            os.replace(bak_path, output_path)
+        elif not canonical_existed and os.path.exists(output_path):
+            os.remove(output_path)
             
-            os.replace(tmp_path, output_path)
-            os.replace(tmp_metrics_path, metrics_path)
-            print(f"Successfully synced data to {output_path}")
-        except Exception as e:
-            if canonical_backed_up:
-                os.replace(bak_path, output_path)
-            elif not canonical_existed and os.path.exists(output_path):
-                os.remove(output_path)
-                
-            if metrics_backed_up:
-                os.replace(metrics_bak_path, metrics_path)
-            elif not metrics_existed and os.path.exists(metrics_path):
-                os.remove(metrics_path)
-                
-            print("[DataPromotionRollback] Atomic promotion failed. Canonical dataset restored from backup.")
-            sys.exit(1)
-    else:
-        print("[DataPromotionBlocked] Candidate research dataset failed validation. Canonical dataset remains unchanged.")
+        if metrics_backed_up:
+            os.replace(metrics_bak_path, metrics_path)
+        elif not metrics_existed and os.path.exists(metrics_path):
+            os.remove(metrics_path)
+            
+        print(f"[DataPromotionRollback] Atomic promotion failed: {e}. Canonical dataset restored from backup.")
         sys.exit(1)
 
+def audit_cb_data(start_date, end_date):
+    """
+    Audit Runner: collect + report, no promotion.
+    """
+    user = os.environ.get("JQDATA_USER")
+    pwd = os.environ.get("JQDATA_PWD")
+
+    if not user or not pwd:
+        raise ValueError("Missing JQDATA_USER or JQDATA_PWD environment variables")
+
+    try:
+        jqdatasdk.auth(user, pwd)
+    except Exception as e:
+        pass
+
+    pipeline = CBETLPipeline(start_date, end_date, jqdata_provider=jqdatasdk)
+    
+    pipeline.run_stage_a_source_acquisition()
+    
+    # Audit runner should also use potentially patched helpers if called in a test context,
+    # though it's less critical than for sync_cb_data.
+    pipeline.bond_to_stock = _build_underlying_mapping(pipeline.df_bonds_info)
+    pipeline.bond_to_delist = _build_delist_mapping(pipeline.df_bonds_info)
+
+    pipeline.run_stage_b_supportability_classification()
+    pipeline.run_stage_c_premium_join()
+    pipeline.run_stage_d_is_st_join()
+    pipeline.run_stage_e_redemption_delist()
+    pipeline.run_stage_f_validator()
+    
+    report = pipeline.get_final_report()
+    
+    report_filename = f"cb_etl_audit_{start_date}_{end_date}.json"
+    report_dir = "/root/projects/AMS/reports"
+    os.makedirs(report_dir, exist_ok=True)
+    report_path = os.path.join(report_dir, report_filename)
+    
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+    
+    print(f"[AuditRunner] Audit report written to {report_path}")
+    return report_path
 
 if __name__ == "__main__":
-    sync_cb_data()
+    if len(sys.argv) > 1 and sys.argv[1] == "--audit":
+        start = sys.argv[2] if len(sys.argv) > 2 else "2025-01-06"
+        end = sys.argv[3] if len(sys.argv) > 3 else "2025-02-06"
+        audit_cb_data(start, end)
+    else:
+        sync_cb_data()
