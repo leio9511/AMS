@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from etl.jqdata_sync_cb import sync_cb_data
+from etl.cb_etl_pipeline import CBETLPipeline, SUPPORTABILITY_BUCKET_SUPPORTABLE
 
 
 class TestJQDataSyncCBLogic(unittest.TestCase):
@@ -528,6 +529,74 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
             if os.path.exists(mock_metrics_path):
                 os.remove(mock_metrics_path)
 
+
+
+    def test_validator_skips_on_missing_columns(self):
+        # Setup: Create a CBETLPipeline instance.
+        pipeline = CBETLPipeline("2024-01-01", "2024-01-01")
+        from etl.cb_etl_pipeline import CANONICAL_CB_COLUMNS
+        cols = [c for c in CANONICAL_CB_COLUMNS if c != "is_st"]
+        df = pd.DataFrame(columns=cols + ["supportability_bucket"])
+        # Use dummy values that match the length
+        dummy_row = []
+        for c in cols:
+            if c in ["open", "high", "low", "close", "volume", "premium_rate", "double_low"]:
+                dummy_row.append(0.0)
+            elif c in ["is_st", "is_redeemed"]:
+                dummy_row.append(False)
+            else:
+                dummy_row.append("dummy")
+        
+        df.loc[0] = dummy_row + [SUPPORTABILITY_BUCKET_SUPPORTABLE]
+        pipeline.df = df
+
+        # Execution: Call run_stage_f_validator().
+        res = pipeline.run_stage_f_validator()
+
+        # Assertion:
+        self.assertFalse(res)
+        self.assertEqual(pipeline.results["validator_summary"]["status"], "FAIL")
+        self.assertEqual(pipeline.results["validator_summary"]["failure_type"], "VALIDATOR_SCHEMA_FAILURE")
+        self.assertIn("Validator skipped because required canonical columns are missing after upstream stage failures:",
+                      pipeline.results["validator_summary"]["message"])
+        self.assertIn("is_st", pipeline.results["validator_summary"]["message"])
+
+    def test_validator_passes_when_columns_present(self):
+        # Setup: Provide a DataFrame with all CANONICAL_CB_COLUMNS and valid data.
+        pipeline = CBETLPipeline("2024-01-01", "2024-01-01")
+        from etl.cb_etl_pipeline import CANONICAL_CB_COLUMNS
+        df = pd.DataFrame(columns=CANONICAL_CB_COLUMNS + ["supportability_bucket"])
+        # Mock some valid data
+        data = {
+            "ticker": "123456.XSHG",
+            "date": "2024-01-01",
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 100.0,
+            "volume": 1000,
+            "premium_rate": 0.1,
+            "double_low": 110.0,
+            "underlying_ticker": "600000.XSHG",
+            "is_st": False,
+            "is_redeemed": False,
+            "supportability_bucket": SUPPORTABILITY_BUCKET_SUPPORTABLE
+        }
+        df.loc[0] = [data[c] for c in CANONICAL_CB_COLUMNS] + [data["supportability_bucket"]]
+        pipeline.df = df
+
+        # Mock validators to avoid business logic failure
+        with patch("ams.validators.cb_data_validator.CBDataValidator") as mock_v1, \
+             patch("ams.validators.cb_data_validator.DatasetSemanticValidator") as mock_v2:
+            mock_v1.return_value.validate_dataframe.return_value = True
+            mock_v2.return_value.validate_dataframe.return_value = True
+
+            # Execution: Call run_stage_f_validator().
+            res = pipeline.run_stage_f_validator()
+
+            # Assertion:
+            self.assertTrue(res)
+            self.assertEqual(pipeline.results["validator_summary"]["status"], "PASS")
 
 if __name__ == "__main__":
     unittest.main()

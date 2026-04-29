@@ -585,6 +585,15 @@ class CBETLPipeline:
             validator_l1 = CBDataValidator()
             validator_l2 = DatasetSemanticValidator()
             
+            missing_cols = [c for c in CANONICAL_CB_COLUMNS if c not in df_work.columns]
+            if missing_cols:
+                stage["status"] = STAGE_STATUS_FAIL
+                stage["failure_type"] = "VALIDATOR_SCHEMA_FAILURE"
+                stage["message"] = f"Validator skipped because required canonical columns are missing after upstream stage failures: {missing_cols}"
+                stage["schema_validator_status"] = STAGE_STATUS_FAIL
+                stage["schema_validator_message"] = stage["message"]
+                return False
+
             df_to_val = df_work[CANONICAL_CB_COLUMNS].copy()
             df_to_val["ticker"] = df_to_val["ticker"].astype(str)
             df_to_val["close"] = df_to_val["close"].astype(float)
