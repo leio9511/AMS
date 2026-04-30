@@ -145,6 +145,34 @@ def test_tushare_premium_fails_closed():
     # premium_rate should be NaN because stock_close is missing
     assert pd.isna(df.iloc[0]["convert_premium_rate"])
 
+def test_tushare_premium_fails_closed_missing_conv_price():
+    mock_pro = MagicMock()
+    mock_pro.trade_cal.return_value = pd.DataFrame({"cal_date": ["20250102"]})
+    mock_pro.cb_basic.return_value = pd.DataFrame({
+        "ts_code": ["110001.SH"],
+        "stk_code": ["600001.SH"],
+        "delist_date": ["20300101"]
+    })
+    mock_pro.cb_daily.return_value = pd.DataFrame({
+        "ts_code": ["110001.SH"],
+        "trade_date": ["20250102"],
+        "close": [120.0],
+        "vol": [1000.0]
+    })
+    mock_pro.daily.return_value = pd.DataFrame({
+        "ts_code": ["600001.SH"],
+        "trade_date": ["20250102"],
+        "close": [10.0]
+    })
+    # Mock empty cb_price_chg
+    mock_pro.cb_price_chg.return_value = pd.DataFrame()
+    
+    provider = TuShareProvider(pro=mock_pro)
+    df = provider.fetch_cb_price_changes(["110001.SH"], "2025-01-02", "2025-01-02")
+    
+    # premium_rate should be NaN because effective_conv_price is missing
+    assert pd.isna(df.iloc[0]["convert_premium_rate"])
+
 def test_tushare_premium_uses_historical_conv_price():
     mock_pro = MagicMock()
     # Mock two days
@@ -260,3 +288,31 @@ def test_tushare_cb_daily_empty_range():
     df = provider.fetch_cb_daily(["127076.SZ"], "2025-01-25", "2025-01-26")
     
     assert df.empty
+
+def test_tushare_full_ticker_contract_compliance():
+    """
+    Verify that provider methods strictly use the provided tickers 
+    without attempting to guess suffixes or handle raw codes.
+    """
+    mock_pro = MagicMock()
+    mock_pro.trade_cal.return_value = pd.DataFrame({"cal_date": ["20250120"]})
+    # Mock cb_daily returning mixed tickers
+    mock_pro.cb_daily.return_value = pd.DataFrame({
+        "ts_code": ["127076.SZ", "110001.SH", "123456.SZ"],
+        "trade_date": ["20250120", "20250120", "20250120"],
+        "close": [100.0, 110.0, 120.0],
+        "vol": [1000, 2000, 3000]
+    })
+    
+    provider = TuShareProvider(pro=mock_pro)
+    # If we pass a list of full tickers, it should only return those.
+    df = provider.fetch_cb_daily(["127076.SZ", "110001.SH"], "2025-01-20", "2025-01-20")
+    
+    assert len(df) == 2
+    assert "127076.SZ" in df.index.get_level_values("code")
+    assert "110001.SH" in df.index.get_level_values("code")
+    assert "123456.SZ" not in df.index.get_level_values("code")
+    
+    # Verify that it didn't do any complex parsing, just a straight 'isin' filter
+    # which is the current implementation.
+

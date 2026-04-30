@@ -93,7 +93,9 @@ class TuShareProvider(BaseDataProvider):
             df = pd.concat(all_frames)
 
             # 3. Rename columns to match pipeline contract
-            df = df.rename(columns={"ts_code": "code", "trade_date": "time", "vol": "volume"})
+            df = df.rename(columns={"ts_code": "code", "trade_date": "time"})
+            # Requirement 5: Align 'vol' to 'volume' for AMS canonical schema
+            df = df.rename(columns={"vol": "volume"})
 
             # 4. Filter by requested tickers
             if tickers:
@@ -112,8 +114,7 @@ class TuShareProvider(BaseDataProvider):
         Implementation of premium/valuation data acquisition for TuShare.
         Reconstructs 'premium_rate' using historical conversion prices and stock prices.
         """
-        # cb_daily API does not provide a cb_over_rate field.
-        # premium_rate must be computed from bond_close, stock_close, and effective_conv_price.
+        # cb_daily API does not provide a cb_over_rate field. premium_rate must be computed from bond_close, stock_close, and effective_conv_price.
         try:
             ts_start = start_date.replace("-", "")
             ts_end = end_date.replace("-", "")
