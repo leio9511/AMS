@@ -57,23 +57,7 @@ premium_rate = (bond_close / ((100 / effective_conv_price) × stock_close) - 1) 
 3. 不改变 `fetch_cb_daily()` 和 `fetch_cb_price_changes()` 的接口签名。
 
 
-### Behavior for bonds without cb_price_chg history
-对于没有 cb_price_chg 历史记录的债券（例如已退市多年的老券），
-不适用  的预期目标。实际上这类债券
-会在 supportability stage B 已被过滤（missing_company_code_legacy 或
-outside_basic_info）。如果某只 supportable 债券确实没有 cb_price_chg
-数据，其 premium_rate 应留空，不做 fallback 填充，
-同时该类债券应计入 Stage C 的 missing_premium_count，推高 missing_premium_ratio。
-此举不会让 Stage A 失败，但会影响 final_status 的判定。
-
-### Behavior for bonds without cb_price_chg history
-对于没有 cb_price_chg 历史记录的债券（例如已不在交易范围的旧券），
-这些债券会被 supportability Stage B 过滤掉（归入 missing_company_code_legacy
-或 outside_basic_info），因此不会进入 Stage C premium 计算。
-如果某只 supportable 债券确实在 cb_price_chg 查询中没有任何记录，
-其 premium_rate 应保持 NaN 不做填充，该债券的行计入 missing_premium_count。
-这会使 missing_premium_ratio 上升。但基于当前实际数据，这类情况极少，
-不影响 `missing_premium_ratio < 0.20` 目标的可行性。### Boundaries
+### Boundaries
 **In Scope**
 - 明确无 cb_price_chg 历史记录时的 premium_rate 处理策略
 - `vol → volume` 字段重命名
@@ -119,11 +103,11 @@ df = df.rename(columns={"vol": "volume"})
   - **Then** it must contain a column named `volume`
   - **And** `volume` values must match the API's original `vol` values
 
-- **Scenario 2: fetch_cb_price_changes computes premium_rate without cb_over_rate**
+- **Scenario 2: fetch_cb_price_changes produces premium_rate for bonds with history**
   - **Given** TuShareProvider.fetch_cb_price_changes() is called with bonds that have cb_price_chg history
   - **When** the result DataFrame is inspected
-  - **Then** it must contain a non-null `premium_rate` column
-  - **And** the code must not reference any field named `cb_over_rate`
+  - **Then** it must contain a `premium_rate` column
+  - **And** for bonds with known cb_price_chg history, `premium_rate` must be non-null
 
 - **Scenario 3: Premium calculation behaves correctly for bonds without cb_price_chg history**
   - **Given** fetch_cb_price_changes processes a bond with no conversion price records
@@ -143,6 +127,14 @@ df = df.rename(columns={"vol": "volume"})
 - E2E 黑盒测试：修复后对 2025-01-20 ~ 2025-01-24 窗口跑一次真实 TuShare audit runner，确认 Stage C 和 Stage F 通过
 - 不依赖 JQData 交叉比对，仅验证 TuShare 自身数据完整性和计算正确性
 
+## 5.5 Rollback Strategy (回滚方案)
+本 PRD 改动范围仅限于 `etl/tushare_provider.py` 中的两个方法。
+回滚路径：
+1. **代码回滚**：`git revert <merge_commit>` 即可恢复到改动前状态。
+2. **数据回滚**：如果改动后推进了 canonical dataset（`data/cb_history_factors_tushare.csv`），
+   需通过 maintain .bak 文件或 metrics.json 中的 `source_contract_version` 字段确认是否应回滚。
+3. **验后退回**：SDLC merge 后，在 deploy 前执行一次 `cb_etl_runner --data-source tushare --audit`，
+   若 Stage C 或 Stage F 未达到预期，则不执行 deploy，原地 revert。
 ## 6. Framework Modifications (框架防篡改声明)
 - `/root/projects/AMS/etl/tushare_provider.py`（`fetch_cb_daily` 和 `fetch_cb_price_changes` 方法）
 - `/root/projects/AMS/tests/test_tushare_provider.py`（测试更新）
