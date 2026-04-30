@@ -32,10 +32,10 @@ def isolated_paths(tmp_path):
     import os
     original_os_path_join = os.path.join
     
-    def mock_join(d, f):
-        if "reports" in d:
-            return original_os_path_join(mock_reports_dir, f)
-        return original_os_path_join(d, f)
+    def mock_join(d, *args):
+        if isinstance(d, str) and "reports" in d:
+            return original_os_path_join(mock_reports_dir, *args)
+        return original_os_path_join(d, *args)
 
     with patch("etl.jqdata_sync_cb.DATA_PATH", mock_data_path), \
          patch("etl.jqdata_sync_cb.METRICS_PATH", mock_metrics_path), \

@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def main():
     parser = argparse.ArgumentParser(
         description="Standardized Unified Backtest Entrypoint",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument('--strategy', required=True, help="The identifier of the strategy to run (supported: 'cb_rotation').")
     parser.add_argument('--start-date', required=True, help="Backtest start date in YYYY-MM-DD format.")
@@ -30,10 +30,30 @@ def main():
     parser.add_argument('--tp-pos', type=float, help="Threshold for cost-basis take-profit (e.g., 0.20).")
     parser.add_argument('--tp-intra', type=float, help="Threshold for intraday momentum take-profit (e.g., 0.08).")
     parser.add_argument('--sl', required=True, type=float, help="Threshold for intraday stop-loss (e.g., -0.08).")
-    parser.add_argument('--data-path', default="/root/projects/AMS/data/cb_history_factors.csv", help="Path to the historical data CSV file.")
+    parser.add_argument('--data-source', default="auto", choices=["auto", "jqdata", "tushare"], help="Data source provider for automatic path selection.")
+    parser.add_argument('--data-path', help="Explicit CSV path (default: /root/projects/AMS/data/cb_history_factors_jqdata.csv).")
     parser.add_argument('--format', choices=['text', 'json'], default='text', help="Output format ('text' or 'json'). Default: 'text'.")
 
     args = parser.parse_args()
+
+    # Data Path selection logic
+    data_path = args.data_path
+    if not data_path:
+        from ams.utils.provider_config import load_provider_config
+        config = load_provider_config()
+        source = args.data_source
+        if source == "auto":
+            source = config.get("default_provider", "jqdata")
+        
+        provider_config = config["providers"].get(source)
+        if provider_config:
+            data_path = provider_config["dataset_path"]
+        else:
+            # Fallback to legacy default if possible, or error
+            data_path = "/root/projects/AMS/data/cb_history_factors.csv"
+    
+    if not data_path:
+         raise ValueError("Could not determine data path. Please provide --data-path or check --data-source.")
 
     # Parameter Validation
     if args.tp_mode == 'both':
@@ -50,7 +70,7 @@ def main():
         tp_config = TakeProfitConfig(mode=mode, pos_threshold=pos_thresh, intra_threshold=intra_thresh)
 
     # 2. Data Layer
-    data_feed = HistoryDataFeed(file_path=args.data_path)
+    data_feed = HistoryDataFeed(file_path=data_path)
 
     # 3. Broker Layer
     broker = SimBroker(initial_cash=args.capital)

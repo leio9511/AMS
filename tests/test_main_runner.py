@@ -29,7 +29,7 @@ def test_cli_help_output():
 
 def test_main_runner_default_data_path():
     result = subprocess.run([sys.executable, "main_runner.py", "--help"], capture_output=True, text=True)
-    expected_default = "/root/projects/AMS/data/cb_history_factors.csv"
+    expected_default = "cb_history_factors_jqdata.csv"
     legacy_default = "/root/.openclaw/workspace/data/cb_history_factors.csv"
     assert expected_default in result.stdout
     assert legacy_default not in result.stdout
@@ -61,8 +61,7 @@ def test_main_runner_argument_default():
         
         mock_data_feed.assert_called_once()
         call_args = mock_data_feed.call_args
-        assert call_args.kwargs['file_path'] == "/root/projects/AMS/data/cb_history_factors.csv"
-
+        assert call_args.kwargs['file_path'] == "/root/projects/AMS/data/cb_history_factors_jqdata.csv"
 def test_cli_tp_mode_validation():
     test_args = ["main_runner.py", "--strategy", "cb_rotation", "--start-date", "2025-01-01", 
                  "--end-date", "2025-01-31", "--capital", "4000000", "--top-n", "20", 
