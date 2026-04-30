@@ -169,6 +169,6 @@ def test_skill_md_content():
     with open("/root/projects/AMS/SKILL.md", "r") as f:
         content = f.read()
     
-    expected_block = "5. **Strategy Backtester**:\n   `python3 main_runner.py --strategy <ID> --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD> --capital <FLOAT> --top-n <INT> --rebalance <daily|weekly> --tp-mode <both|position|intraday> --tp-pos <FLOAT> --tp-intra <FLOAT> --sl <FLOAT> [--format json]`\n   Use this for rigorous strategy validation. Use `--format json` for bit-accurate results."
+    expected_block = "5. **Strategy Backtester**:\n   `python3 main_runner.py --strategy <ID> --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD> --capital <FLOAT> --top-n <INT> --rebalance <daily|weekly> --tp-mode <both|position|intraday> --tp-pos <FLOAT> --tp-intra <FLOAT> --sl <FLOAT> [--data-source auto|jqdata|tushare] [--format json]`\n   Use this for rigorous strategy validation. Use `--format json` for bit-accurate results."
     
     assert expected_block in content

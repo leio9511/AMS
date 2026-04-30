@@ -1,7 +1,7 @@
 import json
 import os
 
-DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "ams_provider_config.json")
+DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "ams_config.json")
 
 def load_provider_config():
     if os.path.exists(DEFAULT_CONFIG_PATH):

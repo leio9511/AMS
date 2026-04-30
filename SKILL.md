@@ -19,5 +19,9 @@ You are equipped with the AMS toolset. To answer questions about market data or 
 4. **Dynamic Sentinel Alerts**: 
    To set up persistent alerts, append a monitoring rule (e.g., condition + script invocation) to the file `/root/.openclaw/workspace/HEARTBEAT.md` so the main Agent evaluates it during heartbeat cycles.
 5. **Strategy Backtester**:
-   `python3 main_runner.py --strategy <ID> --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD> --capital <FLOAT> --top-n <INT> --rebalance <daily|weekly> --tp-mode <both|position|intraday> --tp-pos <FLOAT> --tp-intra <FLOAT> --sl <FLOAT> [--format json]`
+   `python3 main_runner.py --strategy <ID> --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD> --capital <FLOAT> --top-n <INT> --rebalance <daily|weekly> --tp-mode <both|position|intraday> --tp-pos <FLOAT> --tp-intra <FLOAT> --sl <FLOAT> [--data-source auto|jqdata|tushare] [--format json]`
    Use this for rigorous strategy validation. Use `--format json` for bit-accurate results.
+6. **CB ETL Runner**:
+   `python3 etl/cb_etl_runner.py --start <YYYY-MM-DD> --end <YYYY-MM-DD> [--data-source auto|jqdata|tushare] [--audit] [--promote]`
+   Use this for convertible bond data acquisition and processing. Use `--audit` for validation without overwriting canonical datasets.
+

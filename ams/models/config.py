@@ -22,6 +22,11 @@ class TakeProfitConfig:
             if self.intra_threshold is None or self.intra_threshold <= 0:
                 raise ValueError(f"[VALIDATION_ERROR] TakeProfitConfig: INTRADAY threshold must be positive.")
 
+@dataclass(frozen=True)
+class DataProviderConfig:
+    dataset_path: str
+    metrics_path: str
+
 class TakeProfitPolicy:
     @staticmethod
     def calculate_tp_price(config: TakeProfitConfig, avg_cost: Decimal, prev_close: Decimal) -> Decimal:

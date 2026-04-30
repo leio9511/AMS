@@ -259,7 +259,7 @@ def run_etl(start_date, end_date, source_name, promote=False, jqdata_client=None
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="AMS CB ETL Runner")
-    parser.add_argument("--data-source", type=str, default="auto", choices=["auto", "jqdata", "tushare"], help="Data source provider")
+    parser.add_argument("--data-source", type=str, default="auto", choices=["auto", "jqdata", "tushare"], help="Data source provider for automatic path selection. CLI explicit parameter overrides AMS local provider default configuration.")
     parser.add_argument("--start", type=str, default="2025-01-06", help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", type=str, default="2025-02-06", help="End date (YYYY-MM-DD)")
     parser.add_argument("--audit", action="store_true", help="Run in audit mode (no promotion)")
