@@ -529,7 +529,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
             if os.path.exists(mock_metrics_path):
                 os.remove(mock_metrics_path)
 
-    @patch("etl.cb_etl_pipeline.jqdatasdk")
+    @patch("etl.jqdata_provider.jqdatasdk")
     def test_premium_batched_fetch_combines_multiple_months(self, mock_jq):
         # Setup: Mock JQData run_query to return different sets of data for two different months.
         pipeline = CBETLPipeline("2024-01-01", "2024-02-15", jqdata_provider=mock_jq)
@@ -560,7 +560,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         self.assertEqual(len(res), 2)
         self.assertEqual(mock_jq.bond.run_query.call_count, 2)
 
-    @patch("etl.cb_etl_pipeline.jqdatasdk")
+    @patch("etl.jqdata_provider.jqdatasdk")
     def test_premium_truncation_guard_logs_message(self, mock_jq):
         # Setup: Mock JQData run_query to return exactly 5000 rows for one of the batches.
         pipeline = CBETLPipeline("2024-01-01", "2024-01-31", jqdata_provider=mock_jq)
@@ -647,7 +647,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
             self.assertTrue(res)
             self.assertEqual(pipeline.results["validator_summary"]["status"], "PASS")
 
-    @patch("etl.cb_etl_pipeline.jqdatasdk")
+    @patch("etl.jqdata_provider.jqdatasdk")
     def test_is_st_handles_provider_window_exception(self, mock_jq):
         # Setup
         pipeline = CBETLPipeline(self.start_date, self.end_date, jqdata_provider=mock_jq)
@@ -678,7 +678,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         self.assertIn("is_st source query exceeded the provider-supported date window", summary["message"])
         self.assertIn(exception_msg, summary["message"])
 
-    @patch("etl.cb_etl_pipeline.jqdatasdk")
+    @patch("etl.jqdata_provider.jqdatasdk")
     def test_is_st_detects_empty_source_as_gap(self, mock_jq):
         # Setup
         pipeline = CBETLPipeline(self.start_date, self.end_date, jqdata_provider=mock_jq)

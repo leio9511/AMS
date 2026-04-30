@@ -5,6 +5,8 @@ import sys
 import pandas as pd
 import jqdatasdk
 
+from etl.cb_provider_base import DataProviderError
+from etl.jqdata_provider import JQDataProvider
 from etl.cb_etl_pipeline import (
     CBETLPipeline,
     STAGE_STATUS_PASS,
@@ -132,7 +134,8 @@ def sync_cb_data(start_date="2025-01-06", end_date="2025-02-06"):
     except Exception as e:
         raise RuntimeError(f"JQData auth failed: {e}")
 
-    pipeline = CBETLPipeline(start_date, end_date, jqdata_provider=jqdatasdk)
+    provider = JQDataProvider(jqdata_client=jqdatasdk)
+    pipeline = CBETLPipeline(start_date, end_date, provider=provider)
 
     # Stage A: Source acquisition
     if not pipeline.run_stage_a_source_acquisition():
@@ -275,7 +278,8 @@ def audit_cb_data(start_date, end_date):
         # Auth might already be active or fail in a way that allows read-only probe
         pass
 
-    pipeline = CBETLPipeline(start_date, end_date, jqdata_provider=jqdatasdk)
+    provider = JQDataProvider(jqdata_client=jqdatasdk)
+    pipeline = CBETLPipeline(start_date, end_date, provider=provider)
     
     pipeline.run_stage_a_source_acquisition()
     

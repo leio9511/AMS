@@ -2,7 +2,7 @@ import json
 import os
 import datetime
 import pandas as pd
-import jqdatasdk
+from etl.cb_provider_base import BaseDataProvider, DataProviderAuthError, DataProviderError
 
 # Constants from jqdata_sync_cb.py
 SUPPORTABILITY_BUCKET_SUPPORTABLE = "supportable"
@@ -197,14 +197,16 @@ def _build_empty_canonical_cb_frame() -> pd.DataFrame:
     )[CANONICAL_CB_COLUMNS]
 
 class CBETLPipeline:
-    def __init__(self, start_date: str, end_date: str, jqdata_provider=None):
+    def __init__(self, start_date: str, end_date: str, provider: BaseDataProvider = None, **kwargs):
         self.start_date = start_date
         self.end_date = end_date
-        if jqdata_provider is None:
-            import jqdatasdk
-            self.jqdata_provider = jqdatasdk
+        
+        # Backward compatibility for tests passing jqdata_provider directly
+        if provider is None and "jqdata_provider" in kwargs:
+            from etl.jqdata_provider import JQDataProvider
+            self.provider = JQDataProvider(jqdata_client=kwargs["jqdata_provider"])
         else:
-            self.jqdata_provider = jqdata_provider
+            self.provider = provider
             
         self.results = {
             "source_coverage": {"status": STAGE_STATUS_NOT_RUN, "failure_type": "NONE", "message": ""},
@@ -232,23 +234,27 @@ class CBETLPipeline:
         stage["redemption_source_row_count"] = 0
         stage["redemption_source_unique_bond_count"] = 0
 
+        if self.provider is None:
+            stage["status"] = STAGE_STATUS_FAIL
+            stage["failure_type"] = "PROVIDER_MISSING"
+            stage["message"] = "No data provider provided to pipeline"
+            return False
+
         try:
-            self.df_bonds_info = self.jqdata_provider.bond.run_query(self.jqdata_provider.query(self.jqdata_provider.bond.CONBOND_BASIC_INFO))
+            self.df_bonds_info = self.provider.fetch_cb_basic()
             stage["basic_info_row_count"] = len(self.df_bonds_info)
             
             self.bond_to_stock = _build_underlying_mapping(self.df_bonds_info)
             self.bond_to_delist = _build_delist_mapping(self.df_bonds_info)
 
-            df_all_bonds = self.jqdata_provider.get_all_securities(["conbond"])
+            df_all_bonds = self.provider.fetch_all_securities(["conbond"])
             stage["all_bond_security_count"] = len(df_all_bonds)
             tickers = df_all_bonds.index.tolist()
 
-            df_price = self.jqdata_provider.get_price(
+            df_price = self.provider.fetch_cb_daily(
                 tickers,
                 start_date=self.start_date,
-                end_date=self.end_date,
-                frequency="daily",
-                fields=["open", "high", "low", "close", "volume"],
+                end_date=self.end_date
             )
             stage["price_row_count"] = len(df_price)
             if not df_price.empty:
@@ -270,12 +276,14 @@ class CBETLPipeline:
             stage["status"] = STAGE_STATUS_PASS
             return True
 
+        except DataProviderAuthError as e:
+            stage["status"] = STAGE_STATUS_FAIL
+            stage["failure_type"] = "SOURCE_AUTH_FAILURE"
+            stage["message"] = str(e)
+            return False
         except Exception as e:
             stage["status"] = STAGE_STATUS_FAIL
-            if "auth" in str(e).lower() or "login" in str(e).lower() or "password" in str(e).lower():
-                stage["failure_type"] = "SOURCE_AUTH_FAILURE"
-            else:
-                stage["failure_type"] = "PRICE_SOURCE_UNREADABLE"
+            stage["failure_type"] = "PRICE_SOURCE_UNREADABLE"
             stage["message"] = str(e)
             return False
 
@@ -450,44 +458,19 @@ class CBETLPipeline:
         if not raw_codes:
             return pd.DataFrame()
             
-        start_dt = pd.to_datetime(start_date)
-        end_dt = pd.to_datetime(end_date)
-        
-        all_frames = []
-        # Monthly split
-        current_start = start_dt
-        while current_start <= end_dt:
-            current_end = (current_start + pd.offsets.MonthEnd(0))
-            if current_end > end_dt:
-                current_end = end_dt
-            
-            s_date = current_start.strftime("%Y-%m-%d")
-            e_date = current_end.strftime("%Y-%m-%d")
-            
-            # Code batching within month to avoid 5000 limit
-            code_batch_size = 100
-            for i in range(0, len(raw_codes), code_batch_size):
-                batch_codes = raw_codes[i:i + code_batch_size]
-                q = self.jqdata_provider.query(self.jqdata_provider.bond.CONBOND_DAILY_CONVERT).filter(
-                    self.jqdata_provider.bond.CONBOND_DAILY_CONVERT.code.in_(batch_codes),
-                    self.jqdata_provider.bond.CONBOND_DAILY_CONVERT.date >= s_date,
-                    self.jqdata_provider.bond.CONBOND_DAILY_CONVERT.date <= e_date,
-                )
-                df_batch = self.jqdata_provider.bond.run_query(q)
+        try:
+            merged = self.provider.fetch_cb_price_changes(raw_codes, start_date, end_date)
+            if merged is None or merged.empty:
+                return pd.DataFrame()
                 
-                if len(df_batch) == 5000:
-                    raise RuntimeError("Premium source query returned the provider single-call cap characteristic and must be retried with deterministic batching.")
-                
-                all_frames.append(df_batch)
-            
-            current_start = current_end + pd.Timedelta(days=1)
-            
-        if not all_frames:
-            return pd.DataFrame()
-            
-        merged = pd.concat(all_frames)
-        normalized = _normalize_premium_source(merged)
-        return normalized.drop_duplicates(subset=["date", "bond_code_raw", "bond_exchange_code"])
+            normalized = _normalize_premium_source(merged)
+            return normalized.drop_duplicates(subset=["date", "bond_code_raw", "bond_exchange_code"])
+        except DataProviderError as e:
+            if "single-call cap characteristic" in str(e):
+                 # Re-raise to trigger the existing logic in run_stage_c_premium_join if needed, 
+                 # though the provider should have handled it.
+                 raise RuntimeError(str(e))
+            raise e
 
     def run_stage_d_is_st_join(self):
         if self.results["source_coverage"]["status"] == STAGE_STATUS_FAIL:
@@ -514,7 +497,7 @@ class CBETLPipeline:
             ]
             if underlying_tickers:
                 try:
-                    df_st = self.jqdata_provider.get_extras("is_st", underlying_tickers, start_date=self.start_date, end_date=self.end_date)
+                    df_st = self.provider.fetch_stock_st_by_date(underlying_tickers, start_date=self.start_date, end_date=self.end_date)
                 except Exception as e:
                     err_msg = str(e).lower()
                     if any(kw in err_msg for kw in ["window", "range", "permission", "account", "support"]):
