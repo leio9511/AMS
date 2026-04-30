@@ -59,10 +59,10 @@ premium_rate = (bond_close / ((100 / effective_conv_price) × stock_close) - 1) 
 
 ### Boundaries
 **In Scope**
-- 明确无 cb_price_chg 历史记录时的 premium_rate 处理策略
 - `vol → volume` 字段重命名
 - premium_rate 计算路径修复
-- 对应单元测试更新（）
+- 明确无 `cb_price_chg` 历史记录时的 premium_rate 处理策略
+- 对应单元测试更新（`tests/test_tushare_provider.py`）
 
 **Out of Scope**
 - Redemption gap 分析
@@ -71,8 +71,9 @@ premium_rate = (bond_close / ((100 / effective_conv_price) × stock_close) - 1) 
 
 ## 3. Architecture & Technical Strategy (架构设计与技术路线)
 
-### 3.1 Target File
-`etl/tushare_provider.py`（核心修复）和 `tests/test_tushare_provider.py`（测试更新）
+### 3.1 Target Files
+- `etl/tushare_provider.py`（核心修复）
+- `tests/test_tushare_provider.py`（测试更新）
 
 ### 3.2 volume 字段映射修复
 在 `fetch_cb_daily()` 的 DataFrame 处理部分增加一行 rename：
@@ -85,56 +86,70 @@ df = df.rename(columns={"vol": "volume"})
 当前代码存在三段 `cb_over_rate` fallback 引用，均须移除。改用纯计算路径：
 
 #### 数据链
-1. `fetch_cb_daily()` → bond_close
-2. `cb_price_chg` → effective_conv_price（通过 merge_asof 获取每个交易日有效的转股价）
-3. `daily()` → stock_close
+1. `fetch_cb_daily()` → `bond_close`
+2. `cb_price_chg` → `effective_conv_price`（通过 `merge_asof` 获取每个交易日有效的转股价）
+3. `daily()` → `stock_close`
 4. 计算：`premium_rate = (bond_close / ((100 / effective_conv_price) × stock_close) - 1) × 100`
 
 注意点：
-- 确保在每日数据上使用正确的有效转股价，而不是单一静态值
-- 如果某个交易日缺少 stock_close 或 effective_conv_price，该交易日的 premium_rate 应为空（不填默认值）
-- 参考 PRD_CB_ETL_Audit_Report_Mode 的 source contract：禁止用默认值伪造关键字段
+- 必须在每日数据上使用正确的有效转股价，而不是单一静态值；
+- 如果某个交易日缺少 `stock_close` 或 `effective_conv_price`，该交易日的 `premium_rate` 必须保持 `NaN`，不得填任何 fallback 默认值；
+- 参考 `PRD_CB_ETL_Audit_Report_Mode` 的 source contract：禁止用默认值伪造关键字段；
+- `cb_daily` API 不提供任何名为 `cb_over_rate` 的字段，因此 provider 内部不得再依赖该字段存在。
+
+#### 无 `cb_price_chg` 历史记录时的处理策略
+- 对于没有任何 `cb_price_chg` 历史记录的债券，如果该债券仍进入 premium 计算范围，则其 `premium_rate` 在对应日期必须保持 `NaN`；
+- 不允许用静态 `cb_basic.conv_price` 覆盖全历史窗口来“伪造”完整 premium 序列；
+- 此类 `NaN` 行应自然计入 downstream 的 missing-premium 统计，由 pipeline / audit runner 负责按既有规则分类，不在 provider 层偷偷吞掉。
+
+### 3.4 Rollback Strategy (回滚方案)
+本 PRD 的改动范围仅限于 `etl/tushare_provider.py` 与 `tests/test_tushare_provider.py`。
+
+回滚路径：
+1. **代码回滚**：`git revert <merge_commit>` 恢复到修复前版本；
+2. **验后退回**：merge 后但 deploy 前，必须执行一次 `python3 -m etl.cb_etl_runner --data-source tushare --start 2025-01-20 --end 2025-01-24 --audit`；
+3. 若该 audit 仍出现以下任一结果，则不部署并原地回滚：
+   - Stage C 继续出现由 provider bug 导致的全量 premium 缺失；
+   - Stage F 继续因缺少 `volume` 失败；
+   - provider 抛出新的 schema / join 级异常。
 
 ## 4. Acceptance Criteria (BDD 黑盒验收标准)
 ### Provider-level
-- **Scenario 1: fetch_cb_daily returns volume column**
-  - **Given** TuShareProvider.fetch_cb_daily() is called with a valid window
-  - **When** the result DataFrame is inspected
-  - **Then** it must contain a column named `volume`
-  - **And** `volume` values must match the API's original `vol` values
+- **Scenario 1: TuShare daily-price retrieval exposes canonical volume field**
+  - **Given** a valid TuShare price window of `2025-01-20` to `2025-01-24`
+  - **When** the TuShare daily-price retrieval path is executed
+  - **Then** the resulting DataFrame must expose a `volume` column
+  - **And** the `volume` values must equal the source API's original `vol` values for the same rows
 
-- **Scenario 2: fetch_cb_price_changes produces premium_rate for bonds with history**
-  - **Given** TuShareProvider.fetch_cb_price_changes() is called with bonds that have cb_price_chg history
-  - **When** the result DataFrame is inspected
-  - **Then** it must contain a `premium_rate` column
-  - **And** for bonds with known cb_price_chg history, `premium_rate` must be non-null
+- **Scenario 2: TuShare premium reconstruction yields observable premium_rate values for bonds with conversion-price history**
+  - **Given** one or more convertible bonds that have valid `cb_price_chg` history and matching bond/stock daily prices in the same date window
+  - **When** the TuShare premium reconstruction path is executed
+  - **Then** the resulting records must contain non-null `premium_rate` values for those bond-date rows
 
-- **Scenario 3: Premium calculation behaves correctly for bonds without cb_price_chg history**
-  - **Given** fetch_cb_price_changes processes a bond with no conversion price records
-  - **When** the result is produced
-  - **Then** the bond's `premium_rate` must be NaN for those dates
-  - **And** no fallback value shall be injected
+- **Scenario 3: TuShare premium reconstruction fails closed when conversion-price history is unavailable**
+  - **Given** a convertible bond/date combination with missing effective conversion-price history
+  - **When** the TuShare premium reconstruction path is executed
+  - **Then** the resulting `premium_rate` for those rows must remain `NaN`
+  - **And** no fallback numeric value may be injected
 
 ### Pipeline / Audit-level
-- **Scenario 4: Audit runner produces complete stage results with TuShare**
+- **Scenario 4: TuShare audit runner no longer fails because of missing volume schema**
   - **Given** the fix is deployed
-  - **When** `python3 -m etl.cb_etl_runner --data-source tushare --start 2025-01-20 --end 2025-01-24 --audit`
-  - **Then** the audit report must contain non-null Stage C (Premium Join) rows
-  - **And** Stage F (Validator) must not fail due to missing `volume` column
-## 5. Overall Test Strategy & Quality Goal (测试策略与质量目标)
-- 单元测试覆盖 `vol → volume` 重命名
-- 单元测试覆盖 premium_rate 计算（mock 输入值，验证公式输出）
-- E2E 黑盒测试：修复后对 2025-01-20 ~ 2025-01-24 窗口跑一次真实 TuShare audit runner，确认 Stage C 和 Stage F 通过
-- 不依赖 JQData 交叉比对，仅验证 TuShare 自身数据完整性和计算正确性
+  - **When** `python3 -m etl.cb_etl_runner --data-source tushare --start 2025-01-20 --end 2025-01-24 --audit` is executed
+  - **Then** Stage F must not fail due to a missing `volume` column
 
-## 5.5 Rollback Strategy (回滚方案)
-本 PRD 改动范围仅限于 `etl/tushare_provider.py` 中的两个方法。
-回滚路径：
-1. **代码回滚**：`git revert <merge_commit>` 即可恢复到改动前状态。
-2. **数据回滚**：如果改动后推进了 canonical dataset（`data/cb_history_factors_tushare.csv`），
-   需通过 maintain .bak 文件或 metrics.json 中的 `source_contract_version` 字段确认是否应回滚。
-3. **验后退回**：SDLC merge 后，在 deploy 前执行一次 `cb_etl_runner --data-source tushare --audit`，
-   若 Stage C 或 Stage F 未达到预期，则不执行 deploy，原地 revert。
+- **Scenario 5: TuShare audit runner no longer reports complete premium absence caused by provider bug**
+  - **Given** the same deployed fix and audit window
+  - **When** the audit report is produced
+  - **Then** Stage C must not report `missing_premium_ratio = 1.0` caused by provider-side premium reconstruction failure
+
+## 5. Overall Test Strategy & Quality Goal (测试策略与质量目标)
+- 单元测试覆盖 `vol → volume` 重命名；
+- 单元测试覆盖 premium_rate 计算（mock 输入值，验证公式输出）；
+- 单元测试覆盖无 `cb_price_chg` 历史时返回 `NaN` 的 fail-closed 行为；
+- E2E 黑盒测试：修复后对 `2025-01-20 ~ 2025-01-24` 窗口跑一次真实 TuShare audit runner，确认 Stage C 不再因 provider bug 全空、Stage F 不再因缺少 `volume` 失败；
+- 不依赖 JQData 交叉比对，仅验证 TuShare 自身数据完整性和 provider contract 正确性。
+
 ## 6. Framework Modifications (框架防篡改声明)
 - `/root/projects/AMS/etl/tushare_provider.py`（`fetch_cb_daily` 和 `fetch_cb_price_changes` 方法）
 - `/root/projects/AMS/tests/test_tushare_provider.py`（测试更新）
@@ -160,7 +175,7 @@ rename(columns={"vol": "volume"})
 premium_rate = (bond_close / ((100 / effective_conv_price) * stock_close) - 1) * 100
 ```
 
-- **`no_cb_over_rate_guard` (在 `fetch_cb_price_changes` 开头作为注释)**
+- **`no_cb_over_rate_guard_comment` (放在 `fetch_cb_price_changes` 开头的注释)**
 ```python
 # cb_daily API does not provide a cb_over_rate field.
 # premium_rate must be computed from bond_close, stock_close, and effective_conv_price.
