@@ -340,12 +340,14 @@ class CBETLPipeline:
             stage["unexpected_contract_regression_row_count"] = int(is_regression.sum())
             stage["unexpected_contract_regression_unique_bond_count"] = int(self.df.loc[is_regression, "bond_code_raw"].nunique())
             
+            # Populate underlying_ticker for supportable bonds
+            self.df["underlying_ticker"] = pd.NA
+            self.df.loc[is_supportable, "underlying_ticker"] = self.df.loc[is_supportable, "bond_code_raw"].map(self.bond_to_stock)
+
             # Count missing underlying for symptoms
-            df_supportable = self.df[is_supportable].copy()
-            df_supportable["underlying"] = df_supportable["bond_code_raw"].map(self.bond_to_stock)
-            missing_underlying_mask = df_supportable["underlying"].isna()
+            missing_underlying_mask = is_supportable & self.df["underlying_ticker"].isna()
             stage["missing_underlying_row_count"] = int(missing_underlying_mask.sum())
-            stage["missing_underlying_unique_bond_count"] = int(df_supportable.loc[missing_underlying_mask, "bond_code_raw"].nunique())
+            stage["missing_underlying_unique_bond_count"] = int(self.df.loc[missing_underlying_mask, "bond_code_raw"].nunique())
 
             if stage["unexpected_contract_regression_row_count"] > 0:
                 stage["status"] = STAGE_STATUS_FAIL
@@ -386,7 +388,6 @@ class CBETLPipeline:
                 stage["message"] = "No supportable bonds to join premium rate."
                 return True
 
-            df_work["underlying_ticker"] = df_work["bond_code_raw"].map(self.bond_to_stock)
             df_work["premium_rate"] = float("nan")
             
             raw_codes = [code for code in df_work["bond_code_raw"].dropna().astype(str).unique().tolist() if code]
@@ -424,7 +425,7 @@ class CBETLPipeline:
             if "premium_rate" in self.df.columns:
                  self.df.drop(columns=["premium_rate"], inplace=True)
             
-            self.df = pd.merge(self.df, df_work[["date", "bond_code_raw", "bond_exchange_code", "premium_rate", "underlying_ticker"]], 
+            self.df = pd.merge(self.df, df_work[["date", "bond_code_raw", "bond_exchange_code", "premium_rate"]], 
                                on=["date", "bond_code_raw", "bond_exchange_code"], how="left")
             
             return stage["status"] == STAGE_STATUS_PASS

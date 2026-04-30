@@ -29,6 +29,7 @@ def test_jqdata_successful_sync(mock_semantic_validator, mock_jqdatasdk):
     mock_jqdatasdk.bond.run_query.side_effect = [
         pd.DataFrame({"code": ["110059"], "company_code": ["000001.XSHE"], "delist_Date": ["2025-12-31"]}),
         pd.DataFrame({"date": ["2020-01-02"], "code": ["110059"], "exchange_code": ["XSHG"], "convert_premium_rate": [10.0]}),
+        pd.DataFrame(columns=["date", "code", "exchange_code", "convert_premium_rate"]),
     ]
 
     mock_jqdatasdk.get_extras.return_value = pd.DataFrame({"000001.XSHE": [False]}, index=pd.to_datetime(["2020-01-02"]))
@@ -99,6 +100,7 @@ def test_integrated_source_contract_repairs_keep_dataset_generation_green(mock_s
                 "convert_premium_rate": [15.5, 10.0],
             }
         ),
+        pd.DataFrame(columns=["date", "code", "exchange_code", "convert_premium_rate"]),
     ]
 
     mock_jqdatasdk.get_extras.return_value = pd.DataFrame(
@@ -145,6 +147,7 @@ def test_integrated_source_contract_flow_rejects_legacy_underlying_and_redemptio
     mock_jqdatasdk.bond.run_query.side_effect = [
         pd.DataFrame({"code": ["110059"], "company_code": ["000001.XSHE"], "delist_Date": ["2020-01-01"]}),
         pd.DataFrame({"date": ["2020-01-02"], "code": ["110059"], "exchange_code": ["XSHG"], "convert_premium_rate": [10.0]}),
+        pd.DataFrame(columns=["date", "code", "exchange_code", "convert_premium_rate"]),
     ]
 
     mock_jqdatasdk.get_extras.return_value = pd.DataFrame({"000001.XSHE": [False]}, index=pd.to_datetime(["2020-01-02"]))
@@ -224,6 +227,7 @@ def test_full_ticker_cannot_be_used_as_underlying_map_key(
     mock_jqdatasdk.bond.run_query.side_effect = [
         pd.DataFrame({"code": ["110059"], "company_code": ["000001.XSHE"], "delist_Date": ["2025-12-31"]}),
         pd.DataFrame({"date": ["2020-01-02"], "code": ["110059"], "exchange_code": ["XSHG"], "convert_premium_rate": [10.0]}),
+        pd.DataFrame(columns=["date", "code", "exchange_code", "convert_premium_rate"]),
     ]
     mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
     mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
@@ -273,8 +277,8 @@ def test_bonds_outside_basic_info_are_filtered_not_blocking(mock_semantic_valida
                 "convert_premium_rate": [10.0],
             }
         ),
+        pd.DataFrame(columns=["date", "code", "exchange_code", "convert_premium_rate"]),
     ]
-
     # get_price returns data for BOTH bonds — the filter must drop 125302 rows
     mock_jqdatasdk.get_price.return_value = pd.DataFrame(
         {

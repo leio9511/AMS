@@ -67,7 +67,11 @@ def mock_jqdata(monkeypatch):
             "date": ["2025-01-06"], "code": ["123456"], "exchange_code": ["XSHG"], "convert_premium_rate": [15.5]
         })
         
-        mock_run_query.side_effect = [bonds_info, premium_df]
+        mock_run_query.side_effect = [
+            bonds_info,
+            premium_df,
+            pd.DataFrame(columns=["date", "code", "exchange_code", "convert_premium_rate"])
+        ]
 
         # ST status
         st_df = pd.DataFrame({
