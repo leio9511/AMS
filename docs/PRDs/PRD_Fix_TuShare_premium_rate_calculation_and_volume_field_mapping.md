@@ -56,11 +56,29 @@ premium_rate = (bond_close / ((100 / effective_conv_price) × stock_close) - 1) 
 2. 不改变 JQDataProvider 或其他 provider 的行为。
 3. 不改变 `fetch_cb_daily()` 和 `fetch_cb_price_changes()` 的接口签名。
 
-### Boundaries
+
+### Behavior for bonds without cb_price_chg history
+对于没有 cb_price_chg 历史记录的债券（例如已退市多年的老券），
+不适用  的预期目标。实际上这类债券
+会在 supportability stage B 已被过滤（missing_company_code_legacy 或
+outside_basic_info）。如果某只 supportable 债券确实没有 cb_price_chg
+数据，其 premium_rate 应留空，不做 fallback 填充，
+同时该类债券应计入 Stage C 的 missing_premium_count，推高 missing_premium_ratio。
+此举不会让 Stage A 失败，但会影响 final_status 的判定。
+
+### Behavior for bonds without cb_price_chg history
+对于没有 cb_price_chg 历史记录的债券（例如已不在交易范围的旧券），
+这些债券会被 supportability Stage B 过滤掉（归入 missing_company_code_legacy
+或 outside_basic_info），因此不会进入 Stage C premium 计算。
+如果某只 supportable 债券确实在 cb_price_chg 查询中没有任何记录，
+其 premium_rate 应保持 NaN 不做填充，该债券的行计入 missing_premium_count。
+这会使 missing_premium_ratio 上升。但基于当前实际数据，这类情况极少，
+不影响 `missing_premium_ratio < 0.20` 目标的可行性。### Boundaries
 **In Scope**
+- 明确无 cb_price_chg 历史记录时的 premium_rate 处理策略
 - `vol → volume` 字段重命名
 - premium_rate 计算路径修复
-- 对应单元测试更新
+- 对应单元测试更新（）
 
 **Out of Scope**
 - Redemption gap 分析
@@ -121,6 +139,7 @@ df = df.rename(columns={"vol": "volume"})
 
 ## 6. Framework Modifications (框架防篡改声明)
 - `/root/projects/AMS/etl/tushare_provider.py`（`fetch_cb_daily` 和 `fetch_cb_price_changes` 方法）
+- `/root/projects/AMS/tests/test_tushare_provider.py`（测试更新）
 
 ---
 
