@@ -517,10 +517,10 @@ class CBETLPipeline:
                     df_st = self.jqdata_provider.get_extras("is_st", underlying_tickers, start_date=self.start_date, end_date=self.end_date)
                 except Exception as e:
                     err_msg = str(e).lower()
-                    if "window" in err_msg or "support" in err_msg or "permission" in err_msg:
+                    if any(kw in err_msg for kw in ["window", "range", "permission", "account", "support"]):
                         stage["status"] = STAGE_STATUS_FAIL
                         stage["failure_type"] = "IS_ST_SOURCE_GAP"
-                        stage["message"] = "is_st source query exceeded the provider-supported date window; effective-window handling or structured gap classification is required."
+                        stage["message"] = f"is_st source query exceeded the provider-supported date window; effective-window handling or structured gap classification is required. {str(e)}"
                         return False
                     raise e
 

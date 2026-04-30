@@ -647,5 +647,65 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
             self.assertTrue(res)
             self.assertEqual(pipeline.results["validator_summary"]["status"], "PASS")
 
+    @patch("etl.cb_etl_pipeline.jqdatasdk")
+    def test_is_st_handles_provider_window_exception(self, mock_jq):
+        # Setup
+        pipeline = CBETLPipeline(self.start_date, self.end_date, jqdata_provider=mock_jq)
+        pipeline.results["source_coverage"]["status"] = "PASS"
+        
+        # Mock supportable bonds
+        df = pd.DataFrame({
+            "bond_code_raw": ["123456"],
+            "bond_exchange_code": ["XSHG"],
+            "date": [pd.to_datetime(self.start_date)],
+            "supportability_bucket": [SUPPORTABILITY_BUCKET_SUPPORTABLE],
+            "underlying_ticker": [self.underlying]
+        })
+        pipeline.df = df
+        
+        # Mock get_extras to raise window exception
+        exception_msg = "Date window exceeds account permissions"
+        mock_jq.get_extras.side_effect = Exception(exception_msg)
+        
+        # Execution
+        res = pipeline.run_stage_d_is_st_join()
+        
+        # Assertion
+        summary = pipeline.results["is_st_join_summary"]
+        self.assertFalse(res)
+        self.assertEqual(summary["status"], "FAIL")
+        self.assertEqual(summary["failure_type"], "IS_ST_SOURCE_GAP")
+        self.assertIn("is_st source query exceeded the provider-supported date window", summary["message"])
+        self.assertIn(exception_msg, summary["message"])
+
+    @patch("etl.cb_etl_pipeline.jqdatasdk")
+    def test_is_st_detects_empty_source_as_gap(self, mock_jq):
+        # Setup
+        pipeline = CBETLPipeline(self.start_date, self.end_date, jqdata_provider=mock_jq)
+        pipeline.results["source_coverage"]["status"] = "PASS"
+        
+        # Mock supportable bonds
+        df = pd.DataFrame({
+            "bond_code_raw": ["123456"],
+            "bond_exchange_code": ["XSHG"],
+            "date": [pd.to_datetime(self.start_date)],
+            "supportability_bucket": [SUPPORTABILITY_BUCKET_SUPPORTABLE],
+            "underlying_ticker": [self.underlying]
+        })
+        pipeline.df = df
+        
+        # Mock get_extras to return empty DataFrame
+        mock_jq.get_extras.return_value = pd.DataFrame()
+        
+        # Execution
+        res = pipeline.run_stage_d_is_st_join()
+        
+        # Assertion
+        summary = pipeline.results["is_st_join_summary"]
+        self.assertFalse(res)
+        self.assertEqual(summary["status"], "FAIL")
+        self.assertEqual(summary["failure_type"], "IS_ST_SOURCE_GAP")
+        self.assertEqual(summary["missing_is_st_ratio"], 1.0)
+
 if __name__ == "__main__":
     unittest.main()
