@@ -33,6 +33,24 @@ class TuShareProvider(BaseDataProvider):
                 "delist_date": "delist_Date"
             }
             df = df.rename(columns=mapping)
+
+            # Derive full stock ticker by appending the same suffix as the bond
+            # In A-share market, convertible bonds and their underlying stocks trade on the same exchange.
+            def get_full_stock_ticker(row):
+                bond_code = row["code"]
+                stock_code = row["company_code"]
+                if pd.isna(bond_code) or pd.isna(stock_code):
+                    return stock_code
+                stock_code = str(stock_code).strip()
+                if "." in stock_code:
+                    return stock_code
+                if "." in bond_code:
+                    suffix = bond_code.split(".")[-1]
+                    return f"{stock_code}.{suffix}"
+                return stock_code
+            
+            df["company_code"] = df.apply(get_full_stock_ticker, axis=1)
+
             # Cache bond to stock mapping for reconstruction
             for _, row in df.iterrows():
                 if pd.notna(row["code"]) and pd.notna(row["company_code"]):
@@ -112,9 +130,10 @@ class TuShareProvider(BaseDataProvider):
             
             # 2. Fetch conversion price changes
             all_chg = []
-            for i in range(0, len(tickers), 100):
-                batch = tickers[i:i+100]
-                df_chg = self.pro.cb_price_chg(ts_code=",".join(batch))
+            for ticker in tickers:
+                # Many TuShare cb_* APIs expect a single ts_code. 
+                # Loop explicitly to ensure reliable acquisition and avoid guessing batch support.
+                df_chg = self.pro.cb_price_chg(ts_code=ticker)
                 if df_chg is not None and not df_chg.empty:
                     all_chg.append(df_chg)
             df_chg = pd.concat(all_chg) if all_chg else pd.DataFrame(columns=["ts_code", "change_date", "convert_price_initial", "convertprice_aft"])
@@ -124,6 +143,7 @@ class TuShareProvider(BaseDataProvider):
             df_stock_daily = pd.DataFrame()
             if underlying_stocks:
                 stock_frames = []
+                # pro.daily supports comma-separated ts_code batching up to 100+
                 for i in range(0, len(underlying_stocks), 100):
                     batch = underlying_stocks[i:i+100]
                     df_s = self.pro.daily(ts_code=",".join(batch), start_date=ts_start, end_date=ts_end)
@@ -181,12 +201,14 @@ class TuShareProvider(BaseDataProvider):
                     )
                     
                     # Fill initial price if before first change
+                    # convert_price_initial in TuShare is the price before ANY change
                     initial_price = bond_chg["convert_price_initial"].iloc[0]
                     merged["effective_conv_price"] = merged["effective_conv_price"].fillna(initial_price)
                 else:
                     merged["effective_conv_price"] = float("nan")
 
                 # Reconstruct: premium_rate = (bond_close / ((100 / effective_conv_price) * stock_close) - 1) * 100
+                # If stock_close or effective_conv_price is missing, result naturally becomes NaN.
                 merged["convert_premium_rate"] = (
                     merged["bond_close"] / ((100 / merged["effective_conv_price"]) * merged["stock_close"]) - 1
                 ) * 100
