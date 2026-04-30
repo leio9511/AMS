@@ -45,35 +45,6 @@ def mock_validators():
         mock_v2.return_value.validate_dataframe.return_value = True
         yield mock_v1, mock_v2
 
-@pytest.fixture
-def isolated_paths(tmp_path):
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    reports_dir = tmp_path / "reports"
-    reports_dir.mkdir()
-    
-    mock_data_path = str(data_dir / "cb_history_factors.csv")
-    mock_metrics_path = str(data_dir / "cb_history_factors.metrics.json")
-    mock_reports_dir = str(reports_dir)
-    
-    import os
-    original_os_path_join = os.path.join
-    
-    def mock_join(d, f):
-        if "reports" in d:
-            return original_os_path_join(mock_reports_dir, f)
-        return original_os_path_join(d, f)
-
-    with patch("etl.jqdata_sync_cb.DATA_PATH", mock_data_path), \
-         patch("etl.jqdata_sync_cb.METRICS_PATH", mock_metrics_path), \
-         patch("os.makedirs"), \
-         patch("os.path.join", side_effect=mock_join):
-             yield {
-                 "data": mock_data_path,
-                 "metrics": mock_metrics_path,
-                 "reports": mock_reports_dir
-             }
-
 def test_audit_runner_emits_required_top_level_and_stage_summary_schema(mock_env, mock_jqdata, mock_validators, isolated_paths):
     start_date = "2025-01-06"
     end_date = "2025-01-07"
@@ -183,7 +154,17 @@ def test_audit_runner_classifies_premium_source_truncation_by_exact_formula(mock
         "convert_premium_rate": [10.0] * 5000
     })
     
-    mock_jqdata.bond.run_query.side_effect = [df_basic, df_premium]
+    def run_query_side_effect(q):
+        if not hasattr(run_query_side_effect, "call_count"):
+             run_query_side_effect.call_count = 0
+        run_query_side_effect.call_count += 1
+        if run_query_side_effect.call_count == 1:
+            return df_basic
+        if run_query_side_effect.call_count == 2:
+            return df_premium # 5000 rows, triggers truncation guard
+        return pd.DataFrame()
+
+    mock_jqdata.bond.run_query.side_effect = run_query_side_effect
     mock_jqdata.get_all_securities.return_value = pd.DataFrame({"code": [f"{i}.XSHG" for i in range(50000)]}, index=[f"{i}.XSHG" for i in range(50000)])
     
     # is_st: return something to avoid failure
@@ -223,7 +204,17 @@ def test_audit_runner_separates_root_blockers_from_secondary_symptoms(mock_env, 
         "convert_premium_rate": [10.0] * 5000
     })
     
-    mock_jqdata.bond.run_query.side_effect = [df_basic, df_premium]
+    def run_query_side_effect(q):
+        if not hasattr(run_query_side_effect, "call_count"):
+             run_query_side_effect.call_count = 0
+        run_query_side_effect.call_count += 1
+        if run_query_side_effect.call_count == 1:
+            return df_basic
+        if run_query_side_effect.call_count == 2:
+            return df_premium # triggers truncation guard
+        return pd.DataFrame()
+
+    mock_jqdata.bond.run_query.side_effect = run_query_side_effect
     mock_jqdata.get_all_securities.return_value = pd.DataFrame({"code": [f"{i}.XSHG" for i in range(50000)]}, index=[f"{i}.XSHG" for i in range(50000)])
     mock_jqdata.get_extras.return_value = pd.DataFrame()
 
@@ -281,6 +272,9 @@ def test_validator_summary_maps_existing_validator_outcomes_without_copying_rule
     # Force semantic validator failure with a message
     mock_v2.return_value.validate_dataframe.side_effect = Exception("Custom Semantic Error")
     
+    # Mock Stage D is_st to avoid schema failure due to missing is_st
+    mock_jqdata.get_extras.return_value = pd.DataFrame({"600001.XSHG": [False]}, index=pd.to_datetime(["2025-01-06"]))
+
     report_path = audit_cb_data(start_date, end_date)
     
     with open(report_path, "r") as f:
@@ -307,6 +301,9 @@ def test_validator_summary_uses_not_run_message_when_no_dedicated_validator_path
         {"time": ["2025-01-06"], "code": ["110059.XSHG"], "open": [100.0], "high": [101.0], "low": [99.0], "close": [100.0], "volume": [1000]}
     ).set_index(["time", "code"])
     
+    # Mock Stage D is_st to avoid schema failure due to missing is_st
+    mock_jqdata.get_extras.return_value = pd.DataFrame({"600001.XSHG": [False]}, index=pd.to_datetime(["2025-01-06"]))
+
     report_path = audit_cb_data(start_date, end_date)
     
     with open(report_path, "r") as f:

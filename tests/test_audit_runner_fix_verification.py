@@ -43,35 +43,6 @@ def mock_validators():
         mock_v2.return_value.validate_dataframe.return_value = True
         yield mock_v1, mock_v2
 
-@pytest.fixture
-def isolated_paths(tmp_path):
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    reports_dir = tmp_path / "reports"
-    reports_dir.mkdir()
-    
-    mock_data_path = str(data_dir / "cb_history_factors.csv")
-    mock_metrics_path = str(data_dir / "cb_history_factors.metrics.json")
-    mock_reports_dir = str(reports_dir)
-    
-    import os
-    original_os_path_join = os.path.join
-    
-    def mock_join(d, f):
-        if "reports" in d:
-            return original_os_path_join(mock_reports_dir, f)
-        return original_os_path_join(d, f)
-
-    with patch("etl.jqdata_sync_cb.DATA_PATH", mock_data_path), \
-         patch("etl.jqdata_sync_cb.METRICS_PATH", mock_metrics_path), \
-         patch("os.makedirs"), \
-         patch("os.path.join", side_effect=mock_join):
-             yield {
-                 "data": mock_data_path,
-                 "metrics": mock_metrics_path,
-                 "reports": mock_reports_dir
-             }
-
 def test_audit_report_write_failure_does_not_touch_canonical_or_promotion_rollback_artifacts(mock_env, mock_jqdata, mock_validators, isolated_paths):
     start_date = "2025-03-01"
     end_date = "2025-03-02"

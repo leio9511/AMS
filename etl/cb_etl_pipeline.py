@@ -387,25 +387,18 @@ class CBETLPipeline:
                 return True
 
             df_work["underlying_ticker"] = df_work["bond_code_raw"].map(self.bond_to_stock)
+            df_work["premium_rate"] = float("nan")
             
             raw_codes = [code for code in df_work["bond_code_raw"].dropna().astype(str).unique().tolist() if code]
             if raw_codes:
-                q = self.jqdata_provider.query(self.jqdata_provider.bond.CONBOND_DAILY_CONVERT).filter(
-                    self.jqdata_provider.bond.CONBOND_DAILY_CONVERT.code.in_(raw_codes),
-                    self.jqdata_provider.bond.CONBOND_DAILY_CONVERT.date >= self.start_date,
-                    self.jqdata_provider.bond.CONBOND_DAILY_CONVERT.date <= self.end_date,
-                )
-                df_premium_raw = self.jqdata_provider.bond.run_query(q)
+                df_premium_raw = self._batched_fetch_premium_source(raw_codes)
                 self.results["source_coverage"]["premium_source_row_count"] = len(df_premium_raw)
                 self.results["source_coverage"]["premium_source_unique_bond_count"] = df_premium_raw["code"].nunique() if "code" in df_premium_raw.columns else 0
                 
                 df_premium = _normalize_premium_source(df_premium_raw)
                 if not df_premium.empty:
+                    df_work.drop(columns=["premium_rate"], inplace=True)
                     df_work = pd.merge(df_work, df_premium, on=["date", "bond_code_raw", "bond_exchange_code"], how="left")
-                else:
-                    df_work["premium_rate"] = float("nan")
-            else:
-                df_work["premium_rate"] = float("nan")
 
             stage["premium_joined_row_count"] = int(df_work["premium_rate"].notna().sum())
             stage["premium_joined_unique_bond_count"] = int(df_work.loc[df_work["premium_rate"].notna(), "bond_code_raw"].nunique())
@@ -436,10 +429,64 @@ class CBETLPipeline:
             
             return stage["status"] == STAGE_STATUS_PASS
 
+        except RuntimeError as e:
+            if "single-call cap characteristic" in str(e):
+                stage["status"] = STAGE_STATUS_FAIL
+                stage["failure_type"] = "PREMIUM_SOURCE_TRUNCATION"
+                stage["message"] = str(e)
+                # If we truncate, at least the difference between supportable universe and what we got is missing.
+                # To satisfy audit secondary findings, we mark supportable count as missing if we aborted.
+                stage["missing_premium_row_count"] = self.results["supportability_summary"].get("supportable_row_count", 0)
+                return False
+            stage["status"] = STAGE_STATUS_FAIL
+            stage["message"] = str(e)
+            return False
         except Exception as e:
             stage["status"] = STAGE_STATUS_FAIL
             stage["message"] = str(e)
             return False
+
+    def _batched_fetch_premium_source(self, raw_codes: list[str]) -> pd.DataFrame:
+        if not raw_codes:
+            return pd.DataFrame()
+            
+        start_dt = pd.to_datetime(self.start_date)
+        end_dt = pd.to_datetime(self.end_date)
+        
+        all_frames = []
+        # Monthly split
+        current_start = start_dt
+        while current_start <= end_dt:
+            current_end = (current_start + pd.offsets.MonthEnd(0))
+            if current_end > end_dt:
+                current_end = end_dt
+            
+            s_date = current_start.strftime("%Y-%m-%d")
+            e_date = current_end.strftime("%Y-%m-%d")
+            
+            # Code batching within month to avoid 5000 limit
+            code_batch_size = 100
+            for i in range(0, len(raw_codes), code_batch_size):
+                batch_codes = raw_codes[i:i + code_batch_size]
+                q = self.jqdata_provider.query(self.jqdata_provider.bond.CONBOND_DAILY_CONVERT).filter(
+                    self.jqdata_provider.bond.CONBOND_DAILY_CONVERT.code.in_(batch_codes),
+                    self.jqdata_provider.bond.CONBOND_DAILY_CONVERT.date >= s_date,
+                    self.jqdata_provider.bond.CONBOND_DAILY_CONVERT.date <= e_date,
+                )
+                df_batch = self.jqdata_provider.bond.run_query(q)
+                
+                if len(df_batch) == 5000:
+                    raise RuntimeError("Premium source query returned the provider single-call cap characteristic and must be retried with deterministic batching.")
+                
+                all_frames.append(df_batch)
+            
+            current_start = current_end + pd.Timedelta(days=1)
+            
+        if not all_frames:
+            return pd.DataFrame()
+            
+        merged = pd.concat(all_frames).drop_duplicates(subset=["date", "code"])
+        return merged
 
     def run_stage_d_is_st_join(self):
         if self.results["source_coverage"]["status"] == STAGE_STATUS_FAIL:
@@ -465,33 +512,50 @@ class CBETLPipeline:
                 ticker for ticker in df_work["underlying_ticker"].dropna().astype(str).unique().tolist() if ticker
             ]
             if underlying_tickers:
-                df_st = self.jqdata_provider.get_extras("is_st", underlying_tickers, start_date=self.start_date, end_date=self.end_date)
+                try:
+                    df_st = self.jqdata_provider.get_extras("is_st", underlying_tickers, start_date=self.start_date, end_date=self.end_date)
+                except Exception as e:
+                    err_msg = str(e).lower()
+                    if "window" in err_msg or "support" in err_msg or "permission" in err_msg:
+                        stage["status"] = STAGE_STATUS_FAIL
+                        stage["failure_type"] = "IS_ST_SOURCE_GAP"
+                        stage["message"] = "is_st source query exceeded the provider-supported date window; effective-window handling or structured gap classification is required."
+                        return False
+                    raise e
+
                 self.results["source_coverage"]["is_st_source_row_count"] = len(df_st) * len(df_st.columns) if not df_st.empty else 0
                 self.results["source_coverage"]["is_st_source_unique_underlying_count"] = len(df_st.columns)
                 
-                st_long = df_st.stack().reset_index()
-                st_long.columns = ["date", "underlying_ticker", "is_st"]
-                st_long["date"] = pd.to_datetime(st_long["date"])
+                if not df_st.empty:
+                    st_long = df_st.stack().reset_index()
+                    st_long.columns = ["date", "underlying_ticker", "is_st"]
+                    st_long["date"] = pd.to_datetime(st_long["date"])
 
-                df_work = pd.merge(df_work, st_long, on=["date", "underlying_ticker"], how="left")
-            
-            stage["is_st_joined_row_count"] = int(df_work["is_st"].notna().sum())
-            stage["is_st_joined_unique_bond_count"] = int(df_work.loc[df_work["is_st"].notna(), "bond_code_raw"].nunique())
-            stage["missing_is_st_row_count"] = int(df_work["is_st"].isna().sum())
-            stage["missing_is_st_unique_bond_count"] = int(df_work.loc[df_work["is_st"].isna(), "bond_code_raw"].nunique())
+                    df_work = pd.merge(df_work, st_long, on=["date", "underlying_ticker"], how="left")
             
             total_rows = len(df_work)
+            stage["is_st_joined_row_count"] = int(df_work["is_st"].notna().sum()) if "is_st" in df_work.columns else 0
+            stage["is_st_joined_unique_bond_count"] = int(df_work.loc[df_work["is_st"].notna(), "bond_code_raw"].nunique()) if "is_st" in df_work.columns else 0
+            stage["missing_is_st_row_count"] = int(df_work["is_st"].isna().sum()) if "is_st" in df_work.columns else total_rows
+            stage["missing_is_st_unique_bond_count"] = int(df_work.loc[df_work["is_st"].isna(), "bond_code_raw"].nunique()) if "is_st" in df_work.columns else int(df_work["bond_code_raw"].nunique())
+            
             stage["missing_is_st_ratio"] = stage["missing_is_st_row_count"] / total_rows if total_rows > 0 else 0.0
             
             if total_rows > 0 and stage["missing_is_st_ratio"] >= 0.20:
                 stage["status"] = STAGE_STATUS_FAIL
                 stage["failure_type"] = "IS_ST_SOURCE_GAP"
+                if stage["missing_is_st_ratio"] == 1.0:
+                    stage["message"] = "is_st source query exceeded the provider-supported date window; effective-window handling or structured gap classification is required."
             else:
                 stage["status"] = STAGE_STATUS_PASS
 
             if "is_st" in self.df.columns:
                 self.df.drop(columns=["is_st"], inplace=True)
-            self.df = pd.merge(self.df, df_work[["date", "bond_code_raw", "bond_exchange_code", "is_st"]], 
+            
+            merge_cols = ["date", "bond_code_raw", "bond_exchange_code"]
+            if "is_st" in df_work.columns:
+                merge_cols.append("is_st")
+            self.df = pd.merge(self.df, df_work[merge_cols], 
                                on=["date", "bond_code_raw", "bond_exchange_code"], how="left")
             
             return stage["status"] == STAGE_STATUS_PASS
@@ -570,7 +634,7 @@ class CBETLPipeline:
         stage["drift_validator_status"] = STAGE_STATUS_NOT_RUN
         stage["schema_validator_message"] = ""
         stage["semantic_validator_message"] = ""
-        stage["drift_validator_message"] = ""
+        stage["drift_validator_message"] = "No dedicated validator path exists in v1 runtime."
         stage["failure_type"] = "NONE"
 
         try:
