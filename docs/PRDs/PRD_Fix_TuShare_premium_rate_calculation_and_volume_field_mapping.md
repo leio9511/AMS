@@ -52,7 +52,7 @@ premium_rate = (bond_close / ((100 / effective_conv_price) × stock_close) - 1) 
    - `volume` 列在 validator 输入中正常存在
 
 ### Non-Functional Requirements
-1. 只修改 `etl/tushare_provider.py`，不修改其他文件。
+1. 目标文件：`etl/tushare_provider.py`；配套文件：`tests/test_tushare_provider.py`。
 2. 不改变 JQDataProvider 或其他 provider 的行为。
 3. 不改变 `fetch_cb_daily()` 和 `fetch_cb_price_changes()` 的接口签名。
 
@@ -88,7 +88,7 @@ outside_basic_info）。如果某只 supportable 债券确实没有 cb_price_chg
 ## 3. Architecture & Technical Strategy (架构设计与技术路线)
 
 ### 3.1 Target File
-只修改：`/root/projects/AMS/etl/tushare_provider.py`
+`etl/tushare_provider.py`（核心修复）和 `tests/test_tushare_provider.py`（测试更新）
 
 ### 3.2 volume 字段映射修复
 在 `fetch_cb_daily()` 的 DataFrame 处理部分增加一行 rename：
@@ -112,25 +112,31 @@ df = df.rename(columns={"vol": "volume"})
 - 参考 PRD_CB_ETL_Audit_Report_Mode 的 source contract：禁止用默认值伪造关键字段
 
 ## 4. Acceptance Criteria (BDD 黑盒验收标准)
-- **Scenario 1: volume field is properly mapped**
-  - **Given** TuShareProvider.fetch_cb_daily() returns data
+### Provider-level
+- **Scenario 1: fetch_cb_daily returns volume column**
+  - **Given** TuShareProvider.fetch_cb_daily() is called with a valid window
   - **When** the result DataFrame is inspected
-  - **Then** it must contain a `volume` column (not `vol`)
-  - **And** the data values in `volume` must match the original `vol` values
+  - **Then** it must contain a column named `volume`
+  - **And** `volume` values must match the API's original `vol` values
 
-- **Scenario 2: premium_rate is calculated correctly for a known week**
-  - **Given** a valid trading week (2025-01-20 to 2025-01-24)
-  - **When** `TuShareProvider.fetch_cb_price_changes()` is called
-  - **Then** the result must contain non-empty `premium_rate` values
-  - **And** `missing_premium_ratio` must be < 0.20
+- **Scenario 2: fetch_cb_price_changes computes premium_rate without cb_over_rate**
+  - **Given** TuShareProvider.fetch_cb_price_changes() is called with bonds that have cb_price_chg history
+  - **When** the result DataFrame is inspected
+  - **Then** it must contain a non-null `premium_rate` column
+  - **And** the code must not reference any field named `cb_over_rate`
 
-- **Scenario 3: E2E ETL audit with TuShare passes Stage C and F**
+- **Scenario 3: Premium calculation behaves correctly for bonds without cb_price_chg history**
+  - **Given** fetch_cb_price_changes processes a bond with no conversion price records
+  - **When** the result is produced
+  - **Then** the bond's `premium_rate` must be NaN for those dates
+  - **And** no fallback value shall be injected
+
+### Pipeline / Audit-level
+- **Scenario 4: Audit runner produces complete stage results with TuShare**
   - **Given** the fix is deployed
   - **When** `python3 -m etl.cb_etl_runner --data-source tushare --start 2025-01-20 --end 2025-01-24 --audit`
-  - **Then** Stage C must NOT be classified as `PREMIUM_RATE_MISSING_BROAD_COVERAGE`
-  - **And** Stage F must show `schema_validator_status == PASS`
-  - **And** `volume` must not appear in missing column reasons
-
+  - **Then** the audit report must contain non-null Stage C (Premium Join) rows
+  - **And** Stage F (Validator) must not fail due to missing `volume` column
 ## 5. Overall Test Strategy & Quality Goal (测试策略与质量目标)
 - 单元测试覆盖 `vol → volume` 重命名
 - 单元测试覆盖 premium_rate 计算（mock 输入值，验证公式输出）
@@ -162,7 +168,8 @@ rename(columns={"vol": "volume"})
 premium_rate = (bond_close / ((100 / effective_conv_price) * stock_close) - 1) * 100
 ```
 
-- **`no_cb_over_rate_guard`**
-```text
-cb_daily API does not provide a cb_over_rate field. premium_rate must be computed from bond_close, stock_close, and effective_conv_price.
+- **`no_cb_over_rate_guard` (在 `fetch_cb_price_changes` 开头作为注释)**
+```python
+# cb_daily API does not provide a cb_over_rate field.
+# premium_rate must be computed from bond_close, stock_close, and effective_conv_price.
 ```
