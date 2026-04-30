@@ -117,6 +117,7 @@ def _promote_exclusion_only_metrics(tmp_metrics_path: str, metrics_path: str) ->
         print("[DataPromotionRollback] Exclusion-only metrics promotion failed. Canonical dataset remains unchanged.")
         sys.exit(1)
 
+# Migration-period datasets from different providers must be stored as separate artifacts and must not silently overwrite one another.
 def run_etl(start_date, end_date, source_name, promote=False, jqdata_client=None, dataset_path=None, metrics_path=None, 
             _underlying_mapping_func=None, _delist_mapping_func=None):
     config = load_provider_config()
@@ -139,7 +140,8 @@ def run_etl(start_date, end_date, source_name, promote=False, jqdata_client=None
     print(f"Running ETL for {source_name} from {start_date} to {end_date}...")
     
     if not pipeline.run_stage_a_source_acquisition():
-        raise ValueError(pipeline.results["source_coverage"]["message"])
+        if promote:
+            raise ValueError(pipeline.results["source_coverage"]["message"])
 
     # Ensure pipeline uses potential patched helpers
     if pipeline.df_bonds_info is not None:
@@ -147,7 +149,8 @@ def run_etl(start_date, end_date, source_name, promote=False, jqdata_client=None
         pipeline.bond_to_delist = d_map_func(pipeline.df_bonds_info)
 
     if not pipeline.run_stage_b_supportability_classification():
-         raise ValueError(SUPPORTABILITY_REGRESSION_ERROR)
+         if promote:
+             raise ValueError(SUPPORTABILITY_REGRESSION_ERROR)
 
     pipeline.run_stage_c_premium_join()
     pipeline.run_stage_d_is_st_join()

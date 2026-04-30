@@ -118,10 +118,7 @@ class TuShareProvider(BaseDataProvider):
                 
                 if bond_chg.empty:
                     # If no price change history, we check if we should guard
-                    # PRD: "must not be computed from a single static latest conversion price"
-                    # But if there were never any changes, the latest IS the historical.
-                    # However, if we don't even have the initial price from cb_price_chg, we might be in trouble.
-                    logger.warning(f"No conversion price change history for {ticker}. Using reported premium rate with caution.")
+                    logger.warning(f"{ticker}: {TUSHARE_PREMIUM_GUARD_MESSAGE} (No conversion price change history found)")
                     bond_daily["convert_premium_rate"] = bond_daily["cb_over_rate"]
                 else:
                     # Sort by date for merge_asof

@@ -20,8 +20,8 @@ from etl.cb_etl_pipeline import (
 )
 
 # Legacy constants for compatibility with tests
-DATA_PATH = "/root/projects/AMS/data/cb_history_factors.csv"
-METRICS_PATH = "/root/projects/AMS/data/cb_history_factors.metrics.json"
+DATA_PATH = "/root/projects/AMS/data/cb_history_factors_jqdata.csv"
+METRICS_PATH = "/root/projects/AMS/data/cb_history_factors_jqdata.metrics.json"
 LEGACY_UNDERLYING_SOURCE_FATAL = (
     "[FATAL] Invalid underlying-ticker source contract: get_security_info(ticker).parent "
     "is not valid for AMS convertible bonds."

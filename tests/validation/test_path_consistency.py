@@ -5,7 +5,7 @@ import pytest
 import os
 
 # Exact canonical research data path from PRD
-CANONICAL_DATA_PATH = "/root/projects/AMS/data/cb_history_factors.csv"
+CANONICAL_DATA_PATH = "/root/projects/AMS/data/cb_history_factors_jqdata.csv"
 
 @pytest.fixture
 def smoke_args():
@@ -33,11 +33,15 @@ def ensure_canonical_data():
     default_path = "/root/.openclaw/workspace/data/cb_history_factors.csv"
     if os.path.exists(default_path):
         os.makedirs(os.path.dirname(CANONICAL_DATA_PATH), exist_ok=True)
+        # Copy to the new provider-specific path used by default
         subprocess.run(["cp", default_path, CANONICAL_DATA_PATH], check=True)
+        # Also copy to legacy path for backward compatibility
+        legacy_path = "/root/projects/AMS/data/cb_history_factors.csv"
+        subprocess.run(["cp", default_path, legacy_path], check=True)
     yield
     # No cleanup needed as it will be overwritten again by other tests if necessary
 
-def test_default_path_non_empty(smoke_args):
+def test_default_path_non_empty(smoke_args, ensure_canonical_data):
     """
     Test Case 1: Verify that running without --data-path yields a summary.
     """

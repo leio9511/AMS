@@ -81,7 +81,8 @@ def test_tushare_premium_guard(caplog):
     provider = TuShareProvider(pro=mock_pro)
     provider.fetch_cb_price_changes(["110001.SH"], "2025-01-01", "2025-01-01")
     
-    assert "No conversion price change history for 110001.SH" in caplog.text
+    assert TUSHARE_PREMIUM_GUARD_MESSAGE in caplog.text
+    assert "110001.SH" in caplog.text
 
 def test_tushare_quota_error():
     mock_pro = MagicMock()

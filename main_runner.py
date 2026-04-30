@@ -30,7 +30,7 @@ def main():
     parser.add_argument('--tp-pos', type=float, help="Threshold for cost-basis take-profit (e.g., 0.20).")
     parser.add_argument('--tp-intra', type=float, help="Threshold for intraday momentum take-profit (e.g., 0.08).")
     parser.add_argument('--sl', required=True, type=float, help="Threshold for intraday stop-loss (e.g., -0.08).")
-    parser.add_argument('--data-source', default="auto", choices=["auto", "jqdata", "tushare"], help="Data source provider for automatic path selection.")
+    parser.add_argument('--data-source', default="auto", choices=["auto", "jqdata", "tushare"], help="Data source provider for automatic path selection. CLI explicit parameter overrides AMS local provider default configuration.")
     parser.add_argument('--data-path', help="Explicit CSV path (default: /root/projects/AMS/data/cb_history_factors_jqdata.csv).")
     parser.add_argument('--format', choices=['text', 'json'], default='text', help="Output format ('text' or 'json'). Default: 'text'.")
 

@@ -8,6 +8,11 @@ def test_cli_smoke_json_output():
     """
     Test Case 1: Verify main_runner.py --format json returns expected structure.
     """
+    # Ensure data is present for default path
+    default_path = "/root/projects/AMS/data/cb_history_factors_jqdata.csv"
+    os.makedirs(os.path.dirname(default_path), exist_ok=True)
+    subprocess.run(["cp", "/root/.openclaw/workspace/data/cb_history_factors.csv", default_path], check=True)
+
     command = [
         sys.executable, "main_runner.py",
         "--strategy", "cb_rotation",
@@ -46,6 +51,13 @@ def test_canonical_path_consistency():
     """
     Scenario 8: Default path and canonical path both produce non-empty summary.
     """
+    # Ensure both possible paths have data
+    legacy_path = "/root/projects/AMS/data/cb_history_factors.csv"
+    provider_path = "/root/projects/AMS/data/cb_history_factors_jqdata.csv"
+    os.makedirs(os.path.dirname(legacy_path), exist_ok=True)
+    subprocess.run(["cp", "/root/.openclaw/workspace/data/cb_history_factors.csv", legacy_path], check=True)
+    subprocess.run(["cp", "/root/.openclaw/workspace/data/cb_history_factors.csv", provider_path], check=True)
+
     common_args = [
         sys.executable, "main_runner.py",
         "--strategy", "cb_rotation",
@@ -69,9 +81,7 @@ def test_canonical_path_consistency():
     
     # 2. Explicit canonical path
     # We must ensure the canonical path has data for the same validation case.
-    # Since the environment may reset this file, we force copy it here.
-    canonical_path = "/root/projects/AMS/data/cb_history_factors.csv"
-    subprocess.run(["cp", "/root/.openclaw/workspace/data/cb_history_factors.csv", canonical_path])
+    canonical_path = "/root/projects/AMS/data/cb_history_factors_jqdata.csv"
     
     canonical_args = common_args + ["--data-path", canonical_path]
     result_canonical = subprocess.run(canonical_args, capture_output=True, text=True)
