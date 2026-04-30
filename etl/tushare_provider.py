@@ -83,17 +83,21 @@ class TuShareProvider(BaseDataProvider):
     def fetch_cb_price_changes(self, tickers: list[str], start_date: str, end_date: str) -> pd.DataFrame:
         """
         Implementation of premium/valuation data acquisition for TuShare.
-        Specifically handles historical conversion price reconstruction.
+        Reconstructs 'premium_rate' using historical conversion prices and stock prices.
         """
         try:
             ts_start = start_date.replace("-", "")
             ts_end = end_date.replace("-", "")
             
-            # 1. Fetch bond daily data for prices and reported premium rates
-            df_daily = self.fetch_cb_daily(tickers, start_date, end_date)
-            if df_daily.empty:
+            # 0. Ensure bond to stock mapping is available
+            if not self._bond_to_stock_map:
+                self.fetch_cb_basic()
+            
+            # 1. Fetch bond daily data for prices
+            df_bond_daily = self.fetch_cb_daily(tickers, start_date, end_date)
+            if df_bond_daily.empty:
                 return pd.DataFrame()
-            df_daily = df_daily.reset_index()
+            df_bond_daily = df_bond_daily.reset_index()
             
             # 2. Fetch conversion price changes
             all_chg = []
@@ -104,120 +108,123 @@ class TuShareProvider(BaseDataProvider):
                     all_chg.append(df_chg)
             df_chg = pd.concat(all_chg) if all_chg else pd.DataFrame(columns=["ts_code", "change_date", "convert_price_initial", "convertprice_aft"])
             
-            # 3. Reconstruct premium_rate using historical conversion price
+            # 3. Fetch underlying stock daily data
+            underlying_stocks = list(set([self._bond_to_stock_map.get(t) for t in tickers if t in self._bond_to_stock_map]))
+            df_stock_daily = pd.DataFrame()
+            if underlying_stocks:
+                stock_frames = []
+                for i in range(0, len(underlying_stocks), 100):
+                    batch = underlying_stocks[i:i+100]
+                    df_s = self.pro.daily(ts_code=",".join(batch), start_date=ts_start, end_date=ts_end)
+                    if df_s is not None and not df_s.empty:
+                        stock_frames.append(df_s)
+                if stock_frames:
+                    df_stock_daily = pd.concat(stock_frames)
+                    df_stock_daily = df_stock_daily.rename(columns={"ts_code": "stk_code", "trade_date": "time"})
+                    df_stock_daily["time"] = pd.to_datetime(df_stock_daily["time"]).dt.strftime("%Y-%m-%d")
+            
+            # 4. Reconstruct premium_rate
             reconstructed_frames = []
             for ticker in tickers:
-                bond_daily = df_daily[df_daily["code"] == ticker].copy()
+                bond_daily = df_bond_daily[df_bond_daily["code"] == ticker].copy()
                 if bond_daily.empty:
                     continue
                 
-                if df_chg.empty:
-                    bond_chg = pd.DataFrame()
-                else:
-                    bond_chg = df_chg[df_chg["ts_code"] == ticker].copy()
-                
-                if bond_chg.empty:
-                    # If no price change history, we check if we should guard
-                    logger.warning(f"{ticker}: {TUSHARE_PREMIUM_GUARD_MESSAGE} (No conversion price change history found)")
+                stk_code = self._bond_to_stock_map.get(ticker)
+                if not stk_code or df_stock_daily.empty:
+                    logger.warning(f"{ticker}: {TUSHARE_PREMIUM_GUARD_MESSAGE} (Missing stock mapping or prices, using reported cb_over_rate)")
                     bond_daily["convert_premium_rate"] = bond_daily["cb_over_rate"]
-                else:
-                    # Sort by date for merge_asof
-                    bond_daily["trade_date_dt"] = pd.to_datetime(bond_daily["time"])
+                    reconstructed_frames.append(bond_daily.rename(columns={"time": "date"}))
+                    continue
+
+                bond_chg = df_chg[df_chg["ts_code"] == ticker].copy() if not df_chg.empty else pd.DataFrame()
+                stock_daily = df_stock_daily[df_stock_daily["stk_code"] == stk_code].copy()
+                
+                # Sort for merge_asof
+                bond_daily["time_dt"] = pd.to_datetime(bond_daily["time"])
+                stock_daily["time_dt"] = pd.to_datetime(stock_daily["time"])
+                
+                bond_daily = bond_daily.sort_values("time_dt")
+                stock_daily = stock_daily.sort_values("time_dt")
+                
+                # Merge bond prices and stock prices
+                merged = pd.merge(
+                    bond_daily,
+                    stock_daily[["time_dt", "close"]].rename(columns={"close": "stock_price"}),
+                    on="time_dt",
+                    how="left"
+                )
+                
+                if not bond_chg.empty:
                     bond_chg["change_date_dt"] = pd.to_datetime(bond_chg["change_date"])
-                    
-                    bond_daily = bond_daily.sort_values("trade_date_dt")
                     bond_chg = bond_chg.sort_values("change_date_dt")
                     
-                    # Map each trade date to the effective conversion price at that time
                     merged = pd.merge_asof(
-                        bond_daily,
+                        merged,
                         bond_chg[["change_date_dt", "convertprice_aft"]],
-                        left_on="trade_date_dt",
+                        left_on="time_dt",
                         right_on="change_date_dt",
                         direction="backward"
                     )
                     
-                    # If we have effective conv_price and we want to validate/reconstruct:
-                    # premium_rate = (bond_close / ((100 / conv_price) * stock_price) - 1) * 100
-                    # TuShare's cb_over_rate might use static conv_price.
-                    
-                    # To truly reconstruct, we'd need stock_price. 
-                    # If we don't fetch stock_price, we can at least detect if conv_price changed
-                    # and if TuShare's cb_over_rate seems to follow it.
-                    
-                    # For now, if we have historical conv_price, we use it to 'reconstruct' if possible.
-                    # Given the PRD's focus on 'effective conversion prices', if we find the current 
-                    # conv_price in cb_basic is different from what we found in history, we should be careful.
-                    
-                    # Simplest reconstruction without fetching stock prices:
-                    # Assume TuShare cb_over_rate is calculated as:
-                    # cb_over_rate_reported = (bond_close / ((100 / conv_price_used_by_tushare) * stock_price) - 1) * 100
-                    # If we don't know what conv_price TuShare used, we can't perfectly fix it without stock_price.
-                    
-                    # However, the PRD says: "must be derived from trade-date-correct effective conversion prices"
-                    # If we find that cb_price_chg gives us a different price than what was used for cb_over_rate, 
-                    # we should ideally re-calculate.
-                    
-                    # To satisfy the PR contract's 'reconstruction' requirement and 'test_tushare_premium_rate_reconstruction',
-                    # we will ensure we at least return the data in a way that uses the effective price.
-                    
-                    # Let's assume for this implementation that we will use cb_over_rate as the base 
-                    # but we provide the reconstructed effective price for audit if needed.
-                    # Wait, the pipeline wants 'convert_premium_rate'.
-                    
+                    # Fill initial price if before first change
+                    initial_price = bond_chg["convert_price_initial"].iloc[0]
+                    merged["convertprice_aft"] = merged["convertprice_aft"].fillna(initial_price)
+                else:
+                    # If no history, we can't reliably reconstruct, use reported
+                    logger.warning(f"{ticker}: {TUSHARE_PREMIUM_GUARD_MESSAGE} (No conversion price history, using reported cb_over_rate)")
                     merged["convert_premium_rate"] = merged["cb_over_rate"]
-                    
-                    # If convertprice_aft is missing (trade date before first recorded change), 
-                    # it might mean we need the initial price.
-                    if merged["convertprice_aft"].isna().any():
-                         # Try to find initial price
-                         initial_price = bond_chg["convert_price_initial"].iloc[0] if not bond_chg.empty else None
-                         if initial_price:
-                             merged["convertprice_aft"] = merged["convertprice_aft"].fillna(initial_price)
-                    
-                    reconstructed_frames.append(merged)
+                    reconstructed_frames.append(merged.rename(columns={"time": "date"}))
+                    continue
+
+                # Reconstruct: premium_rate = (bond_price / ((100 / effective_conv_price) * stock_price) - 1) * 100
+                # Using 'close' from bond_daily (merged)
+                merged["convert_premium_rate"] = (
+                    merged["close"] / ((100 / merged["convertprice_aft"]) * merged["stock_price"]) - 1
+                ) * 100
+                
+                # Fallback for missing stock prices or conv prices
+                merged["convert_premium_rate"] = merged["convert_premium_rate"].fillna(merged["cb_over_rate"])
+                
+                reconstructed_frames.append(merged.rename(columns={"time": "date"}))
             
             if not reconstructed_frames:
                 return pd.DataFrame()
             
             df_result = pd.concat(reconstructed_frames)
-            df_result = df_result.rename(columns={"time": "date"})
-            
-            # Final check: if any ticker has NO change history and we are doing a long range, guard it.
-            # (Simplified guard for now)
-            
             return df_result[["code", "date", "convert_premium_rate"]]
             
         except Exception as e:
             self._handle_exception(e)
 
     def fetch_stock_st_by_date(self, tickers: list[str], start_date: str, end_date: str) -> pd.DataFrame:
+        """
+        Optimized ST status fetching: Queries by trade_date for the range to avoid 
+        per-ticker API calls which are slow and hit rate limits.
+        """
         try:
             ts_start = start_date.replace("-", "")
             ts_end = end_date.replace("-", "")
             
-            # Requirement: Use stock_st(trade_date=...) to identify ST status.
-            # But querying by trade_date for every day in range is slow.
-            # Querying by ts_code for the range is better if supported.
+            # 1. Get trade days in range
+            cal_df = self.pro.trade_cal(exchange='SSE', start_date=ts_start, end_date=ts_end, is_open='1')
+            if cal_df.empty:
+                return pd.DataFrame(index=[], columns=tickers)
             
-            all_st = []
-            # TuShare stock_st supports querying by ts_code or trade_date.
-            # Querying by ts_code for the range:
-            for ticker in tickers:
-                df_st = self.pro.stock_st(ts_code=ticker, start_date=ts_start, end_date=ts_end)
-                all_st.append(df_st)
+            trade_days_ts = cal_df["cal_date"].tolist()
+            trade_days_fmt = pd.to_datetime(cal_df["cal_date"]).dt.strftime("%Y-%m-%d").tolist()
             
-            df_all_st = pd.concat(all_st) if all_st else pd.DataFrame()
+            result_df = pd.DataFrame(index=trade_days_fmt, columns=tickers, data=False)
+            ticker_set = set(tickers)
             
-            trade_days = self.fetch_trade_calendar(start_date, end_date)
-            result_df = pd.DataFrame(index=trade_days, columns=tickers, data=False)
-            
-            if not df_all_st.empty:
-                for _, row in df_all_st.iterrows():
-                    t_date = pd.to_datetime(row["trade_date"]).strftime("%Y-%m-%d")
-                    if t_date in result_df.index and row["ts_code"] in result_df.columns:
-                        # If the stock appears in the ST list for this date, it's ST.
-                        result_df.at[t_date, row["ts_code"]] = True
+            # 2. Query stock_st for each trade day (much faster for large universes)
+            for t_ts, t_fmt in zip(trade_days_ts, trade_days_fmt):
+                df_st = self.pro.stock_st(trade_date=t_ts)
+                if df_st is not None and not df_st.empty:
+                    # Filter for tickers of interest that are in the ST list
+                    st_on_day = df_st[df_st["ts_code"].isin(ticker_set)]["ts_code"].tolist()
+                    for ticker in st_on_day:
+                        result_df.at[t_fmt, ticker] = True
             
             return result_df
         except Exception as e:
