@@ -529,9 +529,58 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
             if os.path.exists(mock_metrics_path):
                 os.remove(mock_metrics_path)
 
+    @patch("etl.cb_etl_pipeline.jqdatasdk")
+    def test_premium_batched_fetch_combines_multiple_months(self, mock_jq):
+        # Setup: Mock JQData run_query to return different sets of data for two different months.
+        pipeline = CBETLPipeline("2024-01-01", "2024-02-15", jqdata_provider=mock_jq)
+        
+        mock_jq.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
 
+        # Month 1: 2024-01
+        df_m1 = pd.DataFrame({
+            "date": ["2024-01-15"],
+            "code": ["123456.XSHG"],
+            "convert_premium_rate": [10.0]
+        })
+        # Month 2: 2024-02
+        df_m2 = pd.DataFrame({
+            "date": ["2024-02-15"],
+            "code": ["123456.XSHG"],
+            "convert_premium_rate": [20.0]
+        })
+        
+        mock_jq.bond.run_query.side_effect = [df_m1, df_m2]
+
+        # Execution: Call _fetch_premium_batched
+        res = pipeline._fetch_premium_batched(["123456"], "2024-01-01", "2024-02-15")
+
+        # Assertion:
+        self.assertEqual(len(res), 2)
+        self.assertEqual(mock_jq.bond.run_query.call_count, 2)
+
+    @patch("etl.cb_etl_pipeline.jqdatasdk")
+    def test_premium_truncation_guard_logs_message(self, mock_jq):
+        # Setup: Mock JQData run_query to return exactly 5000 rows for one of the batches.
+        pipeline = CBETLPipeline("2024-01-01", "2024-01-31", jqdata_provider=mock_jq)
+        
+        mock_jq.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+        mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+
+        # Return 5000 rows
+        df_5000 = pd.DataFrame([{"date": "2024-01-01", "code": "123456.XSHG", "convert_premium_rate": 10.0}] * 5000)
+        mock_jq.bond.run_query.return_value = df_5000
+
+        # Execution & Assertion:
+        with self.assertRaises(RuntimeError) as cm:
+            pipeline._fetch_premium_batched(["123456"], "2024-01-01", "2024-01-31")
+
+        self.assertEqual(str(cm.exception), "Premium source query returned the provider single-call cap characteristic and must be retried with deterministic batching.")
 
     def test_validator_skips_on_missing_columns(self):
+
         # Setup: Create a CBETLPipeline instance.
         pipeline = CBETLPipeline("2024-01-01", "2024-01-01")
         from etl.cb_etl_pipeline import CANONICAL_CB_COLUMNS

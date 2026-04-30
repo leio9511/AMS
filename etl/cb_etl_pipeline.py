@@ -392,11 +392,10 @@ class CBETLPipeline:
             
             raw_codes = [code for code in df_work["bond_code_raw"].dropna().astype(str).unique().tolist() if code]
             if raw_codes:
-                df_premium_raw = self._batched_fetch_premium_source(raw_codes)
-                self.results["source_coverage"]["premium_source_row_count"] = len(df_premium_raw)
-                self.results["source_coverage"]["premium_source_unique_bond_count"] = df_premium_raw["code"].nunique() if "code" in df_premium_raw.columns else 0
+                df_premium = self._fetch_premium_batched(raw_codes, self.start_date, self.end_date)
+                self.results["source_coverage"]["premium_source_row_count"] = len(df_premium)
+                self.results["source_coverage"]["premium_source_unique_bond_count"] = df_premium["bond_code_raw"].nunique() if "bond_code_raw" in df_premium.columns else 0
                 
-                df_premium = _normalize_premium_source(df_premium_raw)
                 if not df_premium.empty:
                     df_work.drop(columns=["premium_rate"], inplace=True)
                     df_work = pd.merge(df_work, df_premium, on=["date", "bond_code_raw", "bond_exchange_code"], how="left")
@@ -447,12 +446,12 @@ class CBETLPipeline:
             stage["message"] = str(e)
             return False
 
-    def _batched_fetch_premium_source(self, raw_codes: list[str]) -> pd.DataFrame:
+    def _fetch_premium_batched(self, raw_codes: list[str], start_date: str, end_date: str) -> pd.DataFrame:
         if not raw_codes:
             return pd.DataFrame()
             
-        start_dt = pd.to_datetime(self.start_date)
-        end_dt = pd.to_datetime(self.end_date)
+        start_dt = pd.to_datetime(start_date)
+        end_dt = pd.to_datetime(end_date)
         
         all_frames = []
         # Monthly split
@@ -486,8 +485,9 @@ class CBETLPipeline:
         if not all_frames:
             return pd.DataFrame()
             
-        merged = pd.concat(all_frames).drop_duplicates(subset=["date", "code"])
-        return merged
+        merged = pd.concat(all_frames)
+        normalized = _normalize_premium_source(merged)
+        return normalized.drop_duplicates(subset=["date", "bond_code_raw", "bond_exchange_code"])
 
     def run_stage_d_is_st_join(self):
         if self.results["source_coverage"]["status"] == STAGE_STATUS_FAIL:
