@@ -39,6 +39,12 @@ def test_pipeline_assembles_full_tickers_for_premium_fetch():
     
     # 3. Run Stages
     assert pipeline.run_stage_a_source_acquisition() is True
+    
+    # Ensure fetch_cb_daily was called with full tickers
+    mock_provider.fetch_cb_daily.assert_called_once()
+    args_daily, _ = mock_provider.fetch_cb_daily.call_args
+    assert args_daily[0] == ["127076.SZ"]
+
     assert pipeline.run_stage_b_supportability_classification() is True
     
     # Verify df state before Stage C

@@ -50,7 +50,7 @@ def test_tushare_is_st_logic():
     mock_pro.stock_st.assert_any_call(trade_date="20250101")
     mock_pro.stock_st.assert_any_call(trade_date="20250102")
 
-def test_tushare_cb_daily_volume_mapping():
+def test_tushare_daily_volume_mapping():
     mock_pro = MagicMock()
     mock_pro.trade_cal.return_value = pd.DataFrame({"cal_date": ["20250120"]})
     mock_pro.cb_daily.return_value = pd.DataFrame({
@@ -67,7 +67,7 @@ def test_tushare_cb_daily_volume_mapping():
     assert df.iloc[0]["volume"] == 5000.0
     assert "vol" not in df.columns
 
-def test_tushare_premium_rate_reconstruction():
+def test_tushare_premium_reconstruction_correctness():
     mock_pro = MagicMock()
     # Mock trade_cal for fetch_trade_calendar
     mock_pro.trade_cal.return_value = pd.DataFrame({
@@ -115,7 +115,7 @@ def test_tushare_premium_rate_reconstruction():
     expected_premium = (120.0 / ((100.0 / 9.5) * 10.0) - 1.0) * 100.0
     assert pytest.approx(df.iloc[0]["convert_premium_rate"], 0.0001) == expected_premium
 
-def test_tushare_premium_rate_nan_on_missing_data():
+def test_tushare_premium_fails_closed():
     mock_pro = MagicMock()
     mock_pro.trade_cal.return_value = pd.DataFrame({"cal_date": ["20250102"]})
     mock_pro.cb_basic.return_value = pd.DataFrame({
@@ -144,6 +144,53 @@ def test_tushare_premium_rate_nan_on_missing_data():
     
     # premium_rate should be NaN because stock_close is missing
     assert pd.isna(df.iloc[0]["convert_premium_rate"])
+
+def test_tushare_premium_uses_historical_conv_price():
+    mock_pro = MagicMock()
+    # Mock two days
+    mock_pro.trade_cal.return_value = pd.DataFrame({
+        "cal_date": ["20250102", "20250110"]
+    })
+    mock_pro.cb_basic.return_value = pd.DataFrame({
+        "ts_code": ["110001.SH"],
+        "stk_code": ["600001.SH"],
+        "delist_date": ["20300101"]
+    })
+    # Mock cb_daily: bond price = 120 on both days
+    mock_pro.cb_daily.side_effect = [
+        pd.DataFrame({"ts_code": ["110001.SH"], "trade_date": ["20250102"], "close": [120.0], "vol": [1000.0]}),
+        pd.DataFrame({"ts_code": ["110001.SH"], "trade_date": ["20250110"], "close": [120.0], "vol": [1000.0]})
+    ]
+    # Mock stock daily: stock price = 10 on both days
+    mock_pro.daily.return_value = pd.DataFrame({
+        "ts_code": ["600001.SH", "600001.SH"],
+        "trade_date": ["20250102", "20250110"],
+        "close": [10.0, 10.0]
+    })
+    # Mock cb_price_chg: conv price changes from 9.5 to 10.5 on 20250105
+    mock_pro.cb_price_chg.return_value = pd.DataFrame({
+        "ts_code": ["110001.SH", "110001.SH"],
+        "change_date": ["20250101", "20250105"],
+        "convert_price_initial": [9.0, 9.5],
+        "convertprice_aft": [9.5, 10.5]
+    })
+    
+    provider = TuShareProvider(pro=mock_pro)
+    df = provider.fetch_cb_price_changes(["110001.SH"], "2025-01-02", "2025-01-10")
+    
+    df = df.sort_values("date")
+    assert len(df) == 2
+    
+    # Day 1 (2025-01-02): effective_conv_price should be 9.5
+    premium1 = df.iloc[0]["convert_premium_rate"]
+    expected1 = (120.0 / ((100.0 / 9.5) * 10.0) - 1.0) * 100.0
+    assert pytest.approx(premium1, 0.0001) == expected1
+    
+    # Day 2 (2025-01-10): effective_conv_price should be 10.5
+    premium2 = df.iloc[1]["convert_premium_rate"]
+    expected2 = (120.0 / ((100.0 / 10.5) * 10.0) - 1.0) * 100.0
+    assert pytest.approx(premium2, 0.0001) == expected2
+
 
 
 def test_tushare_quota_error():
