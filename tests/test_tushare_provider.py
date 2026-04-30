@@ -52,6 +52,10 @@ def test_tushare_is_st_logic():
 
 def test_tushare_premium_rate_reconstruction():
     mock_pro = MagicMock()
+    # Mock trade_cal for fetch_trade_calendar
+    mock_pro.trade_cal.return_value = pd.DataFrame({
+        "cal_date": ["20250102"]
+    })
     # Mock cb_basic for mapping
     mock_pro.cb_basic.return_value = pd.DataFrame({
         "ts_code": ["110001.SH"],
@@ -100,6 +104,10 @@ def test_tushare_premium_rate_reconstruction():
 
 def test_tushare_premium_guard(caplog):
     mock_pro = MagicMock()
+    # Mock trade_cal for fetch_trade_calendar
+    mock_pro.trade_cal.return_value = pd.DataFrame({
+        "cal_date": ["20250101"]
+    })
     mock_pro.cb_daily.return_value = pd.DataFrame({
         "ts_code": ["110001.SH"],
         "trade_date": ["20250101"],

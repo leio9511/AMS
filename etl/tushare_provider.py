@@ -56,30 +56,41 @@ class TuShareProvider(BaseDataProvider):
             self._handle_exception(e)
 
     def fetch_cb_daily(self, tickers: list[str], start_date: str, end_date: str) -> pd.DataFrame:
-        ts_start = start_date.replace("-", "")
-        ts_end = end_date.replace("-", "")
-        
-        all_frames = []
         try:
-            # Batch by ticker to avoid URL length limits
-            batch_size = 100
-            for i in range(0, len(tickers), batch_size):
-                batch = tickers[i:i+batch_size]
-                ts_codes = ",".join(batch)
-                df = self.pro.cb_daily(ts_code=ts_codes, start_date=ts_start, end_date=ts_end)
-                all_frames.append(df)
-            
+            # 1. Get all trading days in the range using the existing trade calendar helper
+            trade_days = self.fetch_trade_calendar(start_date, end_date)
+            if not trade_days:
+                return pd.DataFrame()
+
+            all_frames = []
+            # 2. Query each trading day for the full market snapshot as cb_daily 
+            # does not support comma-separated multiple tickers.
+            for day in trade_days:
+                ts_day = day.replace("-", "")
+                df_day = self.pro.cb_daily(trade_date=ts_day)
+                if df_day is not None and not df_day.empty:
+                    all_frames.append(df_day)
+
             if not all_frames:
                 return pd.DataFrame()
-            
+
             df = pd.concat(all_frames)
+
+            # 3. Rename columns to match pipeline contract
             df = df.rename(columns={"ts_code": "code", "trade_date": "time"})
+
+            # 4. Filter by requested tickers
+            if tickers:
+                df = df[df["code"].isin(tickers)]
+
+            if df.empty:
+                return pd.DataFrame()
+
             # Convert time to YYYY-MM-DD for pipeline consistency
             df["time"] = pd.to_datetime(df["time"]).dt.strftime("%Y-%m-%d")
             return df.set_index(["code", "time"])
         except Exception as e:
             self._handle_exception(e)
-
     def fetch_cb_price_changes(self, tickers: list[str], start_date: str, end_date: str) -> pd.DataFrame:
         """
         Implementation of premium/valuation data acquisition for TuShare.
