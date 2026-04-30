@@ -398,9 +398,16 @@ class CBETLPipeline:
 
             df_work["premium_rate"] = float("nan")
             
-            raw_codes = [code for code in df_work["bond_code_raw"].dropna().astype(str).unique().tolist() if code]
-            if raw_codes:
-                df_premium = self._fetch_premium_batched(raw_codes, self.start_date, self.end_date)
+            # Assemble full tickers: bond_code_raw + . + bond_exchange_code
+            valid_ticker_mask = df_work["bond_code_raw"].notna() & df_work["bond_exchange_code"].notna()
+            tickers = (
+                df_work.loc[valid_ticker_mask, "bond_code_raw"].astype(str) + 
+                "." + 
+                df_work.loc[valid_ticker_mask, "bond_exchange_code"].astype(str)
+            ).unique().tolist()
+
+            if tickers:
+                df_premium = self._fetch_premium_batched(tickers, self.start_date, self.end_date)
                 self.results["source_coverage"]["premium_source_row_count"] = len(df_premium)
                 self.results["source_coverage"]["premium_source_unique_bond_count"] = df_premium["bond_code_raw"].nunique() if "bond_code_raw" in df_premium.columns else 0
                 
@@ -454,12 +461,12 @@ class CBETLPipeline:
             stage["message"] = str(e)
             return False
 
-    def _fetch_premium_batched(self, raw_codes: list[str], start_date: str, end_date: str) -> pd.DataFrame:
-        if not raw_codes:
+    def _fetch_premium_batched(self, tickers: list[str], start_date: str, end_date: str) -> pd.DataFrame:
+        if not tickers:
             return pd.DataFrame()
             
         try:
-            merged = self.provider.fetch_cb_price_changes(raw_codes, start_date, end_date)
+            merged = self.provider.fetch_cb_price_changes(tickers, start_date, end_date)
             if merged is None or merged.empty:
                 return pd.DataFrame()
                 

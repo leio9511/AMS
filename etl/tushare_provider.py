@@ -5,8 +5,6 @@ from etl.cb_provider_base import BaseDataProvider, DataProviderAuthError, DataPr
 
 logger = logging.getLogger(__name__)
 
-TUSHARE_PREMIUM_GUARD_MESSAGE = "TuShare premium_rate must be derived from trade-date-correct effective conversion prices and must not be computed from a single static latest conversion price."
-
 class TuShareProvider(BaseDataProvider):
     def __init__(self, token=None, pro=None):
         if pro is not None:
@@ -77,7 +75,7 @@ class TuShareProvider(BaseDataProvider):
             df = pd.concat(all_frames)
 
             # 3. Rename columns to match pipeline contract
-            df = df.rename(columns={"ts_code": "code", "trade_date": "time"})
+            df = df.rename(columns={"ts_code": "code", "trade_date": "time", "vol": "volume"})
 
             # 4. Filter by requested tickers
             if tickers:
@@ -96,6 +94,8 @@ class TuShareProvider(BaseDataProvider):
         Implementation of premium/valuation data acquisition for TuShare.
         Reconstructs 'premium_rate' using historical conversion prices and stock prices.
         """
+        # cb_daily API does not provide a cb_over_rate field.
+        # premium_rate must be computed from bond_close, stock_close, and effective_conv_price.
         try:
             ts_start = start_date.replace("-", "")
             ts_end = end_date.replace("-", "")
@@ -142,37 +142,39 @@ class TuShareProvider(BaseDataProvider):
                     continue
                 
                 stk_code = self._bond_to_stock_map.get(ticker)
-                if not stk_code or df_stock_daily.empty:
-                    logger.warning(f"{ticker}: {TUSHARE_PREMIUM_GUARD_MESSAGE} (Missing stock mapping or prices, using reported cb_over_rate)")
-                    bond_daily["convert_premium_rate"] = bond_daily["cb_over_rate"]
-                    reconstructed_frames.append(bond_daily.rename(columns={"time": "date"}))
-                    continue
-
                 bond_chg = df_chg[df_chg["ts_code"] == ticker].copy() if not df_chg.empty else pd.DataFrame()
-                stock_daily = df_stock_daily[df_stock_daily["stk_code"] == stk_code].copy()
+                stock_daily = df_stock_daily[df_stock_daily["stk_code"] == stk_code].copy() if (not df_stock_daily.empty and stk_code) else pd.DataFrame()
                 
                 # Sort for merge_asof
                 bond_daily["time_dt"] = pd.to_datetime(bond_daily["time"])
-                stock_daily["time_dt"] = pd.to_datetime(stock_daily["time"])
-                
                 bond_daily = bond_daily.sort_values("time_dt")
-                stock_daily = stock_daily.sort_values("time_dt")
                 
-                # Merge bond prices and stock prices
-                merged = pd.merge(
-                    bond_daily,
-                    stock_daily[["time_dt", "close"]].rename(columns={"close": "stock_price"}),
-                    on="time_dt",
-                    how="left"
-                )
+                merged = bond_daily.copy()
                 
+                if not stock_daily.empty:
+                    stock_daily["time_dt"] = pd.to_datetime(stock_daily["time"])
+                    stock_daily = stock_daily.sort_values("time_dt")
+                    
+                    # Merge bond prices and stock prices
+                    merged = pd.merge(
+                        merged,
+                        stock_daily[["time_dt", "close"]].rename(columns={"close": "stock_close"}),
+                        on="time_dt",
+                        how="left"
+                    )
+                else:
+                    merged["stock_close"] = float("nan")
+                
+                # Rename bond close for exact formula match
+                merged = merged.rename(columns={"close": "bond_close"})
+
                 if not bond_chg.empty:
                     bond_chg["change_date_dt"] = pd.to_datetime(bond_chg["change_date"])
                     bond_chg = bond_chg.sort_values("change_date_dt")
                     
                     merged = pd.merge_asof(
                         merged,
-                        bond_chg[["change_date_dt", "convertprice_aft"]],
+                        bond_chg[["change_date_dt", "convertprice_aft"]].rename(columns={"convertprice_aft": "effective_conv_price"}),
                         left_on="time_dt",
                         right_on="change_date_dt",
                         direction="backward"
@@ -180,22 +182,14 @@ class TuShareProvider(BaseDataProvider):
                     
                     # Fill initial price if before first change
                     initial_price = bond_chg["convert_price_initial"].iloc[0]
-                    merged["convertprice_aft"] = merged["convertprice_aft"].fillna(initial_price)
+                    merged["effective_conv_price"] = merged["effective_conv_price"].fillna(initial_price)
                 else:
-                    # If no history, we can't reliably reconstruct, use reported
-                    logger.warning(f"{ticker}: {TUSHARE_PREMIUM_GUARD_MESSAGE} (No conversion price history, using reported cb_over_rate)")
-                    merged["convert_premium_rate"] = merged["cb_over_rate"]
-                    reconstructed_frames.append(merged.rename(columns={"time": "date"}))
-                    continue
+                    merged["effective_conv_price"] = float("nan")
 
-                # Reconstruct: premium_rate = (bond_price / ((100 / effective_conv_price) * stock_price) - 1) * 100
-                # Using 'close' from bond_daily (merged)
+                # Reconstruct: premium_rate = (bond_close / ((100 / effective_conv_price) * stock_close) - 1) * 100
                 merged["convert_premium_rate"] = (
-                    merged["close"] / ((100 / merged["convertprice_aft"]) * merged["stock_price"]) - 1
+                    merged["bond_close"] / ((100 / merged["effective_conv_price"]) * merged["stock_close"]) - 1
                 ) * 100
-                
-                # Fallback for missing stock prices or conv prices
-                merged["convert_premium_rate"] = merged["convert_premium_rate"].fillna(merged["cb_over_rate"])
                 
                 reconstructed_frames.append(merged.rename(columns={"time": "date"}))
             

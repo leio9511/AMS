@@ -59,8 +59,10 @@ class JQDataProvider(BaseDataProvider):
                 code_batch_size = 100
                 for i in range(0, len(tickers), code_batch_size):
                     batch_codes = tickers[i:i + code_batch_size]
+                    # Strip suffixes for JQData CONBOND_DAILY_CONVERT query which expects raw codes
+                    raw_batch_codes = [c.split('.')[0] for c in batch_codes]
                     q = self.client.query(self.client.bond.CONBOND_DAILY_CONVERT).filter(
-                        self.client.bond.CONBOND_DAILY_CONVERT.code.in_(batch_codes),
+                        self.client.bond.CONBOND_DAILY_CONVERT.code.in_(raw_batch_codes),
                         self.client.bond.CONBOND_DAILY_CONVERT.date >= s_date,
                         self.client.bond.CONBOND_DAILY_CONVERT.date <= e_date,
                     )

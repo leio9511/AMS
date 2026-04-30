@@ -21,12 +21,24 @@ class BaseDataProvider(ABC):
 
     @abstractmethod
     def fetch_cb_daily(self, tickers: list[str], start_date: str, end_date: str) -> pd.DataFrame:
-        """Fetch daily price data for convertible bonds."""
+        """
+        Fetch daily price data for convertible bonds.
+        
+        :param tickers: List of full tickers (e.g., ['127076.SZ', '110001.SH']).
+        :param start_date: Start date in YYYY-MM-DD format.
+        :param end_date: End date in YYYY-MM-DD format.
+        """
         pass
 
     @abstractmethod
     def fetch_cb_price_changes(self, tickers: list[str], start_date: str, end_date: str) -> pd.DataFrame:
-        """Fetch historical conversion price changes or related valuation data."""
+        """
+        Fetch historical conversion price changes or related valuation data.
+        
+        :param tickers: List of full tickers (e.g., ['127076.SZ', '110001.SH']).
+        :param start_date: Start date in YYYY-MM-DD format.
+        :param end_date: End date in YYYY-MM-DD format.
+        """
         pass
 
     @abstractmethod
