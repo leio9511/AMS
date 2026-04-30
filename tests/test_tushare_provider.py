@@ -137,3 +137,55 @@ def test_tushare_auth_error():
     provider = TuShareProvider(pro=mock_pro)
     with pytest.raises(DataProviderAuthError):
         provider.fetch_cb_basic()
+
+def test_tushare_cb_daily_query_strategy():
+    mock_pro = MagicMock()
+    # Setup: Mock trade_cal to return two trading days
+    mock_pro.trade_cal.return_value = pd.DataFrame({
+        "cal_date": ["20250120", "20250121"]
+    })
+    
+    # Setup: Mock cb_daily for each day
+    def mock_cb_daily(trade_date=None):
+        if trade_date == "20250120":
+            return pd.DataFrame({
+                "ts_code": ["127076.SZ", "110001.SH"],
+                "trade_date": ["20250120", "20250120"],
+                "close": [100.0, 110.0]
+            })
+        elif trade_date == "20250121":
+            return pd.DataFrame({
+                "ts_code": ["127076.SZ", "999999.SH"],
+                "trade_date": ["20250121", "20250121"],
+                "close": [101.0, 120.0]
+            })
+        return pd.DataFrame()
+    
+    mock_pro.cb_daily.side_effect = mock_cb_daily
+    
+    provider = TuShareProvider(pro=mock_pro)
+    df = provider.fetch_cb_daily(["127076.SZ"], "2025-01-20", "2025-01-21")
+    
+    # Assertions
+    assert mock_pro.cb_daily.call_count == 2
+    mock_pro.cb_daily.assert_any_call(trade_date="20250120")
+    mock_pro.cb_daily.assert_any_call(trade_date="20250121")
+    
+    # Verify result contains only for "127076.SZ"
+    assert len(df) == 2
+    assert all(df.index.get_level_values("code") == "127076.SZ")
+    
+    # Verify index and formatting
+    assert isinstance(df.index, pd.MultiIndex)
+    assert "2025-01-20" in df.index.get_level_values("time")
+    assert "2025-01-21" in df.index.get_level_values("time")
+
+def test_tushare_cb_daily_empty_range():
+    mock_pro = MagicMock()
+    # Mock trade_cal to return empty dataframe with expected columns
+    mock_pro.trade_cal.return_value = pd.DataFrame(columns=["cal_date"])
+    
+    provider = TuShareProvider(pro=mock_pro)
+    df = provider.fetch_cb_daily(["127076.SZ"], "2025-01-25", "2025-01-26")
+    
+    assert df.empty

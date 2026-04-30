@@ -63,8 +63,8 @@ class TuShareProvider(BaseDataProvider):
                 return pd.DataFrame()
 
             all_frames = []
-            # 2. Query each trading day for the full market snapshot as cb_daily 
-            # does not support comma-separated multiple tickers.
+            # 2. fetch_cb_daily must query by trade_date (one date at a time) to retrieve the full-market CB daily snapshot.
+            # Comma-separated ts_code batching is not supported by the cb_daily API and must not be used.
             for day in trade_days:
                 ts_day = day.replace("-", "")
                 df_day = self.pro.cb_daily(trade_date=ts_day)
