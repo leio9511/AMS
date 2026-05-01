@@ -215,6 +215,16 @@ class CBETLPipeline:
             "is_st_join_summary": {"status": STAGE_STATUS_NOT_RUN, "failure_type": "NONE", "message": ""},
             "redemption_summary": {"status": STAGE_STATUS_NOT_RUN, "failure_type": "NONE", "message": ""},
             "validator_summary": {"status": STAGE_STATUS_NOT_RUN, "failure_type": "NONE", "message": ""},
+            "active_universe_summary": {
+                "core_price_row_count_before_filter": 0,
+                "core_price_row_count_after_filter": 0,
+                "all_null_ohlcv_row_count_filtered": 0,
+                "core_universe_row_count": 0,
+                "core_universe_unique_bond_count": 0,
+                "active_bond_universe_count": 0,
+                "enrichment_target_row_count": 0,
+                "enrichment_target_unique_bond_count": 0,
+            },
         }
         self.df = None
         self.df_bonds_info = None
@@ -272,6 +282,25 @@ class CBETLPipeline:
             self.df = df_price.reset_index()
             self.df.rename(columns={"time": "date", "code": "ticker"}, inplace=True)
             self.df["date"] = pd.to_datetime(self.df["date"])
+            
+            # --- START OF ACTIVE UNIVERSE FILTERING ---
+            ohlcv_cols = ["open", "high", "low", "close", "volume"]
+            missing_cols = [c for c in ohlcv_cols if c not in self.df.columns]
+            for c in missing_cols:
+                self.df[c] = pd.NA
+
+            aus = self.results["active_universe_summary"]
+            aus["core_price_row_count_before_filter"] = len(self.df)
+            
+            mask_all_null = self.df[ohlcv_cols].isnull().all(axis=1)
+            aus["all_null_ohlcv_row_count_filtered"] = int(mask_all_null.sum())
+            
+            self.df = self.df[~mask_all_null].copy()
+            aus["core_price_row_count_after_filter"] = len(self.df)
+            aus["core_universe_row_count"] = len(self.df)
+            aus["core_universe_unique_bond_count"] = int(self.df["ticker"].nunique()) if not self.df.empty else 0
+            aus["active_bond_universe_count"] = aus["core_universe_unique_bond_count"]
+            # --- END OF ACTIVE UNIVERSE FILTERING ---
             
             stage["status"] = STAGE_STATUS_PASS
             return True
@@ -356,6 +385,13 @@ class CBETLPipeline:
             missing_underlying_mask = is_supportable & self.df["underlying_ticker"].isna()
             stage["missing_underlying_row_count"] = int(missing_underlying_mask.sum())
             stage["missing_underlying_unique_bond_count"] = int(self.df.loc[missing_underlying_mask, "bond_code_raw"].nunique())
+
+            # --- ENRICHMENT TARGET UNIVERSE STATS ---
+            enrichment_mask = is_supportable & self.df["underlying_ticker"].notna()
+            aus = self.results["active_universe_summary"]
+            aus["enrichment_target_row_count"] = int(enrichment_mask.sum())
+            aus["enrichment_target_unique_bond_count"] = int(self.df.loc[enrichment_mask, "ticker"].nunique())
+            # ----------------------------------------
 
             if stage["unexpected_contract_regression_row_count"] > 0:
                 stage["status"] = STAGE_STATUS_FAIL
@@ -747,6 +783,7 @@ class CBETLPipeline:
             "end_date": self.end_date,
             "final_status": final_status,
             "non_promotion_disclaimer": NON_PROMOTION_DISCLAIMER,
+            "active_universe_summary": self.results["active_universe_summary"],
             "source_coverage": self.results["source_coverage"],
             "supportability_summary": self.results["supportability_summary"],
             "premium_join_summary": self.results["premium_join_summary"],

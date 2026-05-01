@@ -75,7 +75,7 @@ def test_audit_runner_emits_required_top_level_and_stage_summary_schema(mock_env
     
     expected_top_level = {
         "execution_mode", "start_date", "end_date", "final_status",
-        "non_promotion_disclaimer", "source_coverage", "supportability_summary",
+        "non_promotion_disclaimer", "active_universe_summary", "source_coverage", "supportability_summary",
         "premium_join_summary", "is_st_join_summary", "redemption_summary",
         "validator_summary", "root_blockers", "secondary_findings"
     }

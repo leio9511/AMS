@@ -15,12 +15,11 @@ def test_validator_with_perfect_dataframe():
     validator = CBDataValidator()
     assert validator.validate_dataframe(df) is True
 
-def test_validator_catches_nan_premium_rate(capsys):
+def test_validator_catches_nan_close(capsys):
     df = pd.DataFrame({
         "ticker": ["110001"],
         "date": ["2023-01-01"],
-        "close": [105.0],
-        "premium_rate": [float("nan")],
+        "close": [float("nan")],
         "is_st": [False],
         "is_redeemed": [False]
     })
@@ -84,8 +83,7 @@ def test_cli_invalid_csv(tmp_path):
     df = pd.DataFrame({
         "ticker": ["110001"],
         "date": ["2023-01-01"],
-        "close": [105.0],
-        "premium_rate": [float("nan")],
+        "close": [float("nan")],
         "is_st": [False],
         "is_redeemed": [False]
     })
