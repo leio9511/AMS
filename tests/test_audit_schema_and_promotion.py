@@ -1,6 +1,19 @@
 import pandas as pd
 from unittest.mock import MagicMock, patch
 
+from etl.cb_audit_contract import (
+    ACTIVE_UNIVERSE_SUMMARY_TEMPLATE,
+    IS_ST_JOIN_SUMMARY_TEMPLATE,
+    PREMIUM_JOIN_SUMMARY_TEMPLATE,
+    REDEMPTION_SUMMARY_TEMPLATE,
+    ROOT_BLOCKER_STAGES,
+    ROOT_BLOCKER_TYPES,
+    SECONDARY_FINDING_STAGES,
+    SECONDARY_FINDING_TYPES,
+    SOURCE_COVERAGE_TEMPLATE,
+    SUPPORTABILITY_SUMMARY_TEMPLATE,
+    VALIDATOR_SUMMARY_TEMPLATE,
+)
 from etl.cb_etl_pipeline import (
     CBETLPipeline,
     STAGE_STATUS_DEGRADED,
@@ -86,17 +99,68 @@ def test_audit_schema_matches_exact_keys():
         "root_blockers",
         "secondary_findings",
     }
-    assert set(report["validator_summary"].keys()) == {
-        "status",
-        "failure_type",
-        "message",
-        "core_validator_status",
-        "core_validator_message",
-        "enrichment_validator_status",
-        "enrichment_validator_message",
-        "promotion_gate_status",
-        "promotion_gate_message",
-    }
+    assert set(report["active_universe_summary"].keys()) == set(ACTIVE_UNIVERSE_SUMMARY_TEMPLATE.keys())
+    assert set(report["source_coverage"].keys()) == set(SOURCE_COVERAGE_TEMPLATE.keys())
+    assert set(report["supportability_summary"].keys()) == set(SUPPORTABILITY_SUMMARY_TEMPLATE.keys())
+    assert set(report["premium_join_summary"].keys()) == set(PREMIUM_JOIN_SUMMARY_TEMPLATE.keys())
+    assert set(report["is_st_join_summary"].keys()) == set(IS_ST_JOIN_SUMMARY_TEMPLATE.keys())
+    assert set(report["redemption_summary"].keys()) == set(REDEMPTION_SUMMARY_TEMPLATE.keys())
+    assert set(report["validator_summary"].keys()) == set(VALIDATOR_SUMMARY_TEMPLATE.keys())
+
+
+def test_root_blockers_and_secondary_findings_use_exact_item_schema():
+    pipeline = _build_pipeline()
+    pipeline.results["supportability_summary"]["missing_underlying_row_count"] = 1
+    pipeline.results["premium_join_summary"]["missing_premium_row_count"] = 1
+    pipeline.results["premium_join_summary"]["failure_type"] = "PREMIUM_RATE_MISSING_BROAD_COVERAGE"
+    pipeline.results["is_st_join_summary"]["missing_is_st_row_count"] = 1
+    pipeline.results["redemption_summary"]["missing_redemption_row_count"] = 1
+    pipeline.results["validator_summary"]["failure_type"] = "VALIDATOR_SCHEMA_FAILURE"
+    pipeline.results["validator_summary"]["core_validator_message"] = "schema mismatch"
+
+    root_blockers, secondary_findings = pipeline.compute_findings()
+
+    assert root_blockers
+    assert secondary_findings
+    for item in root_blockers:
+        assert set(item.keys()) == {"type", "stage", "trigger", "evidence"}
+        assert item["type"] in ROOT_BLOCKER_TYPES
+        assert item["stage"] in ROOT_BLOCKER_STAGES
+    for item in secondary_findings:
+        assert set(item.keys()) == {"type", "stage", "trigger", "evidence"}
+        assert item["type"] in SECONDARY_FINDING_TYPES
+        assert item["stage"] in SECONDARY_FINDING_STAGES
+
+
+def test_audit_schema_defaults_survive_skipped_or_degraded_paths():
+    pipeline = CBETLPipeline("2025-01-06", "2025-01-06", provider=MagicMock())
+    pipeline.df = pd.DataFrame(
+        {
+            "ticker": pd.Series(dtype="object"),
+            "date": pd.Series(dtype="datetime64[ns]"),
+            "bond_code_raw": pd.Series(dtype="object"),
+            "bond_exchange_code": pd.Series(dtype="object"),
+            "supportability_bucket": pd.Series(dtype="object"),
+            "underlying_ticker": pd.Series(dtype="object"),
+        }
+    )
+    pipeline.results["source_coverage"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
+    pipeline.results["supportability_summary"].update({"status": "PASS", "failure_type": "NONE", "message": "", "supportable_row_count": 0})
+    pipeline.run_stage_c_premium_join()
+    pipeline.run_stage_d_is_st_join()
+    pipeline.run_stage_e_redemption_delist()
+    pipeline.run_stage_f_validator()
+
+    report = pipeline.get_final_report()
+
+    assert report["premium_join_summary"]["status"] == "NOT_RUN"
+    assert report["is_st_join_summary"]["status"] == "NOT_RUN"
+    assert report["redemption_summary"]["status"] == "NOT_RUN"
+    assert report["validator_summary"]["status"] == "PASS"
+    assert set(report["premium_join_summary"].keys()) == set(PREMIUM_JOIN_SUMMARY_TEMPLATE.keys())
+    assert set(report["is_st_join_summary"].keys()) == set(IS_ST_JOIN_SUMMARY_TEMPLATE.keys())
+    assert set(report["redemption_summary"].keys()) == set(REDEMPTION_SUMMARY_TEMPLATE.keys())
+    assert set(report["validator_summary"].keys()) == set(VALIDATOR_SUMMARY_TEMPLATE.keys())
 
 
 def test_promotion_gate_blocked_by_premium_missing():

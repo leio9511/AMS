@@ -1,8 +1,28 @@
-import json
-import os
-import datetime
 import pandas as pd
-from etl.cb_provider_base import BaseDataProvider, DataProviderAuthError, DataProviderError
+from etl.cb_provider_base import BaseDataProvider, DataProviderAuthError
+from etl.cb_audit_contract import (
+    NON_PROMOTION_DISCLAIMER,
+    FINAL_STATUS_PASS,
+    FINAL_STATUS_FAIL_ROOT_BLOCKER,
+    FINAL_STATUS_FAIL_SECONDARY_ONLY,
+    PROMOTION_STATUS_BLOCKED,
+    PROMOTION_STATUS_PASS,
+    PROMOTION_STATUS_NOT_RUN,
+    STAGE_STATUS_DEGRADED,
+    STAGE_STATUS_FAIL,
+    STAGE_STATUS_NOT_RUN,
+    STAGE_STATUS_PASS,
+    build_final_report,
+    build_is_st_join_summary,
+    build_pipeline_results,
+    build_premium_join_summary,
+    build_redemption_summary,
+    build_root_blocker,
+    build_secondary_finding,
+    build_source_coverage,
+    build_supportability_summary,
+    build_validator_summary,
+)
 
 # Constants from jqdata_sync_cb.py
 SUPPORTABILITY_BUCKET_SUPPORTABLE = "supportable"
@@ -48,23 +68,6 @@ REDEMPTION_SOURCE_CONTRACT = {
     ],
     "null_primary_behavior": "is_redeemed=False",
 }
-
-# Stage Statuses
-STAGE_STATUS_PASS = "PASS"
-STAGE_STATUS_FAIL = "FAIL"
-STAGE_STATUS_NOT_RUN = "NOT_RUN"
-STAGE_STATUS_DEGRADED = "DEGRADED"
-
-PROMOTION_STATUS_PASS = "PASS"
-PROMOTION_STATUS_BLOCKED = "BLOCKED"
-
-# Final Statuses
-FINAL_STATUS_PASS = "PASS"
-FINAL_STATUS_FAIL_ROOT_BLOCKER = "FAIL_ROOT_BLOCKER"
-FINAL_STATUS_FAIL_SECONDARY_ONLY = "FAIL_SECONDARY_ONLY"
-
-# Non-promotion disclaimer
-NON_PROMOTION_DISCLAIMER = "[AUDIT-ONLY] This run is diagnostic only. No canonical dataset promotion was attempted."
 
 def _split_bond_ticker(ticker: str) -> tuple[str | None, str | None]:
     if not isinstance(ticker, str) or "." not in ticker:
@@ -212,31 +215,14 @@ class CBETLPipeline:
         else:
             self.provider = provider
             
-        self.results = {
-            "source_coverage": {"status": STAGE_STATUS_NOT_RUN, "failure_type": "NONE", "message": ""},
-            "supportability_summary": {"status": STAGE_STATUS_NOT_RUN, "failure_type": "NONE", "message": ""},
-            "premium_join_summary": {"status": STAGE_STATUS_NOT_RUN, "failure_type": "NONE", "message": ""},
-            "is_st_join_summary": {"status": STAGE_STATUS_NOT_RUN, "failure_type": "NONE", "message": ""},
-            "redemption_summary": {"status": STAGE_STATUS_NOT_RUN, "failure_type": "NONE", "message": ""},
-            "validator_summary": {"status": STAGE_STATUS_NOT_RUN, "failure_type": "NONE", "message": ""},
-            "active_universe_summary": {
-                "core_price_row_count_before_filter": 0,
-                "core_price_row_count_after_filter": 0,
-                "all_null_ohlcv_row_count_filtered": 0,
-                "core_universe_row_count": 0,
-                "core_universe_unique_bond_count": 0,
-                "active_bond_universe_count": 0,
-                "enrichment_target_row_count": 0,
-                "enrichment_target_unique_bond_count": 0,
-            },
-        }
+        self.results = build_pipeline_results()
         self.df = None
         self.df_bonds_info = None
         self.bond_to_stock = {}
         self.bond_to_delist = {}
 
     def run_stage_a_source_acquisition(self):
-        stage = self.results["source_coverage"]
+        stage = self.results["source_coverage"] = build_source_coverage(**self.results["source_coverage"])
         stage["basic_info_row_count"] = 0
         stage["all_bond_security_count"] = 0
         stage["price_row_count"] = 0
@@ -250,7 +236,7 @@ class CBETLPipeline:
 
         if self.provider is None:
             stage["status"] = STAGE_STATUS_FAIL
-            stage["failure_type"] = "PROVIDER_MISSING"
+            stage["failure_type"] = "PRICE_SOURCE_UNREADABLE"
             stage["message"] = "No data provider provided to pipeline"
             return False
 
@@ -323,11 +309,16 @@ class CBETLPipeline:
 
     def run_stage_b_supportability_classification(self):
         if self.results["source_coverage"]["status"] == STAGE_STATUS_FAIL:
-            self.results["supportability_summary"]["status"] = STAGE_STATUS_NOT_RUN
-            self.results["supportability_summary"]["message"] = "Skipped because Stage A failed."
+            self.results["supportability_summary"].update(
+                {
+                    "status": STAGE_STATUS_NOT_RUN,
+                    "failure_type": "NONE",
+                    "message": "Skipped because Stage A failed.",
+                }
+            )
             return False
 
-        stage = self.results["supportability_summary"]
+        stage = self.results["supportability_summary"] = build_supportability_summary(**self.results["supportability_summary"])
         stage["supportable_row_count"] = 0
         stage["supportable_unique_bond_count"] = 0
         stage["outside_basic_info_row_count"] = 0
@@ -420,11 +411,16 @@ class CBETLPipeline:
 
     def run_stage_c_premium_join(self):
         if self.results["source_coverage"]["status"] == STAGE_STATUS_FAIL:
-            self.results["premium_join_summary"]["status"] = STAGE_STATUS_NOT_RUN
-            self.results["premium_join_summary"]["message"] = "Skipped because Stage A failed."
+            self.results["premium_join_summary"].update(
+                {
+                    "status": STAGE_STATUS_NOT_RUN,
+                    "failure_type": "NONE",
+                    "message": "Skipped because Stage A failed.",
+                }
+            )
             return False
 
-        stage = self.results["premium_join_summary"]
+        stage = self.results["premium_join_summary"] = build_premium_join_summary(**self.results["premium_join_summary"])
         stage["premium_joined_row_count"] = 0
         stage["premium_joined_unique_bond_count"] = 0
         stage["missing_premium_row_count"] = 0
@@ -520,6 +516,12 @@ class CBETLPipeline:
                 # To satisfy audit secondary findings, we mark supportable count as missing if we aborted.
                 stage["missing_premium_row_count"] = self.results["supportability_summary"].get("supportable_row_count", 0)
                 return False
+            if "CONCURRENT_RUN_BLOCKED" in str(e):
+                stage["status"] = STAGE_STATUS_FAIL
+                stage["failure_type"] = "NONE"
+                stage["message"] = str(e)
+                stage["orchestrator_blocker_type"] = "CONCURRENT_RUN_BLOCKED"
+                return False
             stage["status"] = STAGE_STATUS_FAIL
             stage["message"] = str(e)
             return False
@@ -556,11 +558,16 @@ class CBETLPipeline:
 
     def run_stage_d_is_st_join(self):
         if self.results["source_coverage"]["status"] == STAGE_STATUS_FAIL:
-            self.results["is_st_join_summary"]["status"] = STAGE_STATUS_NOT_RUN
-            self.results["is_st_join_summary"]["message"] = "Skipped because Stage A failed."
+            self.results["is_st_join_summary"].update(
+                {
+                    "status": STAGE_STATUS_NOT_RUN,
+                    "failure_type": "NONE",
+                    "message": "Skipped because Stage A failed.",
+                }
+            )
             return False
 
-        stage = self.results["is_st_join_summary"]
+        stage = self.results["is_st_join_summary"] = build_is_st_join_summary(**self.results["is_st_join_summary"])
         stage["is_st_joined_row_count"] = 0
         stage["is_st_joined_unique_bond_count"] = 0
         stage["missing_is_st_row_count"] = 0
@@ -633,11 +640,16 @@ class CBETLPipeline:
 
     def run_stage_e_redemption_delist(self):
         if self.results["source_coverage"]["status"] == STAGE_STATUS_FAIL:
-            self.results["redemption_summary"]["status"] = STAGE_STATUS_NOT_RUN
-            self.results["redemption_summary"]["message"] = "Skipped because Stage A failed."
+            self.results["redemption_summary"].update(
+                {
+                    "status": STAGE_STATUS_NOT_RUN,
+                    "failure_type": "NONE",
+                    "message": "Skipped because Stage A failed.",
+                }
+            )
             return False
 
-        stage = self.results["redemption_summary"]
+        stage = self.results["redemption_summary"] = build_redemption_summary(**self.results["redemption_summary"])
         stage["redemption_joined_row_count"] = 0
         stage["redemption_joined_unique_bond_count"] = 0
         stage["missing_redemption_row_count"] = 0
@@ -763,17 +775,22 @@ class CBETLPipeline:
 
     def run_stage_f_validator(self):
         if self.results["source_coverage"]["status"] == STAGE_STATUS_FAIL:
-            self.results["validator_summary"]["status"] = STAGE_STATUS_NOT_RUN
-            self.results["validator_summary"]["message"] = "Skipped because Stage A failed."
-            self.results["validator_summary"]["core_validator_status"] = STAGE_STATUS_NOT_RUN
-            self.results["validator_summary"]["core_validator_message"] = ""
-            self.results["validator_summary"]["enrichment_validator_status"] = STAGE_STATUS_NOT_RUN
-            self.results["validator_summary"]["enrichment_validator_message"] = ""
-            self.results["validator_summary"]["promotion_gate_status"] = STAGE_STATUS_NOT_RUN
-            self.results["validator_summary"]["promotion_gate_message"] = ""
+            self.results["validator_summary"].update(
+                {
+                    "status": STAGE_STATUS_NOT_RUN,
+                    "failure_type": "NONE",
+                    "message": "Skipped because Stage A failed.",
+                    "core_validator_status": STAGE_STATUS_NOT_RUN,
+                    "core_validator_message": "",
+                    "enrichment_validator_status": STAGE_STATUS_NOT_RUN,
+                    "enrichment_validator_message": "",
+                    "promotion_gate_status": PROMOTION_STATUS_NOT_RUN,
+                    "promotion_gate_message": "",
+                }
+            )
             return False
 
-        stage = self.results["validator_summary"]
+        stage = self.results["validator_summary"] = build_validator_summary(**self.results["validator_summary"])
         stage["core_validator_status"] = STAGE_STATUS_NOT_RUN
         stage["core_validator_message"] = ""
         stage["enrichment_validator_status"] = STAGE_STATUS_NOT_RUN
@@ -884,39 +901,41 @@ class CBETLPipeline:
         secondary_findings = []
 
         if self.results["source_coverage"]["failure_type"] == "SOURCE_AUTH_FAILURE":
-            root_blockers.append({"type": "SOURCE_AUTH_FAILURE", "stage": "A", "trigger": self.results["source_coverage"]["message"], "evidence": {}})
+            root_blockers.append(build_root_blocker("SOURCE_AUTH_FAILURE", "A", self.results["source_coverage"]["message"], {}))
         if self.results["source_coverage"]["failure_type"] == "PRICE_SOURCE_UNREADABLE":
-            root_blockers.append({"type": "PRICE_SOURCE_UNREADABLE", "stage": "A", "trigger": self.results["source_coverage"]["message"], "evidence": {}})
+            root_blockers.append(build_root_blocker("PRICE_SOURCE_UNREADABLE", "A", self.results["source_coverage"]["message"], {}))
         if self.results["supportability_summary"]["failure_type"] == "SUPPORTABILITY_REGRESSION":
-            root_blockers.append({"type": "SUPPORTABILITY_REGRESSION", "stage": "B", "trigger": "unexpected_contract_regression_row_count > 0", "evidence": {"count": self.results["supportability_summary"]["unexpected_contract_regression_row_count"]}})
+            root_blockers.append(build_root_blocker("SUPPORTABILITY_REGRESSION", "B", "unexpected_contract_regression_row_count > 0", {"count": self.results["supportability_summary"]["unexpected_contract_regression_row_count"]}))
         if self.results["premium_join_summary"]["failure_type"] == "PREMIUM_SOURCE_TRUNCATION":
-            root_blockers.append({"type": "PREMIUM_SOURCE_TRUNCATION", "stage": "C", "trigger": "Exact formula match", "evidence": {"ratio": self.results["premium_join_summary"]["missing_premium_ratio"]}})
+            root_blockers.append(build_root_blocker("PREMIUM_SOURCE_TRUNCATION", "C", "Exact formula match", {"ratio": self.results["premium_join_summary"]["missing_premium_ratio"]}))
         if self.results["premium_join_summary"]["failure_type"] == "PREMIUM_RATE_MISSING_BROAD_COVERAGE":
-            root_blockers.append({"type": "PREMIUM_RATE_MISSING_BROAD_COVERAGE", "stage": "C", "trigger": "missing_premium_ratio >= 0.20", "evidence": {"ratio": self.results["premium_join_summary"]["missing_premium_ratio"]}})
+            root_blockers.append(build_root_blocker("PREMIUM_RATE_MISSING_BROAD_COVERAGE", "C", "missing_premium_ratio >= 0.20", {"ratio": self.results["premium_join_summary"]["missing_premium_ratio"]}))
         if self.results["premium_join_summary"]["failure_type"] == "RATE_LIMITED_ENRICHMENT":
-            root_blockers.append({"type": "RATE_LIMITED_ENRICHMENT", "stage": "ORCH", "trigger": self.results["premium_join_summary"]["message"], "evidence": {"rate_limited_enrichment": True}})
+            root_blockers.append(build_root_blocker("RATE_LIMITED_ENRICHMENT", "ORCH", self.results["premium_join_summary"]["message"], {"rate_limited_enrichment": True}))
         if self.results["premium_join_summary"]["failure_type"] == "PERMISSION_DEGRADED_ENRICHMENT":
-            root_blockers.append({"type": "PERMISSION_DEGRADED_ENRICHMENT", "stage": "ORCH", "trigger": self.results["premium_join_summary"]["message"], "evidence": {"permission_degraded_enrichment": True}})
+            root_blockers.append(build_root_blocker("PERMISSION_DEGRADED_ENRICHMENT", "ORCH", self.results["premium_join_summary"]["message"], {"permission_degraded_enrichment": True}))
+        if self.results["premium_join_summary"].get("orchestrator_blocker_type") == "CONCURRENT_RUN_BLOCKED":
+            root_blockers.append(build_root_blocker("CONCURRENT_RUN_BLOCKED", "ORCH", self.results["premium_join_summary"]["message"], {}))
         if self.results["is_st_join_summary"]["failure_type"] == "IS_ST_SOURCE_GAP":
-            root_blockers.append({"type": "IS_ST_SOURCE_GAP", "stage": "D", "trigger": "missing_is_st_ratio >= 0.20", "evidence": {"ratio": self.results["is_st_join_summary"]["missing_is_st_ratio"]}})
+            root_blockers.append(build_root_blocker("IS_ST_SOURCE_GAP", "D", "missing_is_st_ratio >= 0.20", {"ratio": self.results["is_st_join_summary"]["missing_is_st_ratio"]}))
         if self.results["redemption_summary"]["failure_type"] == "REDEMPTION_SOURCE_GAP":
-            root_blockers.append({"type": "REDEMPTION_SOURCE_GAP", "stage": "E", "trigger": "missing_redemption_ratio >= 0.20", "evidence": {"ratio": self.results["redemption_summary"]["missing_redemption_ratio"]}})
+            root_blockers.append(build_root_blocker("REDEMPTION_SOURCE_GAP", "E", "missing_redemption_ratio >= 0.20", {"ratio": self.results["redemption_summary"]["missing_redemption_ratio"]}))
         if self.results["validator_summary"]["failure_type"] == "VALIDATOR_SCHEMA_FAILURE":
-            root_blockers.append({"type": "VALIDATOR_SCHEMA_FAILURE", "stage": "F", "trigger": self.results["validator_summary"].get("core_validator_message", ""), "evidence": {}})
+            root_blockers.append(build_root_blocker("VALIDATOR_SCHEMA_FAILURE", "F", self.results["validator_summary"].get("core_validator_message", ""), {}))
         if self.results["validator_summary"]["failure_type"] == "VALIDATOR_SEMANTIC_FAILURE":
             trigger = self.results["validator_summary"].get("core_validator_message") or self.results["validator_summary"].get("enrichment_validator_message", "")
-            root_blockers.append({"type": "VALIDATOR_SEMANTIC_FAILURE", "stage": "F", "trigger": trigger, "evidence": {}})
+            root_blockers.append(build_root_blocker("VALIDATOR_SEMANTIC_FAILURE", "F", trigger, {}))
 
         if self.results["supportability_summary"].get("missing_underlying_row_count", 0) > 0:
-            secondary_findings.append({"type": "MISSING_UNDERLYING_TICKER_ROWS", "stage": "B", "trigger": "missing_underlying_row_count > 0", "evidence": {"count": self.results["supportability_summary"]["missing_underlying_row_count"]}})
+            secondary_findings.append(build_secondary_finding("MISSING_UNDERLYING_TICKER_ROWS", "B", "missing_underlying_row_count > 0", {"count": self.results["supportability_summary"]["missing_underlying_row_count"]}))
         if self.results["premium_join_summary"].get("missing_premium_row_count", 0) > 0:
-             secondary_findings.append({"type": "MISSING_PREMIUM_RATE_ROWS", "stage": "C", "trigger": "missing_premium_row_count > 0", "evidence": {"count": self.results["premium_join_summary"]["missing_premium_row_count"]}})
+             secondary_findings.append(build_secondary_finding("MISSING_PREMIUM_RATE_ROWS", "C", "missing_premium_row_count > 0", {"count": self.results["premium_join_summary"]["missing_premium_row_count"]}))
         if self.results["is_st_join_summary"].get("missing_is_st_row_count", 0) > 0:
-             secondary_findings.append({"type": "MISSING_IS_ST_ROWS", "stage": "D", "trigger": "missing_is_st_row_count > 0", "evidence": {"count": self.results["is_st_join_summary"]["missing_is_st_row_count"]}})
+             secondary_findings.append(build_secondary_finding("MISSING_IS_ST_ROWS", "D", "missing_is_st_row_count > 0", {"count": self.results["is_st_join_summary"]["missing_is_st_row_count"]}))
         if self.results["redemption_summary"].get("missing_redemption_row_count", 0) > 0:
-             secondary_findings.append({"type": "MISSING_REDEMPTION_ROWS", "stage": "E", "trigger": "missing_redemption_row_count > 0", "evidence": {"count": self.results["redemption_summary"]["missing_redemption_row_count"]}})
+             secondary_findings.append(build_secondary_finding("MISSING_REDEMPTION_ROWS", "E", "missing_redemption_row_count > 0", {"count": self.results["redemption_summary"]["missing_redemption_row_count"]}))
         if self.results["supportability_summary"]["status"] == STAGE_STATUS_PASS and self.results["supportability_summary"]["supportable_row_count"] == 0:
-             secondary_findings.append({"type": "EXCLUSION_ONLY_WINDOW", "stage": "B", "trigger": "supportable_row_count == 0", "evidence": {}})
+             secondary_findings.append(build_secondary_finding("EXCLUSION_ONLY_WINDOW", "B", "supportable_row_count == 0", {}))
 
         return root_blockers, secondary_findings
 
@@ -935,22 +954,15 @@ class CBETLPipeline:
         self.results["validator_summary"]["promotion_gate_status"] = promotion_status
         self.results["validator_summary"]["promotion_gate_message"] = promotion_message
 
-        report = {
-            "execution_mode": "audit",
-            "start_date": self.start_date,
-            "end_date": self.end_date,
-            "final_status": final_status,
-            "core_path_status": core_path_status,
-            "enrichment_path_status": enrichment_path_status,
-            "non_promotion_disclaimer": NON_PROMOTION_DISCLAIMER,
-            "active_universe_summary": self.results["active_universe_summary"],
-            "source_coverage": self.results["source_coverage"],
-            "supportability_summary": self.results["supportability_summary"],
-            "premium_join_summary": self.results["premium_join_summary"],
-            "is_st_join_summary": self.results["is_st_join_summary"],
-            "redemption_summary": self.results["redemption_summary"],
-            "validator_summary": self.results["validator_summary"],
-            "root_blockers": root_blockers,
-            "secondary_findings": secondary_findings,
-        }
+        report = build_final_report(
+            start_date=self.start_date,
+            end_date=self.end_date,
+            final_status=final_status,
+            core_path_status=core_path_status,
+            enrichment_path_status=enrichment_path_status,
+            results=self.results,
+            root_blockers=root_blockers,
+            secondary_findings=secondary_findings,
+        )
+        report["non_promotion_disclaimer"] = NON_PROMOTION_DISCLAIMER
         return report
