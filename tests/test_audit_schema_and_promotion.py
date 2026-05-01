@@ -378,8 +378,133 @@ def test_audit_core_pass_with_enrichment_degraded():
     report = pipeline.get_final_report()
     assert report["core_path_status"] == "PASS"
     assert report["enrichment_path_status"] == STAGE_STATUS_DEGRADED
+    assert report["premium_join_summary"]["status"] == STAGE_STATUS_DEGRADED
+    assert report["validator_summary"]["core_validator_status"] == "PASS"
+    assert report["validator_summary"]["enrichment_validator_status"] == STAGE_STATUS_DEGRADED
     assert report["validator_summary"]["promotion_gate_status"] == PROMOTION_STATUS_BLOCKED
     assert report["premium_join_summary"]["rate_limited_enrichment"] is True
+
+
+def test_promotion_gate_blocked_when_double_low_or_permission_contract_is_missing():
+    missing_double_low_pipeline = CBETLPipeline("2025-01-06", "2025-01-06", provider=MagicMock())
+    missing_double_low_pipeline.df = pd.DataFrame(
+        {
+            "ticker": ["110001.XSHG"],
+            "date": [pd.Timestamp("2025-01-06")],
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.5],
+            "volume": [1000],
+            "premium_rate": [0.10],
+            "bond_code_raw": ["110001"],
+            "bond_exchange_code": ["XSHG"],
+            "supportability_bucket": [SUPPORTABILITY_BUCKET_SUPPORTABLE],
+            "underlying_ticker": ["600001.XSHG"],
+            "is_st": [False],
+            "is_redeemed": [False],
+        }
+    )
+    missing_double_low_pipeline.results["source_coverage"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
+    missing_double_low_pipeline.results["supportability_summary"].update(
+        {
+            "status": "PASS",
+            "failure_type": "NONE",
+            "message": "",
+            "supportable_row_count": 1,
+            "supportable_unique_bond_count": 1,
+        }
+    )
+    missing_double_low_pipeline.results["premium_join_summary"].update(
+        {
+            "status": "PASS",
+            "failure_type": "NONE",
+            "message": "",
+            "premium_joined_row_count": 1,
+            "premium_joined_unique_bond_count": 1,
+            "missing_premium_row_count": 0,
+            "missing_premium_unique_bond_count": 0,
+            "missing_premium_ratio": 0.0,
+            "premium_missing_ratio_against_active_universe": 0.0,
+            "rate_limited_enrichment": False,
+            "permission_degraded_enrichment": False,
+        }
+    )
+    missing_double_low_pipeline.results["is_st_join_summary"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
+    missing_double_low_pipeline.results["redemption_summary"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
+    missing_double_low_pipeline.results["active_universe_summary"].update(
+        {
+            "core_universe_row_count": 1,
+            "core_universe_unique_bond_count": 1,
+            "active_bond_universe_count": 1,
+            "enrichment_target_row_count": 1,
+            "enrichment_target_unique_bond_count": 1,
+        }
+    )
+
+    missing_double_low_pipeline.run_stage_f_validator()
+    missing_double_low_report = missing_double_low_pipeline.get_final_report()
+
+    assert missing_double_low_report["core_path_status"] == "PASS"
+    assert missing_double_low_report["validator_summary"]["core_validator_status"] == "PASS"
+    assert missing_double_low_report["validator_summary"]["promotion_gate_status"] == PROMOTION_STATUS_BLOCKED
+    assert missing_double_low_report["validator_summary"]["promotion_gate_message"] == "Promotion blocked: double_low column is missing"
+
+    permission_degraded_pipeline = CBETLPipeline("2025-01-06", "2025-01-06", provider=MagicMock())
+    permission_degraded_pipeline.df = pd.DataFrame(
+        {
+            "ticker": ["110001.XSHG"],
+            "date": [pd.Timestamp("2025-01-06")],
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.5],
+            "volume": [1000],
+            "bond_code_raw": ["110001"],
+            "bond_exchange_code": ["XSHG"],
+            "supportability_bucket": [SUPPORTABILITY_BUCKET_SUPPORTABLE],
+            "underlying_ticker": ["600001.XSHG"],
+            "is_st": [False],
+            "is_redeemed": [False],
+        }
+    )
+    permission_degraded_pipeline.results["source_coverage"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
+    permission_degraded_pipeline.results["supportability_summary"].update(
+        {
+            "status": "PASS",
+            "failure_type": "NONE",
+            "message": "",
+            "supportable_row_count": 1,
+            "supportable_unique_bond_count": 1,
+        }
+    )
+    permission_degraded_pipeline.results["active_universe_summary"].update(
+        {
+            "core_universe_row_count": 1,
+            "core_universe_unique_bond_count": 1,
+            "active_bond_universe_count": 1,
+            "enrichment_target_row_count": 1,
+            "enrichment_target_unique_bond_count": 1,
+        }
+    )
+
+    with patch.object(CBETLPipeline, "_fetch_premium_batched", side_effect=RuntimeError("PERMISSION_DEGRADED_ENRICHMENT")):
+        permission_degraded_pipeline.run_stage_c_premium_join()
+    permission_degraded_pipeline.results["is_st_join_summary"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
+    permission_degraded_pipeline.results["redemption_summary"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
+    permission_degraded_pipeline.run_stage_f_validator()
+
+    permission_degraded_report = permission_degraded_pipeline.get_final_report()
+
+    assert permission_degraded_report["core_path_status"] == "PASS"
+    assert permission_degraded_report["enrichment_path_status"] == STAGE_STATUS_DEGRADED
+    assert permission_degraded_report["premium_join_summary"]["status"] == STAGE_STATUS_DEGRADED
+    assert permission_degraded_report["premium_join_summary"]["failure_type"] == "PERMISSION_DEGRADED_ENRICHMENT"
+    assert permission_degraded_report["premium_join_summary"]["permission_degraded_enrichment"] is True
+    assert permission_degraded_report["validator_summary"]["core_validator_status"] == "PASS"
+    assert permission_degraded_report["validator_summary"]["enrichment_validator_status"] == STAGE_STATUS_DEGRADED
+    assert permission_degraded_report["validator_summary"]["promotion_gate_status"] == PROMOTION_STATUS_BLOCKED
+    assert permission_degraded_report["validator_summary"]["promotion_gate_message"] == "Promotion blocked: permission_degraded_enrichment == true"
 
 
 def test_concurrent_run_blocked_reports_only_orch_blocker():

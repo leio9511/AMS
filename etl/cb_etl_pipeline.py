@@ -58,6 +58,19 @@ CANONICAL_CB_COLUMNS = [
     "is_redeemed",
 ]
 
+CORE_VALIDATOR_COLUMNS = [
+    "ticker",
+    "date",
+    "close",
+    "is_st",
+    "is_redeemed",
+]
+
+ENRICHMENT_DEGRADED_FAILURE_TYPES = {
+    "RATE_LIMITED_ENRICHMENT",
+    "PERMISSION_DEGRADED_ENRICHMENT",
+}
+
 REDEMPTION_SOURCE_CONTRACT = {
     "source_table": "bond.CONBOND_BASIC_INFO",
     "primary_field": "delist_Date",
@@ -502,11 +515,24 @@ class CBETLPipeline:
             return stage["status"] == STAGE_STATUS_PASS
 
         except RuntimeError as e:
+            enrichment_target_row_count = self.results["active_universe_summary"].get("enrichment_target_row_count", 0)
+            enrichment_target_unique_bond_count = self.results["active_universe_summary"].get("enrichment_target_unique_bond_count", 0)
+            if enrichment_target_row_count > 0:
+                stage["missing_premium_row_count"] = enrichment_target_row_count
+                stage["missing_premium_unique_bond_count"] = enrichment_target_unique_bond_count
+                stage["missing_premium_ratio"] = 1.0
+                stage["premium_missing_ratio_against_active_universe"] = 1.0
             if "RATE_LIMITED_ENRICHMENT" in str(e):
                 stage["status"] = STAGE_STATUS_DEGRADED
                 stage["failure_type"] = "RATE_LIMITED_ENRICHMENT"
                 stage["rate_limited_enrichment"] = True
                 stage["message"] = "TuShare cb_price_chg rate limit hit"
+                return False
+            if "PERMISSION_DEGRADED_ENRICHMENT" in str(e):
+                stage["status"] = STAGE_STATUS_DEGRADED
+                stage["failure_type"] = "PERMISSION_DEGRADED_ENRICHMENT"
+                stage["permission_degraded_enrichment"] = True
+                stage["message"] = "TuShare cb_price_chg permission degraded"
                 return False
             if "single-call cap characteristic" in str(e):
                 stage["status"] = STAGE_STATUS_FAIL
@@ -548,10 +574,13 @@ class CBETLPipeline:
             normalized = _normalize_premium_source(merged)
             return normalized.drop_duplicates(subset=["date", "bond_code_raw", "bond_exchange_code"])
         except Exception as e:
-            from etl.cb_provider_base import DataProviderQuotaError
+            from etl.cb_provider_base import DataProviderAuthError, DataProviderQuotaError
             if isinstance(e, DataProviderQuotaError) and "RATE_LIMITED" in str(e):
                  self.results["premium_join_summary"]["rate_limited_enrichment"] = True
                  raise RuntimeError("RATE_LIMITED_ENRICHMENT")
+            if isinstance(e, DataProviderAuthError):
+                 self.results["premium_join_summary"]["permission_degraded_enrichment"] = True
+                 raise RuntimeError("PERMISSION_DEGRADED_ENRICHMENT")
             elif "single-call cap characteristic" in str(e):
                  raise RuntimeError(str(e))
             raise e
@@ -754,6 +783,12 @@ class CBETLPipeline:
         if core_validator_status != STAGE_STATUS_PASS:
             return PROMOTION_STATUS_BLOCKED, "Promotion blocked: core_validator_status != PASS"
 
+        if self.results["premium_join_summary"].get("rate_limited_enrichment") is True:
+            return PROMOTION_STATUS_BLOCKED, "Promotion blocked: rate_limited_enrichment == true"
+
+        if self.results["premium_join_summary"].get("permission_degraded_enrichment") is True:
+            return PROMOTION_STATUS_BLOCKED, "Promotion blocked: permission_degraded_enrichment == true"
+
         if self.df is None or "premium_rate" not in self.df.columns:
             return PROMOTION_STATUS_BLOCKED, "Promotion blocked: premium_rate column is missing"
 
@@ -764,12 +799,6 @@ class CBETLPipeline:
         premium_missing_ratio = self.results["premium_join_summary"].get("premium_missing_ratio_against_active_universe", 0.0)
         if enrichment_target_row_count > 0 and premium_missing_ratio > 0.05:
             return PROMOTION_STATUS_BLOCKED, "Promotion blocked: premium_missing_ratio_against_active_universe > 0.05"
-
-        if self.results["premium_join_summary"].get("rate_limited_enrichment") is True:
-            return PROMOTION_STATUS_BLOCKED, "Promotion blocked: rate_limited_enrichment == true"
-
-        if self.results["premium_join_summary"].get("permission_degraded_enrichment") is True:
-            return PROMOTION_STATUS_BLOCKED, "Promotion blocked: permission_degraded_enrichment == true"
 
         return PROMOTION_STATUS_PASS, ""
 
@@ -818,29 +847,34 @@ class CBETLPipeline:
             validator_l2 = DatasetSemanticValidator()
 
             missing_cols = [c for c in CANONICAL_CB_COLUMNS if c not in df_work.columns]
-            if missing_cols:
-                if premium_orchestrator_blocker == "CONCURRENT_RUN_BLOCKED":
-                    unexpected_missing = [c for c in missing_cols if c not in premium_orchestrator_missing_columns]
-                    if unexpected_missing:
-                        stage["status"] = STAGE_STATUS_FAIL
-                        stage["failure_type"] = "VALIDATOR_SCHEMA_FAILURE"
-                        stage["message"] = f"Validator skipped because required canonical columns are missing after upstream stage failures: {unexpected_missing}"
-                        stage["core_validator_status"] = STAGE_STATUS_FAIL
-                        stage["core_validator_message"] = stage["message"]
-                        stage["promotion_gate_status"] = PROMOTION_STATUS_BLOCKED
-                        stage["promotion_gate_message"] = "Promotion blocked: core_validator_status != PASS"
-                        return False
-                    for col in sorted(premium_orchestrator_missing_columns.intersection(missing_cols)):
-                        df_work[col] = pd.Series(float("nan"), index=df_work.index)
-                else:
+            core_missing_cols = [c for c in CORE_VALIDATOR_COLUMNS if c not in df_work.columns]
+            enrichment_missing_cols = [c for c in ("premium_rate", "double_low") if c not in df_work.columns]
+            if core_missing_cols:
+                stage["status"] = STAGE_STATUS_FAIL
+                stage["failure_type"] = "VALIDATOR_SCHEMA_FAILURE"
+                stage["message"] = f"Validator skipped because required canonical columns are missing after upstream stage failures: {core_missing_cols}"
+                stage["core_validator_status"] = STAGE_STATUS_FAIL
+                stage["core_validator_message"] = stage["message"]
+                stage["promotion_gate_status"] = PROMOTION_STATUS_BLOCKED
+                stage["promotion_gate_message"] = "Promotion blocked: core_validator_status != PASS"
+                return False
+
+            if premium_orchestrator_blocker == "CONCURRENT_RUN_BLOCKED" and missing_cols:
+                unexpected_missing = [c for c in missing_cols if c not in premium_orchestrator_missing_columns]
+                if unexpected_missing:
                     stage["status"] = STAGE_STATUS_FAIL
                     stage["failure_type"] = "VALIDATOR_SCHEMA_FAILURE"
-                    stage["message"] = f"Validator skipped because required canonical columns are missing after upstream stage failures: {missing_cols}"
+                    stage["message"] = f"Validator skipped because required canonical columns are missing after upstream stage failures: {unexpected_missing}"
                     stage["core_validator_status"] = STAGE_STATUS_FAIL
                     stage["core_validator_message"] = stage["message"]
                     stage["promotion_gate_status"] = PROMOTION_STATUS_BLOCKED
                     stage["promotion_gate_message"] = "Promotion blocked: core_validator_status != PASS"
                     return False
+                for col in sorted(premium_orchestrator_missing_columns.intersection(missing_cols)):
+                    df_work[col] = pd.Series(float("nan"), index=df_work.index)
+            elif missing_cols:
+                for col in sorted(enrichment_missing_cols):
+                    df_work[col] = pd.Series(float("nan"), index=df_work.index)
 
             df_to_val = df_work[CANONICAL_CB_COLUMNS].copy()
             df_to_val["ticker"] = df_to_val["ticker"].astype(str)
@@ -853,6 +887,11 @@ class CBETLPipeline:
             stage["core_validator_status"] = STAGE_STATUS_PASS if val_l1 else STAGE_STATUS_FAIL
             if not val_l1 and getattr(validator_l1, "last_error_message", ""):
                 stage["core_validator_message"] = validator_l1.last_error_message
+
+            should_run_dataset_semantic_validator = not (
+                self.results["premium_join_summary"].get("failure_type") in ENRICHMENT_DEGRADED_FAILURE_TYPES
+                or self.results["premium_join_summary"].get("orchestrator_blocker_type") == "CONCURRENT_RUN_BLOCKED"
+            )
 
             if premium_orchestrator_blocker == "CONCURRENT_RUN_BLOCKED":
                 stage["enrichment_validator_status"] = STAGE_STATUS_NOT_RUN
@@ -873,9 +912,10 @@ class CBETLPipeline:
                 return stage["status"] == STAGE_STATUS_PASS
 
             try:
-                val_l2 = validator_l2.validate_dataframe(df_to_val)
-                if not val_l2:
-                    stage["core_validator_status"] = STAGE_STATUS_FAIL
+                if should_run_dataset_semantic_validator:
+                    val_l2 = validator_l2.validate_dataframe(df_to_val)
+                    if not val_l2:
+                        stage["core_validator_status"] = STAGE_STATUS_FAIL
             except Exception as e:
                 stage["core_validator_status"] = STAGE_STATUS_FAIL
                 stage["core_validator_message"] = str(e)
