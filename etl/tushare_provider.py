@@ -109,119 +109,12 @@ class TuShareProvider(BaseDataProvider):
             return df.set_index(["code", "time"])
         except Exception as e:
             self._handle_exception(e)
-    def fetch_cb_price_changes(self, tickers: list[str], start_date: str, end_date: str) -> pd.DataFrame:
-        """
-        Implementation of premium/valuation data acquisition for TuShare.
-        Reconstructs 'premium_rate' using historical conversion prices and stock prices.
-        """
-        # cb_daily API does not provide a cb_over_rate field. premium_rate must be computed from bond_close, stock_close, and effective_conv_price.
+    def fetch_cb_price_changes(self, ticker: str) -> pd.DataFrame:
         try:
-            ts_start = start_date.replace("-", "")
-            ts_end = end_date.replace("-", "")
-            
-            # 0. Ensure bond to stock mapping is available
-            if not self._bond_to_stock_map:
-                self.fetch_cb_basic()
-            
-            # 1. Fetch bond daily data for prices
-            df_bond_daily = self.fetch_cb_daily(tickers, start_date, end_date)
-            if df_bond_daily.empty:
-                return pd.DataFrame()
-            df_bond_daily = df_bond_daily.reset_index()
-            
-            # 2. Fetch conversion price changes
-            all_chg = []
-            for ticker in tickers:
-                # Many TuShare cb_* APIs expect a single ts_code. 
-                # Loop explicitly to ensure reliable acquisition and avoid guessing batch support.
-                df_chg = self.pro.cb_price_chg(ts_code=ticker)
-                if df_chg is not None and not df_chg.empty:
-                    all_chg.append(df_chg)
-            df_chg = pd.concat(all_chg) if all_chg else pd.DataFrame(columns=["ts_code", "change_date", "convert_price_initial", "convertprice_aft"])
-            
-            # 3. Fetch underlying stock daily data
-            underlying_stocks = list(set([self._bond_to_stock_map.get(t) for t in tickers if t in self._bond_to_stock_map]))
-            df_stock_daily = pd.DataFrame()
-            if underlying_stocks:
-                stock_frames = []
-                # pro.daily supports comma-separated ts_code batching up to 100+
-                for i in range(0, len(underlying_stocks), 100):
-                    batch = underlying_stocks[i:i+100]
-                    df_s = self.pro.daily(ts_code=",".join(batch), start_date=ts_start, end_date=ts_end)
-                    if df_s is not None and not df_s.empty:
-                        stock_frames.append(df_s)
-                if stock_frames:
-                    df_stock_daily = pd.concat(stock_frames)
-                    df_stock_daily = df_stock_daily.rename(columns={"ts_code": "stk_code", "trade_date": "time"})
-                    df_stock_daily["time"] = pd.to_datetime(df_stock_daily["time"]).dt.strftime("%Y-%m-%d")
-            
-            # 4. Reconstruct premium_rate
-            reconstructed_frames = []
-            for ticker in tickers:
-                bond_daily = df_bond_daily[df_bond_daily["code"] == ticker].copy()
-                if bond_daily.empty:
-                    continue
-                
-                stk_code = self._bond_to_stock_map.get(ticker)
-                bond_chg = df_chg[df_chg["ts_code"] == ticker].copy() if not df_chg.empty else pd.DataFrame()
-                stock_daily = df_stock_daily[df_stock_daily["stk_code"] == stk_code].copy() if (not df_stock_daily.empty and stk_code) else pd.DataFrame()
-                
-                # Sort for merge_asof
-                bond_daily["time_dt"] = pd.to_datetime(bond_daily["time"])
-                bond_daily = bond_daily.sort_values("time_dt")
-                
-                merged = bond_daily.copy()
-                
-                if not stock_daily.empty:
-                    stock_daily["time_dt"] = pd.to_datetime(stock_daily["time"])
-                    stock_daily = stock_daily.sort_values("time_dt")
-                    
-                    # Merge bond prices and stock prices
-                    merged = pd.merge(
-                        merged,
-                        stock_daily[["time_dt", "close"]].rename(columns={"close": "stock_close"}),
-                        on="time_dt",
-                        how="left"
-                    )
-                else:
-                    merged["stock_close"] = float("nan")
-                
-                # Rename bond close for exact formula match
-                merged = merged.rename(columns={"close": "bond_close"})
-
-                if not bond_chg.empty:
-                    bond_chg["change_date_dt"] = pd.to_datetime(bond_chg["change_date"])
-                    bond_chg = bond_chg.sort_values("change_date_dt")
-                    
-                    merged = pd.merge_asof(
-                        merged,
-                        bond_chg[["change_date_dt", "convertprice_aft"]].rename(columns={"convertprice_aft": "effective_conv_price"}),
-                        left_on="time_dt",
-                        right_on="change_date_dt",
-                        direction="backward"
-                    )
-                    
-                    # Fill initial price if before first change
-                    # convert_price_initial in TuShare is the price before ANY change
-                    initial_price = bond_chg["convert_price_initial"].iloc[0]
-                    merged["effective_conv_price"] = merged["effective_conv_price"].fillna(initial_price)
-                else:
-                    merged["effective_conv_price"] = float("nan")
-
-                # Reconstruct: premium_rate = (bond_close / ((100 / effective_conv_price) * stock_close) - 1) * 100
-                # If stock_close or effective_conv_price is missing, result naturally becomes NaN.
-                merged["convert_premium_rate"] = (
-                    merged["bond_close"] / ((100 / merged["effective_conv_price"]) * merged["stock_close"]) - 1
-                ) * 100
-                
-                reconstructed_frames.append(merged.rename(columns={"time": "date"}))
-            
-            if not reconstructed_frames:
-                return pd.DataFrame()
-            
-            df_result = pd.concat(reconstructed_frames)
-            return df_result[["code", "date", "convert_premium_rate"]]
-            
+            df = self.pro.cb_price_chg(ts_code=ticker)
+            if df is not None and not df.empty:
+                return df
+            return pd.DataFrame()
         except Exception as e:
             self._handle_exception(e)
 

@@ -420,6 +420,9 @@ class CBETLPipeline:
         stage["missing_premium_row_count"] = 0
         stage["missing_premium_unique_bond_count"] = 0
         stage["missing_premium_ratio"] = 0.0
+        stage["rate_limited_enrichment"] = False
+        stage["permission_degraded_enrichment"] = False
+        stage["premium_missing_ratio_against_active_universe"] = 0.0
 
         try:
             if self.df is None:
@@ -482,6 +485,11 @@ class CBETLPipeline:
             return stage["status"] == STAGE_STATUS_PASS
 
         except RuntimeError as e:
+            if "RATE_LIMITED_ENRICHMENT" in str(e):
+                stage["status"] = "DEGRADED"
+                stage["failure_type"] = "RATE_LIMITED_ENRICHMENT"
+                stage["message"] = "TuShare cb_price_chg rate limit hit"
+                return False
             if "single-call cap characteristic" in str(e):
                 stage["status"] = STAGE_STATUS_FAIL
                 stage["failure_type"] = "PREMIUM_SOURCE_TRUNCATION"
@@ -503,16 +511,24 @@ class CBETLPipeline:
             return pd.DataFrame()
             
         try:
-            merged = self.provider.fetch_cb_price_changes(tickers, start_date, end_date)
+            if type(self.provider).__name__ == "TuShareProvider":
+                from etl.tushare_enrichment_orchestrator import TuShareEnrichmentOrchestrator
+                orchestrator = TuShareEnrichmentOrchestrator(self.provider)
+                merged = orchestrator.run(tickers, start_date, end_date)
+            else:
+                merged = self.provider.fetch_cb_price_changes(tickers, start_date, end_date)
+                
             if merged is None or merged.empty:
                 return pd.DataFrame()
                 
             normalized = _normalize_premium_source(merged)
             return normalized.drop_duplicates(subset=["date", "bond_code_raw", "bond_exchange_code"])
-        except DataProviderError as e:
-            if "single-call cap characteristic" in str(e):
-                 # Re-raise to trigger the existing logic in run_stage_c_premium_join if needed, 
-                 # though the provider should have handled it.
+        except Exception as e:
+            from etl.cb_provider_base import DataProviderQuotaError
+            if isinstance(e, DataProviderQuotaError) and "RATE_LIMITED" in str(e):
+                 self.results["premium_join_summary"]["rate_limited_enrichment"] = True
+                 raise RuntimeError("RATE_LIMITED_ENRICHMENT")
+            elif "single-call cap characteristic" in str(e):
                  raise RuntimeError(str(e))
             raise e
 
