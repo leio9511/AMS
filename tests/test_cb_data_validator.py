@@ -185,3 +185,27 @@ def test_semantic_validation_drift_violation(tmp_path):
     with pytest.raises(DataDriftViolation) as excinfo:
         validator.validate_dataframe(df)
     assert "[DataDriftViolation] candidate dataset drift exceeded baseline guardrail." in str(excinfo.value)
+
+from ams.validators.cb_data_validator import EnrichmentValidator
+
+def test_enrichment_validator_double_low_canonical():
+    df = pd.DataFrame({
+        "close": [100.0, 110.0],
+        "premium_rate": [0.10, 0.20],
+        "double_low": [110.0, 131.0] # 110 + 0.20*100 = 130.0 != 131.0
+    })
+    validator = EnrichmentValidator()
+    status, msg = validator.validate_dataframe(df)
+    assert status == "FAIL"
+    assert "VALIDATOR_SEMANTIC_FAILURE" in msg
+
+def test_enrichment_validator_reports_degradation():
+    df = pd.DataFrame({
+        "close": [100.0] * 20,
+        "premium_rate": [0.10] * 10 + [float('nan')] * 10,
+        "double_low": [110.0] * 10 + [float('nan')] * 10
+    })
+    validator = EnrichmentValidator()
+    status, msg = validator.validate_dataframe(df)
+    assert status == "DEGRADED"
+    assert "High missing ratio on premium" in msg

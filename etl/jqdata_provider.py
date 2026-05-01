@@ -61,7 +61,12 @@ class JQDataProvider(BaseDataProvider):
                     batch_codes = tickers[i:i + code_batch_size]
                     # Strip suffixes for JQData CONBOND_DAILY_CONVERT query which expects raw codes
                     raw_batch_codes = [c.split('.')[0] for c in batch_codes]
-                    q = self.client.query(self.client.bond.CONBOND_DAILY_CONVERT).filter(
+                    q = self.client.query(
+                        self.client.bond.CONBOND_DAILY_CONVERT.code,
+                        self.client.bond.CONBOND_DAILY_CONVERT.date,
+                        self.client.bond.CONBOND_DAILY_CONVERT.convert_price,
+                        self.client.bond.CONBOND_DAILY_CONVERT.convert_premium_rate
+                    ).filter(
                         self.client.bond.CONBOND_DAILY_CONVERT.code.in_(raw_batch_codes),
                         self.client.bond.CONBOND_DAILY_CONVERT.date >= s_date,
                         self.client.bond.CONBOND_DAILY_CONVERT.date <= e_date,
@@ -89,10 +94,8 @@ class JQDataProvider(BaseDataProvider):
             df = self.client.get_extras("is_st", tickers, start_date=start_date, end_date=end_date)
             return df
         except Exception as e:
-            # Classification as per pipeline logic
             err_msg = str(e).lower()
             if any(kw in err_msg for kw in ["window", "range", "permission", "account", "support"]):
-                 # We can wrap this in a more specific error if needed, but for now DataProviderError is fine
                  pass
             self._handle_exception(e)
 

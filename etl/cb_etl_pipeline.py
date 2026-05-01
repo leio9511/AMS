@@ -463,6 +463,14 @@ class CBETLPipeline:
             total_rows = len(df_work)
             stage["missing_premium_ratio"] = stage["missing_premium_row_count"] / total_rows if total_rows > 0 else 0.0
             
+            df_enrichment = df_work[df_work["underlying_ticker"].notna()]
+            enrichment_total = len(df_enrichment)
+            if enrichment_total > 0:
+                missing_in_enrichment = int(df_enrichment["premium_rate"].isna().sum())
+                stage["premium_missing_ratio_against_active_universe"] = missing_in_enrichment / enrichment_total
+            else:
+                stage["premium_missing_ratio_against_active_universe"] = 0.0
+            
             # Classification
             supportable_row_count = self.results["supportability_summary"]["supportable_row_count"]
             premium_source_row_count = self.results["source_coverage"]["premium_source_row_count"]
@@ -724,6 +732,23 @@ class CBETLPipeline:
             except Exception as e:
                 stage["semantic_validator_status"] = STAGE_STATUS_FAIL
                 stage["semantic_validator_message"] = str(e)
+
+            # Enrichment Validator
+            try:
+                from ams.validators.cb_data_validator import EnrichmentValidator
+                validator_enrichment = EnrichmentValidator()
+                # Enrichment validator should only run on enrichment target universe
+                df_enrichment_target = df_work[df_work["underlying_ticker"].notna()].copy()
+                if not df_enrichment_target.empty:
+                    st, msg = validator_enrichment.validate_dataframe(df_enrichment_target)
+                    stage["enrichment_validator_status"] = st
+                    stage["enrichment_validator_message"] = msg
+                else:
+                    stage["enrichment_validator_status"] = STAGE_STATUS_PASS
+                    stage["enrichment_validator_message"] = ""
+            except Exception as e:
+                stage["enrichment_validator_status"] = STAGE_STATUS_FAIL
+                stage["enrichment_validator_message"] = str(e)
 
             # Stage F.3: Drift Validator (NOT_RUN in v1 runtime)
             stage["drift_validator_status"] = STAGE_STATUS_NOT_RUN
