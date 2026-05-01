@@ -382,6 +382,65 @@ def test_audit_core_pass_with_enrichment_degraded():
     assert report["premium_join_summary"]["rate_limited_enrichment"] is True
 
 
+def test_concurrent_run_blocked_reports_only_orch_blocker():
+    pipeline = CBETLPipeline("2025-01-06", "2025-01-06", provider=MagicMock())
+    pipeline.df = pd.DataFrame(
+        {
+            "ticker": ["110001.XSHG"],
+            "date": [pd.Timestamp("2025-01-06")],
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.5],
+            "volume": [1000],
+            "bond_code_raw": ["110001"],
+            "bond_exchange_code": ["XSHG"],
+            "supportability_bucket": [SUPPORTABILITY_BUCKET_SUPPORTABLE],
+            "underlying_ticker": ["600001.XSHG"],
+            "is_st": [False],
+            "is_redeemed": [False],
+        }
+    )
+    pipeline.results["source_coverage"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
+    pipeline.results["supportability_summary"].update(
+        {
+            "status": "PASS",
+            "failure_type": "NONE",
+            "message": "",
+            "supportable_row_count": 1,
+            "supportable_unique_bond_count": 1,
+        }
+    )
+    pipeline.results["active_universe_summary"].update(
+        {
+            "core_universe_row_count": 1,
+            "core_universe_unique_bond_count": 1,
+            "active_bond_universe_count": 1,
+            "enrichment_target_row_count": 1,
+            "enrichment_target_unique_bond_count": 1,
+        }
+    )
+
+    with patch.object(CBETLPipeline, "_fetch_premium_batched", side_effect=RuntimeError("CONCURRENT_RUN_BLOCKED")):
+        pipeline.run_stage_c_premium_join()
+    pipeline.results["is_st_join_summary"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
+    pipeline.results["redemption_summary"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
+    pipeline.run_stage_f_validator()
+
+    report = pipeline.get_final_report()
+
+    assert set(report["premium_join_summary"].keys()) == EXPECTED_PREMIUM_JOIN_SUMMARY_KEYS
+    assert set(report["validator_summary"].keys()) == EXPECTED_VALIDATOR_SUMMARY_KEYS
+    assert report["premium_join_summary"]["status"] == "FAIL"
+    assert report["premium_join_summary"]["failure_type"] == "NONE"
+    assert report["premium_join_summary"]["message"] == "CONCURRENT_RUN_BLOCKED"
+    assert report["validator_summary"]["failure_type"] == "NONE"
+    assert report["validator_summary"]["status"] == "PASS"
+    blocker_types = [item["type"] for item in report["root_blockers"]]
+    assert blocker_types == ["CONCURRENT_RUN_BLOCKED"]
+    assert all(item["type"] != "VALIDATOR_SCHEMA_FAILURE" for item in report["root_blockers"])
+
+
 def test_run_etl_promotion_gate_blocks_promotion(tmp_path):
     dataset_path = tmp_path / "cb.csv"
     metrics_path = tmp_path / "cb.metrics.json"
