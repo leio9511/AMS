@@ -295,7 +295,8 @@ class CBETLPipeline:
             mask_all_null = self.df[ohlcv_cols].isnull().all(axis=1)
             aus["all_null_ohlcv_row_count_filtered"] = int(mask_all_null.sum())
             
-            self.df = self.df[~mask_all_null].copy()
+            mask_active = self.df[ohlcv_cols].notna().all(axis=1)
+            self.df = self.df[mask_active].copy()
             aus["core_price_row_count_after_filter"] = len(self.df)
             aus["core_universe_row_count"] = len(self.df)
             aus["core_universe_unique_bond_count"] = int(self.df["ticker"].nunique()) if not self.df.empty else 0

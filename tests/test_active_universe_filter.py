@@ -13,15 +13,15 @@ class MockProvider:
     def fetch_all_securities(self, types):
         return pd.DataFrame(index=["110001.XSHG", "110002.XSHG"])
     def fetch_cb_daily(self, tickers, start_date, end_date):
-        # Create a dataframe with some all-null OHLCV rows and some valid rows
+        # Create a dataframe with some all-null OHLCV rows, partially null rows, and valid rows
         return pd.DataFrame({
-            "time": ["2023-01-01", "2023-01-02", "2023-01-01"],
-            "code": ["110001.XSHG", "110001.XSHG", "110002.XSHG"],
-            "open": [100.0, None, 105.0],
-            "high": [101.0, None, 106.0],
-            "low": [99.0, None, 104.0],
-            "close": [100.5, None, 105.5],
-            "volume": [1000, None, 2000]
+            "time": ["2023-01-01", "2023-01-02", "2023-01-01", "2023-01-03"],
+            "code": ["110001.XSHG", "110001.XSHG", "110002.XSHG", "110002.XSHG"],
+            "open": [100.0, None, 105.0, None],
+            "high": [101.0, None, 106.0, 106.0],
+            "low": [99.0, None, 104.0, 104.0],
+            "close": [100.5, None, 105.5, 105.5],
+            "volume": [1000, None, 2000, 2000]
         })
 
 def test_jqdata_ohlcv_filter_removes_all_null_rows():
@@ -29,6 +29,7 @@ def test_jqdata_ohlcv_filter_removes_all_null_rows():
     pipeline.run_stage_a_source_acquisition()
     
     # 2023-01-02 row for 110001.XSHG should be removed because OHLCV are all null
+    # 2023-01-03 row for 110002.XSHG should be removed because open is null (partially null)
     df = pipeline.df
     assert len(df) == 2
     assert df["open"].isnull().sum() == 0
@@ -55,7 +56,7 @@ def test_active_universe_summary_metrics():
     report = pipeline.get_final_report()
     aus = report["active_universe_summary"]
     
-    assert aus["core_price_row_count_before_filter"] == 3
+    assert aus["core_price_row_count_before_filter"] == 4
     assert aus["core_price_row_count_after_filter"] == 2
     assert aus["all_null_ohlcv_row_count_filtered"] == 1
     assert aus["core_universe_row_count"] == 2
