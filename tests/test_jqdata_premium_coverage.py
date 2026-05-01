@@ -47,15 +47,15 @@ def test_premium_coverage_uses_enrichment_target_universe():
     # We mock supportability
     pipeline.results["supportability_summary"] = {
         "status": "PASS",
-        "supportable_row_count": 2
+        "supportable_row_count": 3
     }
     
     pipeline.df = pd.DataFrame({
-        "date": pd.to_datetime(["2023-01-01", "2023-01-01", "2023-01-01"]),
-        "bond_code_raw": ["110001", "110002", "110003"],
-        "bond_exchange_code": ["XSHG", "XSHG", "XSHG"],
-        "supportability_bucket": [SUPPORTABILITY_BUCKET_SUPPORTABLE, SUPPORTABILITY_BUCKET_SUPPORTABLE, SUPPORTABILITY_BUCKET_OUTSIDE_BASIC_INFO],
-        "underlying_ticker": ["000001.XSHE", "000002.XSHE", None]
+        "date": pd.to_datetime(["2023-01-01", "2023-01-01", "2023-01-01", "2023-01-01"]),
+        "bond_code_raw": ["110001", "110002", "110003", "110004"],
+        "bond_exchange_code": ["XSHG", "XSHG", "XSHG", "XSHG"],
+        "supportability_bucket": [SUPPORTABILITY_BUCKET_SUPPORTABLE, SUPPORTABILITY_BUCKET_SUPPORTABLE, SUPPORTABILITY_BUCKET_OUTSIDE_BASIC_INFO, SUPPORTABILITY_BUCKET_SUPPORTABLE],
+        "underlying_ticker": ["000001.XSHE", "000002.XSHE", None, None]
     })
     
     # Provide premium for only one bond
@@ -69,8 +69,7 @@ def test_premium_coverage_uses_enrichment_target_universe():
     pipeline.run_stage_c_premium_join()
     
     summary = pipeline.results["premium_join_summary"]
-    # We have 2 supportable bonds. Premium joined 1. Missing premium 1.
-    # Missing premium ratio should be 1 / 2 = 0.5
-    assert summary["missing_premium_ratio"] == 0.5
-    assert summary["missing_premium_row_count"] == 1
+    
+    assert summary["premium_missing_ratio_against_active_universe"] == 0.5
+    assert summary["missing_premium_row_count"] == 2
     assert summary["premium_joined_row_count"] == 1

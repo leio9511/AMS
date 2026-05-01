@@ -490,6 +490,9 @@ class CBETLPipeline:
             self.df = pd.merge(self.df, df_work[["date", "bond_code_raw", "bond_exchange_code", "premium_rate"]], 
                                on=["date", "bond_code_raw", "bond_exchange_code"], how="left")
             
+            if "premium_rate" in self.df.columns and "close" in self.df.columns:
+                self.df["double_low"] = self.df["close"] + self.df["premium_rate"] * 100
+            
             return stage["status"] == STAGE_STATUS_PASS
 
         except RuntimeError as e:
@@ -631,24 +634,26 @@ class CBETLPipeline:
         stage["missing_redemption_ratio"] = 0.0
 
         try:
-            df_work = self.df[self.df["supportability_bucket"].eq(SUPPORTABILITY_BUCKET_SUPPORTABLE)].copy()
-            if df_work.empty:
+            # Evaluate redemption coverage ONLY against the Core Universe
+            # specifically the supportable subset of the Core Universe
+            df_core_universe_supportable = self.df[self.df["supportability_bucket"].eq(SUPPORTABILITY_BUCKET_SUPPORTABLE)].copy()
+            if df_core_universe_supportable.empty:
                 stage["status"] = STAGE_STATUS_NOT_RUN
-                stage["message"] = "No supportable bonds to derive redemption."
+                stage["message"] = "No supportable bonds in Core Universe to derive redemption."
                 return True
 
-            df_work["delist_Date"] = pd.to_datetime(df_work["bond_code_raw"].map(self.bond_to_delist), errors="coerce")
+            df_core_universe_supportable["delist_Date"] = pd.to_datetime(df_core_universe_supportable["bond_code_raw"].map(self.bond_to_delist), errors="coerce")
             
             if self.df_bonds_info is not None:
                 self.results["source_coverage"]["redemption_source_row_count"] = len(self.df_bonds_info)
                 self.results["source_coverage"]["redemption_source_unique_bond_count"] = self.df_bonds_info["code"].nunique() if "code" in self.df_bonds_info.columns else 0
 
-            stage["redemption_joined_row_count"] = int(df_work["delist_Date"].notna().sum())
-            stage["redemption_joined_unique_bond_count"] = int(df_work.loc[df_work["delist_Date"].notna(), "bond_code_raw"].nunique())
-            stage["missing_redemption_row_count"] = int(df_work["delist_Date"].isna().sum())
-            stage["missing_redemption_unique_bond_count"] = int(df_work.loc[df_work["delist_Date"].isna(), "bond_code_raw"].nunique())
+            stage["redemption_joined_row_count"] = int(df_core_universe_supportable["delist_Date"].notna().sum())
+            stage["redemption_joined_unique_bond_count"] = int(df_core_universe_supportable.loc[df_core_universe_supportable["delist_Date"].notna(), "bond_code_raw"].nunique())
+            stage["missing_redemption_row_count"] = int(df_core_universe_supportable["delist_Date"].isna().sum())
+            stage["missing_redemption_unique_bond_count"] = int(df_core_universe_supportable.loc[df_core_universe_supportable["delist_Date"].isna(), "bond_code_raw"].nunique())
             
-            total_rows = len(df_work)
+            total_rows = len(df_core_universe_supportable)
             stage["missing_redemption_ratio"] = stage["missing_redemption_row_count"] / total_rows if total_rows > 0 else 0.0
 
             if total_rows > 0 and stage["missing_redemption_ratio"] >= 0.20:
@@ -657,15 +662,12 @@ class CBETLPipeline:
             else:
                 stage["status"] = STAGE_STATUS_PASS
 
-            df_work["is_redeemed"] = df_work["delist_Date"].notna() & (df_work["date"] >= df_work["delist_Date"])
+            df_core_universe_supportable["is_redeemed"] = df_core_universe_supportable["delist_Date"].notna() & (df_core_universe_supportable["date"] >= df_core_universe_supportable["delist_Date"])
             
             if "is_redeemed" in self.df.columns:
                 self.df.drop(columns=["is_redeemed"], inplace=True)
-            self.df = pd.merge(self.df, df_work[["date", "bond_code_raw", "bond_exchange_code", "is_redeemed"]], 
+            self.df = pd.merge(self.df, df_core_universe_supportable[["date", "bond_code_raw", "bond_exchange_code", "is_redeemed"]], 
                                on=["date", "bond_code_raw", "bond_exchange_code"], how="left")
-            
-            if "premium_rate" in self.df.columns and "close" in self.df.columns:
-                 self.df["double_low"] = self.df["close"] + self.df["premium_rate"] * 100
             
             return stage["status"] == STAGE_STATUS_PASS
 
