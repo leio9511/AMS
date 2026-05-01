@@ -177,17 +177,20 @@ def run_etl(start_date, end_date, source_name, promote=False, jqdata_client=None
         # Promote mode
         df = pipeline.df
         df_supportable = df[df["supportability_bucket"].eq(SUPPORTABILITY_BUCKET_SUPPORTABLE)].copy()
-        
-        # Strict production checks for promotion
-        if not df_supportable.empty:
-            if "underlying_ticker" not in df_supportable.columns or df_supportable["underlying_ticker"].isna().any():
-                 raise ValueError(SUPPORTABILITY_REGRESSION_ERROR)
-            if "premium_rate" not in df_supportable.columns or df_supportable["premium_rate"].isna().any():
-                raise ValueError("Missing premium_rate for some records")
-            if "is_st" not in df_supportable.columns or df_supportable["is_st"].isna().any():
-                raise ValueError("Missing is_st for some records")
-            if "is_redeemed" not in df_supportable.columns or df_supportable["is_redeemed"].isna().any():
-                raise ValueError("Missing is_redeemed for some records")
+
+        promotion_status = report.get("validator_summary", {}).get("promotion_gate_status", "PASS")
+        promotion_message = report.get("validator_summary", {}).get("promotion_gate_message", "")
+        if promotion_status != "PASS":
+            if promotion_message:
+                print(promotion_message)
+            core_validator_message = report.get("validator_summary", {}).get("core_validator_message", "")
+            enrichment_validator_message = report.get("validator_summary", {}).get("enrichment_validator_message", "")
+            if core_validator_message:
+                print(core_validator_message)
+            if enrichment_validator_message:
+                print(enrichment_validator_message)
+            print("[DataPromotionBlocked] Candidate research dataset failed promotion gate. Canonical dataset remains unchanged.")
+            sys.exit(1)
 
         supportability_metrics = _build_supportability_exclusion_metrics(df)
 
@@ -220,16 +223,6 @@ def run_etl(start_date, end_date, source_name, promote=False, jqdata_client=None
             _promote_exclusion_only_metrics(tmp_metrics_path, metrics_path)
             print("[ExclusionOnlyWindow] No supportable bonds survived; metrics updated and canonical dataset remains unchanged.")
             return
-
-        # Stage F: Validator
-        if not pipeline.run_stage_f_validator():
-             val_summary = pipeline.results["validator_summary"]
-             if val_summary.get("schema_validator_message"):
-                 print(val_summary["schema_validator_message"])
-             if val_summary.get("semantic_validator_message"):
-                 print(val_summary["semantic_validator_message"])
-             print("[DataPromotionBlocked] Candidate research dataset failed validation. Canonical dataset remains unchanged.")
-             sys.exit(1)
 
         # Atomic promotion logic
         tmp_path = dataset_path + ".tmp"

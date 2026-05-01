@@ -14,11 +14,16 @@ cb_schema = pa.DataFrameSchema(
 )
 
 class CBDataValidator:
+    def __init__(self):
+        self.last_error_message = ""
+
     def validate_dataframe(self, df: pd.DataFrame) -> bool:
+        self.last_error_message = ""
         try:
             cb_schema.validate(df)
             return True
         except pa.errors.SchemaError as e:
+            self.last_error_message = str(e)
             print(f"[DataContractViolation] Validation failed due to SchemaError: {e}")
             return False
 
@@ -32,24 +37,24 @@ class EnrichmentValidator:
     def validate_dataframe(self, df: pd.DataFrame) -> tuple[str, str]:
         if df.empty:
             return "PASS", ""
-        
-        # Check canonical double_low
-        if "double_low" in df.columns and "close" in df.columns and "premium_rate" in df.columns:
-            valid_rows = df.dropna(subset=["double_low", "close", "premium_rate"])
-            if not valid_rows.empty:
-                expected_double_low = valid_rows["close"] + valid_rows["premium_rate"] * 100
-                mismatched = (valid_rows["double_low"] - expected_double_low).abs() > 1e-4
-                if mismatched.any():
-                    return "FAIL", "VALIDATOR_SEMANTIC_FAILURE: double_low does not match canonical formula"
-        
-        # Check missing ratio
+
         if "premium_rate" not in df.columns:
             return "DEGRADED", "Missing premium_rate column"
-            
+
+        if "double_low" not in df.columns:
+            return "DEGRADED", "Missing double_low column"
+
+        valid_rows = df.dropna(subset=["double_low", "close", "premium_rate"])
+        if not valid_rows.empty:
+            expected_double_low = valid_rows["close"] + valid_rows["premium_rate"] * 100
+            mismatched = (valid_rows["double_low"] - expected_double_low).abs() > 1e-4
+            if mismatched.any():
+                return "FAIL", "VALIDATOR_SEMANTIC_FAILURE: double_low does not match canonical formula"
+
         missing_ratio = df["premium_rate"].isna().mean()
         if missing_ratio > 0.05:
             return "DEGRADED", f"High missing ratio on premium: {missing_ratio:.2%}"
-            
+
         return "PASS", ""
 
 class DatasetSemanticValidator:

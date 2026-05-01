@@ -53,6 +53,10 @@ REDEMPTION_SOURCE_CONTRACT = {
 STAGE_STATUS_PASS = "PASS"
 STAGE_STATUS_FAIL = "FAIL"
 STAGE_STATUS_NOT_RUN = "NOT_RUN"
+STAGE_STATUS_DEGRADED = "DEGRADED"
+
+PROMOTION_STATUS_PASS = "PASS"
+PROMOTION_STATUS_BLOCKED = "BLOCKED"
 
 # Final Statuses
 FINAL_STATUS_PASS = "PASS"
@@ -387,6 +391,12 @@ class CBETLPipeline:
             stage["missing_underlying_row_count"] = int(missing_underlying_mask.sum())
             stage["missing_underlying_unique_bond_count"] = int(self.df.loc[missing_underlying_mask, "bond_code_raw"].nunique())
 
+            if stage["missing_underlying_row_count"] > 0:
+                stage["status"] = STAGE_STATUS_FAIL
+                stage["failure_type"] = "SUPPORTABILITY_REGRESSION"
+                stage["message"] = "Missing underlying_ticker for supportable bonds in CONBOND_BASIC_INFO"
+                return False
+
             # --- ENRICHMENT TARGET UNIVERSE STATS ---
             enrichment_mask = is_supportable & self.df["underlying_ticker"].notna()
             aus = self.results["active_universe_summary"]
@@ -497,8 +507,9 @@ class CBETLPipeline:
 
         except RuntimeError as e:
             if "RATE_LIMITED_ENRICHMENT" in str(e):
-                stage["status"] = "DEGRADED"
+                stage["status"] = STAGE_STATUS_DEGRADED
                 stage["failure_type"] = "RATE_LIMITED_ENRICHMENT"
+                stage["rate_limited_enrichment"] = True
                 stage["message"] = "TuShare cb_price_chg rate limit hit"
                 return False
             if "single-call cap characteristic" in str(e):
@@ -656,7 +667,7 @@ class CBETLPipeline:
             total_rows = len(df_core_universe_supportable)
             stage["missing_redemption_ratio"] = stage["missing_redemption_row_count"] / total_rows if total_rows > 0 else 0.0
 
-            if total_rows > 0 and stage["missing_redemption_ratio"] >= 0.20:
+            if total_rows > 0 and stage["missing_redemption_ratio"] >= 0.20 and stage["redemption_joined_row_count"] == 0:
                 stage["status"] = STAGE_STATUS_FAIL
                 stage["failure_type"] = "REDEMPTION_SOURCE_GAP"
             else:
@@ -676,19 +687,99 @@ class CBETLPipeline:
             stage["message"] = str(e)
             return False
 
+    def _compute_core_path_status(self) -> str:
+        source_status = self.results["source_coverage"]["status"]
+        if source_status != STAGE_STATUS_PASS:
+            return source_status
+
+        supportability_status = self.results["supportability_summary"]["status"]
+        if supportability_status != STAGE_STATUS_PASS:
+            supportable_row_count = self.results["supportability_summary"].get("supportable_row_count", 0)
+            missing_underlying_row_count = self.results["supportability_summary"].get("missing_underlying_row_count", 0)
+            if supportable_row_count == 0 or missing_underlying_row_count > 0:
+                return STAGE_STATUS_PASS
+            return supportability_status
+
+        is_st_status = self.results["is_st_join_summary"]["status"]
+        if is_st_status == STAGE_STATUS_FAIL:
+            return STAGE_STATUS_FAIL
+        if is_st_status == STAGE_STATUS_NOT_RUN:
+            return STAGE_STATUS_NOT_RUN
+
+        redemption_status = self.results["redemption_summary"]["status"]
+        if redemption_status == STAGE_STATUS_NOT_RUN:
+            return STAGE_STATUS_NOT_RUN
+        return STAGE_STATUS_PASS
+
+    def _compute_enrichment_path_status(self) -> str:
+        premium_status = self.results["premium_join_summary"]["status"]
+        if premium_status == STAGE_STATUS_DEGRADED:
+            return STAGE_STATUS_DEGRADED
+        if premium_status == STAGE_STATUS_FAIL:
+            return STAGE_STATUS_FAIL
+        if premium_status == STAGE_STATUS_NOT_RUN:
+            return STAGE_STATUS_NOT_RUN
+
+        enrichment_validator_status = self.results["validator_summary"].get("enrichment_validator_status", STAGE_STATUS_NOT_RUN)
+        if enrichment_validator_status == STAGE_STATUS_DEGRADED:
+            return STAGE_STATUS_DEGRADED
+        if enrichment_validator_status == STAGE_STATUS_FAIL:
+            return STAGE_STATUS_FAIL
+        if enrichment_validator_status == STAGE_STATUS_NOT_RUN:
+            return STAGE_STATUS_NOT_RUN
+        return STAGE_STATUS_PASS
+
+    def _compute_promotion_gate(self, core_path_status: str) -> tuple[str, str]:
+        validator_summary = self.results["validator_summary"]
+        supportable_row_count = self.results["supportability_summary"].get("supportable_row_count", 0)
+        if supportable_row_count == 0:
+            return PROMOTION_STATUS_PASS, ""
+
+        if core_path_status != STAGE_STATUS_PASS:
+            return PROMOTION_STATUS_BLOCKED, "Promotion blocked: core_path_status != PASS"
+
+        core_validator_status = validator_summary.get("core_validator_status", STAGE_STATUS_NOT_RUN)
+        if core_validator_status != STAGE_STATUS_PASS:
+            return PROMOTION_STATUS_BLOCKED, "Promotion blocked: core_validator_status != PASS"
+
+        if self.df is None or "premium_rate" not in self.df.columns:
+            return PROMOTION_STATUS_BLOCKED, "Promotion blocked: premium_rate column is missing"
+
+        if self.df is None or "double_low" not in self.df.columns:
+            return PROMOTION_STATUS_BLOCKED, "Promotion blocked: double_low column is missing"
+
+        enrichment_target_row_count = self.results["active_universe_summary"].get("enrichment_target_row_count", 0)
+        premium_missing_ratio = self.results["premium_join_summary"].get("premium_missing_ratio_against_active_universe", 0.0)
+        if enrichment_target_row_count > 0 and premium_missing_ratio > 0.05:
+            return PROMOTION_STATUS_BLOCKED, "Promotion blocked: premium_missing_ratio_against_active_universe > 0.05"
+
+        if self.results["premium_join_summary"].get("rate_limited_enrichment") is True:
+            return PROMOTION_STATUS_BLOCKED, "Promotion blocked: rate_limited_enrichment == true"
+
+        if self.results["premium_join_summary"].get("permission_degraded_enrichment") is True:
+            return PROMOTION_STATUS_BLOCKED, "Promotion blocked: permission_degraded_enrichment == true"
+
+        return PROMOTION_STATUS_PASS, ""
+
     def run_stage_f_validator(self):
         if self.results["source_coverage"]["status"] == STAGE_STATUS_FAIL:
             self.results["validator_summary"]["status"] = STAGE_STATUS_NOT_RUN
             self.results["validator_summary"]["message"] = "Skipped because Stage A failed."
+            self.results["validator_summary"]["core_validator_status"] = STAGE_STATUS_NOT_RUN
+            self.results["validator_summary"]["core_validator_message"] = ""
+            self.results["validator_summary"]["enrichment_validator_status"] = STAGE_STATUS_NOT_RUN
+            self.results["validator_summary"]["enrichment_validator_message"] = ""
+            self.results["validator_summary"]["promotion_gate_status"] = STAGE_STATUS_NOT_RUN
+            self.results["validator_summary"]["promotion_gate_message"] = ""
             return False
 
         stage = self.results["validator_summary"]
-        stage["schema_validator_status"] = STAGE_STATUS_NOT_RUN
-        stage["semantic_validator_status"] = STAGE_STATUS_NOT_RUN
-        stage["drift_validator_status"] = STAGE_STATUS_NOT_RUN
-        stage["schema_validator_message"] = ""
-        stage["semantic_validator_message"] = ""
-        stage["drift_validator_message"] = "No dedicated validator path exists in v1 runtime."
+        stage["core_validator_status"] = STAGE_STATUS_NOT_RUN
+        stage["core_validator_message"] = ""
+        stage["enrichment_validator_status"] = STAGE_STATUS_NOT_RUN
+        stage["enrichment_validator_message"] = ""
+        stage["promotion_gate_status"] = STAGE_STATUS_NOT_RUN
+        stage["promotion_gate_message"] = ""
         stage["failure_type"] = "NONE"
 
         try:
@@ -696,20 +787,25 @@ class CBETLPipeline:
             if df_work.empty:
                 stage["status"] = STAGE_STATUS_PASS
                 stage["message"] = "No supportable bonds to validate."
+                stage["core_validator_status"] = STAGE_STATUS_PASS
+                stage["enrichment_validator_status"] = STAGE_STATUS_NOT_RUN
+                stage["promotion_gate_status"] = PROMOTION_STATUS_PASS
                 return True
 
             from ams.validators.cb_data_validator import CBDataValidator, DatasetSemanticValidator
-            
+
             validator_l1 = CBDataValidator()
             validator_l2 = DatasetSemanticValidator()
-            
+
             missing_cols = [c for c in CANONICAL_CB_COLUMNS if c not in df_work.columns]
             if missing_cols:
                 stage["status"] = STAGE_STATUS_FAIL
                 stage["failure_type"] = "VALIDATOR_SCHEMA_FAILURE"
                 stage["message"] = f"Validator skipped because required canonical columns are missing after upstream stage failures: {missing_cols}"
-                stage["schema_validator_status"] = STAGE_STATUS_FAIL
-                stage["schema_validator_message"] = stage["message"]
+                stage["core_validator_status"] = STAGE_STATUS_FAIL
+                stage["core_validator_message"] = stage["message"]
+                stage["promotion_gate_status"] = PROMOTION_STATUS_BLOCKED
+                stage["promotion_gate_message"] = "Promotion blocked: core_validator_status != PASS"
                 return False
 
             df_to_val = df_work[CANONICAL_CB_COLUMNS].copy()
@@ -719,59 +815,68 @@ class CBETLPipeline:
             df_to_val["is_st"] = df_to_val["is_st"].astype(bool)
             df_to_val["is_redeemed"] = df_to_val["is_redeemed"].astype(bool)
 
-            # Stage F.1: Schema Validator
-            try:
-                val_l1 = validator_l1.validate_dataframe(df_to_val)
-                stage["schema_validator_status"] = STAGE_STATUS_PASS if val_l1 else STAGE_STATUS_FAIL
-            except Exception as e:
-                stage["schema_validator_status"] = STAGE_STATUS_FAIL
-                stage["schema_validator_message"] = str(e)
-            
-            # Stage F.2: Semantic Validator
+            val_l1 = validator_l1.validate_dataframe(df_to_val)
+            stage["core_validator_status"] = STAGE_STATUS_PASS if val_l1 else STAGE_STATUS_FAIL
+            if not val_l1 and getattr(validator_l1, "last_error_message", ""):
+                stage["core_validator_message"] = validator_l1.last_error_message
+
             try:
                 val_l2 = validator_l2.validate_dataframe(df_to_val)
-                stage["semantic_validator_status"] = STAGE_STATUS_PASS if val_l2 else STAGE_STATUS_FAIL
+                if not val_l2:
+                    stage["core_validator_status"] = STAGE_STATUS_FAIL
             except Exception as e:
-                stage["semantic_validator_status"] = STAGE_STATUS_FAIL
-                stage["semantic_validator_message"] = str(e)
+                stage["core_validator_status"] = STAGE_STATUS_FAIL
+                stage["core_validator_message"] = str(e)
+                if stage["failure_type"] == "NONE":
+                    stage["failure_type"] = "VALIDATOR_SEMANTIC_FAILURE"
 
-            # Enrichment Validator
             try:
                 from ams.validators.cb_data_validator import EnrichmentValidator
                 validator_enrichment = EnrichmentValidator()
-                # Enrichment validator should only run on enrichment target universe
                 df_enrichment_target = df_work[df_work["underlying_ticker"].notna()].copy()
                 if not df_enrichment_target.empty:
                     st, msg = validator_enrichment.validate_dataframe(df_enrichment_target)
                     stage["enrichment_validator_status"] = st
                     stage["enrichment_validator_message"] = msg
                 else:
-                    stage["enrichment_validator_status"] = STAGE_STATUS_PASS
+                    stage["enrichment_validator_status"] = STAGE_STATUS_NOT_RUN
                     stage["enrichment_validator_message"] = ""
             except Exception as e:
                 stage["enrichment_validator_status"] = STAGE_STATUS_FAIL
                 stage["enrichment_validator_message"] = str(e)
 
-            # Stage F.3: Drift Validator (NOT_RUN in v1 runtime)
-            stage["drift_validator_status"] = STAGE_STATUS_NOT_RUN
-            stage["drift_validator_message"] = "No dedicated validator path exists in v1 runtime."
-
-            if stage["schema_validator_status"] == STAGE_STATUS_FAIL:
+            if stage["core_validator_status"] == STAGE_STATUS_FAIL:
                 stage["status"] = STAGE_STATUS_FAIL
-                stage["failure_type"] = "VALIDATOR_SCHEMA_FAILURE"
-                stage["message"] = f"Schema validation failed: {stage['schema_validator_message']}" if stage['schema_validator_message'] else "Schema validation failed"
-            elif stage["semantic_validator_status"] == STAGE_STATUS_FAIL:
+                if stage["failure_type"] == "VALIDATOR_SEMANTIC_FAILURE":
+                    stage["message"] = f"Semantic validation failed: {stage['core_validator_message']}" if stage["core_validator_message"] else "Semantic validation failed"
+                else:
+                    if stage["failure_type"] == "NONE":
+                        stage["failure_type"] = "VALIDATOR_SCHEMA_FAILURE"
+                    stage["message"] = f"Schema validation failed: {stage['core_validator_message']}" if stage["core_validator_message"] else "Schema validation failed"
+            elif stage["enrichment_validator_status"] == STAGE_STATUS_FAIL:
                 stage["status"] = STAGE_STATUS_FAIL
                 stage["failure_type"] = "VALIDATOR_SEMANTIC_FAILURE"
-                stage["message"] = f"Semantic validation failed: {stage['semantic_validator_message']}" if stage['semantic_validator_message'] else "Semantic validation failed"
+                stage["message"] = f"Semantic validation failed: {stage['enrichment_validator_message']}" if stage["enrichment_validator_message"] else "Semantic validation failed"
+            elif stage["enrichment_validator_status"] == STAGE_STATUS_DEGRADED:
+                stage["status"] = STAGE_STATUS_DEGRADED
+                stage["message"] = stage["enrichment_validator_message"]
             else:
                 stage["status"] = STAGE_STATUS_PASS
-            
+
+            core_path_status = self._compute_core_path_status()
+            promotion_status, promotion_message = self._compute_promotion_gate(core_path_status)
+            stage["promotion_gate_status"] = promotion_status
+            stage["promotion_gate_message"] = promotion_message
+
             return stage["status"] == STAGE_STATUS_PASS
 
         except Exception as e:
             stage["status"] = STAGE_STATUS_FAIL
             stage["message"] = str(e)
+            stage["core_validator_status"] = STAGE_STATUS_FAIL
+            stage["core_validator_message"] = str(e)
+            stage["promotion_gate_status"] = PROMOTION_STATUS_BLOCKED
+            stage["promotion_gate_message"] = "Promotion blocked: core_validator_status != PASS"
             return False
 
     def compute_findings(self):
@@ -788,16 +893,19 @@ class CBETLPipeline:
             root_blockers.append({"type": "PREMIUM_SOURCE_TRUNCATION", "stage": "C", "trigger": "Exact formula match", "evidence": {"ratio": self.results["premium_join_summary"]["missing_premium_ratio"]}})
         if self.results["premium_join_summary"]["failure_type"] == "PREMIUM_RATE_MISSING_BROAD_COVERAGE":
             root_blockers.append({"type": "PREMIUM_RATE_MISSING_BROAD_COVERAGE", "stage": "C", "trigger": "missing_premium_ratio >= 0.20", "evidence": {"ratio": self.results["premium_join_summary"]["missing_premium_ratio"]}})
+        if self.results["premium_join_summary"]["failure_type"] == "RATE_LIMITED_ENRICHMENT":
+            root_blockers.append({"type": "RATE_LIMITED_ENRICHMENT", "stage": "ORCH", "trigger": self.results["premium_join_summary"]["message"], "evidence": {"rate_limited_enrichment": True}})
+        if self.results["premium_join_summary"]["failure_type"] == "PERMISSION_DEGRADED_ENRICHMENT":
+            root_blockers.append({"type": "PERMISSION_DEGRADED_ENRICHMENT", "stage": "ORCH", "trigger": self.results["premium_join_summary"]["message"], "evidence": {"permission_degraded_enrichment": True}})
         if self.results["is_st_join_summary"]["failure_type"] == "IS_ST_SOURCE_GAP":
             root_blockers.append({"type": "IS_ST_SOURCE_GAP", "stage": "D", "trigger": "missing_is_st_ratio >= 0.20", "evidence": {"ratio": self.results["is_st_join_summary"]["missing_is_st_ratio"]}})
         if self.results["redemption_summary"]["failure_type"] == "REDEMPTION_SOURCE_GAP":
             root_blockers.append({"type": "REDEMPTION_SOURCE_GAP", "stage": "E", "trigger": "missing_redemption_ratio >= 0.20", "evidence": {"ratio": self.results["redemption_summary"]["missing_redemption_ratio"]}})
         if self.results["validator_summary"]["failure_type"] == "VALIDATOR_SCHEMA_FAILURE":
-            root_blockers.append({"type": "VALIDATOR_SCHEMA_FAILURE", "stage": "F", "trigger": self.results["validator_summary"]["schema_validator_message"], "evidence": {}})
+            root_blockers.append({"type": "VALIDATOR_SCHEMA_FAILURE", "stage": "F", "trigger": self.results["validator_summary"].get("core_validator_message", ""), "evidence": {}})
         if self.results["validator_summary"]["failure_type"] == "VALIDATOR_SEMANTIC_FAILURE":
-            root_blockers.append({"type": "VALIDATOR_SEMANTIC_FAILURE", "stage": "F", "trigger": self.results["validator_summary"]["semantic_validator_message"], "evidence": {}})
-        if self.results["validator_summary"]["failure_type"] == "VALIDATOR_DRIFT_FAILURE":
-            root_blockers.append({"type": "VALIDATOR_DRIFT_FAILURE", "stage": "F", "trigger": self.results["validator_summary"]["drift_validator_message"], "evidence": {}})
+            trigger = self.results["validator_summary"].get("core_validator_message") or self.results["validator_summary"].get("enrichment_validator_message", "")
+            root_blockers.append({"type": "VALIDATOR_SEMANTIC_FAILURE", "stage": "F", "trigger": trigger, "evidence": {}})
 
         if self.results["supportability_summary"].get("missing_underlying_row_count", 0) > 0:
             secondary_findings.append({"type": "MISSING_UNDERLYING_TICKER_ROWS", "stage": "B", "trigger": "missing_underlying_row_count > 0", "evidence": {"count": self.results["supportability_summary"]["missing_underlying_row_count"]}})
@@ -809,23 +917,31 @@ class CBETLPipeline:
              secondary_findings.append({"type": "MISSING_REDEMPTION_ROWS", "stage": "E", "trigger": "missing_redemption_row_count > 0", "evidence": {"count": self.results["redemption_summary"]["missing_redemption_row_count"]}})
         if self.results["supportability_summary"]["status"] == STAGE_STATUS_PASS and self.results["supportability_summary"]["supportable_row_count"] == 0:
              secondary_findings.append({"type": "EXCLUSION_ONLY_WINDOW", "stage": "B", "trigger": "supportable_row_count == 0", "evidence": {}})
-        
+
         return root_blockers, secondary_findings
 
     def get_final_report(self):
         root_blockers, secondary_findings = self.compute_findings()
-        
+
         final_status = FINAL_STATUS_PASS
         if len(root_blockers) > 0:
             final_status = FINAL_STATUS_FAIL_ROOT_BLOCKER
         elif len(secondary_findings) > 0:
             final_status = FINAL_STATUS_FAIL_SECONDARY_ONLY
-            
+
+        core_path_status = self._compute_core_path_status()
+        enrichment_path_status = self._compute_enrichment_path_status()
+        promotion_status, promotion_message = self._compute_promotion_gate(core_path_status)
+        self.results["validator_summary"]["promotion_gate_status"] = promotion_status
+        self.results["validator_summary"]["promotion_gate_message"] = promotion_message
+
         report = {
             "execution_mode": "audit",
             "start_date": self.start_date,
             "end_date": self.end_date,
             "final_status": final_status,
+            "core_path_status": core_path_status,
+            "enrichment_path_status": enrichment_path_status,
             "non_promotion_disclaimer": NON_PROMOTION_DISCLAIMER,
             "active_universe_summary": self.results["active_universe_summary"],
             "source_coverage": self.results["source_coverage"],

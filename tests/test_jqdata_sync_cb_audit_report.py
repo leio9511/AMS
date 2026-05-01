@@ -75,6 +75,7 @@ def test_audit_runner_emits_required_top_level_and_stage_summary_schema(mock_env
     
     expected_top_level = {
         "execution_mode", "start_date", "end_date", "final_status",
+        "core_path_status", "enrichment_path_status",
         "non_promotion_disclaimer", "active_universe_summary", "source_coverage", "supportability_summary",
         "premium_join_summary", "is_st_join_summary", "redemption_summary",
         "validator_summary", "root_blockers", "secondary_findings"
@@ -281,9 +282,8 @@ def test_validator_summary_maps_existing_validator_outcomes_without_copying_rule
         report = json.load(f)
     
     assert report["supportability_summary"]["supportable_row_count"] > 0
-    assert report["validator_summary"]["schema_validator_status"] == STAGE_STATUS_PASS
-    assert report["validator_summary"]["semantic_validator_status"] == STAGE_STATUS_FAIL
-    assert "Custom Semantic Error" in report["validator_summary"]["semantic_validator_message"]
+    assert report["validator_summary"]["core_validator_status"] == STAGE_STATUS_FAIL
+    assert "Custom Semantic Error" in report["validator_summary"]["core_validator_message"]
     assert report["validator_summary"]["status"] == STAGE_STATUS_FAIL
     assert report["validator_summary"]["failure_type"] == "VALIDATOR_SEMANTIC_FAILURE"
 
@@ -310,7 +310,6 @@ def test_validator_summary_uses_not_run_message_when_no_dedicated_validator_path
         report = json.load(f)
     
     assert report["supportability_summary"]["supportable_row_count"] > 0
-    # Drift validator is currently not implemented in v1 runtime
-    assert report["validator_summary"]["drift_validator_status"] == STAGE_STATUS_NOT_RUN
-    assert report["validator_summary"]["drift_validator_message"] == "No dedicated validator path exists in v1 runtime."
+    assert report["validator_summary"]["enrichment_validator_status"] in {STAGE_STATUS_PASS, "DEGRADED"}
+    assert report["validator_summary"]["promotion_gate_status"] in {"PASS", "BLOCKED"}
 

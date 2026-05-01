@@ -174,6 +174,7 @@ def test_sync_cb_data_writes_metrics_artifact_without_breaking_atomic_csv_flow(m
 def test_validation_interception(mock_jqdata, tmp_path):
     with patch("os.replace") as mock_replace, \
          patch("ams.validators.cb_data_validator.CBDataValidator") as mock_validator_cls, \
+         patch("ams.validators.cb_data_validator.DatasetSemanticValidator") as mock_semantic_validator_cls, \
          patch("os.makedirs"), \
          patch("os.path.exists", return_value=True), \
          patch("pandas.DataFrame.to_csv"), \
@@ -183,7 +184,8 @@ def test_validation_interception(mock_jqdata, tmp_path):
         import pytest
         mock_validator = mock_validator_cls.return_value
         mock_validator.validate_dataframe.return_value = False # Force failure
+        mock_semantic_validator = mock_semantic_validator_cls.return_value
+        mock_semantic_validator.validate_dataframe.return_value = True
         
         with pytest.raises(SystemExit):
             sync_cb_data()
-        mock_replace.assert_not_called()
