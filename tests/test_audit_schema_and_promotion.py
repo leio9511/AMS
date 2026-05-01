@@ -1,6 +1,7 @@
 import pandas as pd
 from unittest.mock import MagicMock, patch
 
+from etl.cb_provider_base import DataProviderAuthError
 from etl.cb_etl_pipeline import (
     CBETLPipeline,
     STAGE_STATUS_DEGRADED,
@@ -488,7 +489,7 @@ def test_promotion_gate_blocked_when_double_low_or_permission_contract_is_missin
         }
     )
 
-    with patch.object(CBETLPipeline, "_fetch_premium_batched", side_effect=RuntimeError("PERMISSION_DEGRADED_ENRICHMENT")):
+    with patch.object(permission_degraded_pipeline.provider, "fetch_cb_price_changes", side_effect=DataProviderAuthError("permission denied")):
         permission_degraded_pipeline.run_stage_c_premium_join()
     permission_degraded_pipeline.results["is_st_join_summary"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
     permission_degraded_pipeline.results["redemption_summary"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
@@ -615,3 +616,8 @@ def test_run_etl_promotion_gate_blocks_promotion(tmp_path):
             assert exc.code == 1
 
     assert not dataset_path.exists()
+    assert not metrics_path.exists()
+    assert not (tmp_path / "cb.csv.tmp").exists()
+    assert not (tmp_path / "cb.csv.bak").exists()
+    assert not (tmp_path / "cb.metrics.json.tmp").exists()
+    assert not (tmp_path / "cb.metrics.json.bak").exists()

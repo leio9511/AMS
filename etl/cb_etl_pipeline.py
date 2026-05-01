@@ -451,6 +451,10 @@ class CBETLPipeline:
                 
             df_work = self.df[self.df["supportability_bucket"].eq(SUPPORTABILITY_BUCKET_SUPPORTABLE)].copy()
             if df_work.empty:
+                if "premium_rate" not in self.df.columns:
+                    self.df["premium_rate"] = pd.Series(float("nan"), index=self.df.index)
+                if "double_low" not in self.df.columns:
+                    self.df["double_low"] = pd.Series(float("nan"), index=self.df.index)
                 stage["status"] = STAGE_STATUS_NOT_RUN
                 stage["message"] = "No supportable bonds to join premium rate."
                 return True
@@ -741,6 +745,10 @@ class CBETLPipeline:
                 return STAGE_STATUS_PASS
             return supportability_status
 
+        supportable_row_count = self.results["supportability_summary"].get("supportable_row_count", 0)
+        if supportable_row_count == 0:
+            return STAGE_STATUS_PASS
+
         is_st_status = self.results["is_st_join_summary"]["status"]
         if is_st_status == STAGE_STATUS_FAIL:
             return STAGE_STATUS_FAIL
@@ -772,9 +780,6 @@ class CBETLPipeline:
 
     def _compute_promotion_gate(self, core_path_status: str) -> tuple[str, str]:
         validator_summary = self.results["validator_summary"]
-        supportable_row_count = self.results["supportability_summary"].get("supportable_row_count", 0)
-        if supportable_row_count == 0:
-            return PROMOTION_STATUS_PASS, ""
 
         if core_path_status != STAGE_STATUS_PASS:
             return PROMOTION_STATUS_BLOCKED, "Promotion blocked: core_path_status != PASS"
