@@ -157,6 +157,48 @@ FINAL_REPORT_TEMPLATE = {
     "secondary_findings": [],
 }
 
+CORE_PATH_STATUS_VALUES = {STAGE_STATUS_PASS, STAGE_STATUS_FAIL, STAGE_STATUS_NOT_RUN}
+ENRICHMENT_PATH_STATUS_VALUES = {STAGE_STATUS_PASS, STAGE_STATUS_FAIL, STAGE_STATUS_NOT_RUN, STAGE_STATUS_DEGRADED}
+FINAL_STATUS_VALUES = {FINAL_STATUS_PASS, FINAL_STATUS_FAIL_ROOT_BLOCKER, FINAL_STATUS_FAIL_SECONDARY_ONLY}
+PROMOTION_GATE_STATUS_VALUES = {PROMOTION_STATUS_PASS, PROMOTION_STATUS_BLOCKED, PROMOTION_STATUS_NOT_RUN}
+CORE_VALIDATOR_STATUS_VALUES = {STAGE_STATUS_PASS, STAGE_STATUS_FAIL, STAGE_STATUS_NOT_RUN}
+
+SUMMARY_ENUM_RULES = {
+    "source_coverage": {
+        "status": {STAGE_STATUS_PASS, STAGE_STATUS_FAIL, STAGE_STATUS_NOT_RUN},
+        "failure_type": {FAILURE_TYPE_NONE, "SOURCE_AUTH_FAILURE", "PRICE_SOURCE_UNREADABLE"},
+    },
+    "supportability_summary": {
+        "status": {STAGE_STATUS_PASS, STAGE_STATUS_FAIL, STAGE_STATUS_NOT_RUN},
+        "failure_type": {FAILURE_TYPE_NONE, "SUPPORTABILITY_REGRESSION"},
+    },
+    "premium_join_summary": {
+        "status": {STAGE_STATUS_PASS, STAGE_STATUS_FAIL, STAGE_STATUS_NOT_RUN, STAGE_STATUS_DEGRADED},
+        "failure_type": {
+            FAILURE_TYPE_NONE,
+            "PREMIUM_SOURCE_TRUNCATION",
+            "PREMIUM_RATE_MISSING_BROAD_COVERAGE",
+            "RATE_LIMITED_ENRICHMENT",
+            "PERMISSION_DEGRADED_ENRICHMENT",
+        },
+    },
+    "is_st_join_summary": {
+        "status": {STAGE_STATUS_PASS, STAGE_STATUS_FAIL, STAGE_STATUS_NOT_RUN, STAGE_STATUS_DEGRADED},
+        "failure_type": {FAILURE_TYPE_NONE, "IS_ST_SOURCE_GAP", "PERMISSION_DEGRADED_ENRICHMENT"},
+    },
+    "redemption_summary": {
+        "status": {STAGE_STATUS_PASS, STAGE_STATUS_FAIL, STAGE_STATUS_NOT_RUN, STAGE_STATUS_DEGRADED},
+        "failure_type": {FAILURE_TYPE_NONE, "REDEMPTION_SOURCE_GAP", "PERMISSION_DEGRADED_ENRICHMENT"},
+    },
+    "validator_summary": {
+        "status": {STAGE_STATUS_PASS, STAGE_STATUS_FAIL, STAGE_STATUS_NOT_RUN, STAGE_STATUS_DEGRADED},
+        "failure_type": {FAILURE_TYPE_NONE, "VALIDATOR_SCHEMA_FAILURE", "VALIDATOR_SEMANTIC_FAILURE"},
+        "core_validator_status": CORE_VALIDATOR_STATUS_VALUES,
+        "enrichment_validator_status": ENRICHMENT_PATH_STATUS_VALUES,
+        "promotion_gate_status": PROMOTION_GATE_STATUS_VALUES,
+    },
+}
+
 
 def _apply(template: dict, overrides: dict | None = None) -> dict:
     data = deepcopy(template)
@@ -167,32 +209,69 @@ def _apply(template: dict, overrides: dict | None = None) -> dict:
     return data
 
 
+def _validate_enum(field_name: str, value: str, allowed: set[str]) -> None:
+    if value not in allowed:
+        allowed_values = "|".join(sorted(allowed))
+        raise ValueError(f"Invalid {field_name}: {value!r}. Allowed: {allowed_values}")
+
+
+def _normalize_trigger(trigger: object) -> str:
+    if trigger is None:
+        return ""
+    if isinstance(trigger, str):
+        return trigger
+    return str(trigger)
+
+
+def _validate_item_schema(item_name: str, item: dict, *, allowed_types: set[str], allowed_stages: set[str]) -> None:
+    expected_keys = {"type", "stage", "trigger", "evidence"}
+    if set(item.keys()) != expected_keys:
+        raise ValueError(f"Invalid {item_name} keys: {sorted(item.keys())}. Expected: {sorted(expected_keys)}")
+    _validate_enum(f"{item_name}.type", item["type"], allowed_types)
+    _validate_enum(f"{item_name}.stage", item["stage"], allowed_stages)
+    if not isinstance(item["trigger"], str):
+        raise ValueError(f"Invalid {item_name}.trigger type: expected str")
+    if not isinstance(item["evidence"], dict):
+        raise ValueError(f"Invalid {item_name}.evidence type: expected dict")
+
+
+def _validate_summary(summary_name: str, data: dict) -> dict:
+    for field_name, allowed_values in SUMMARY_ENUM_RULES.get(summary_name, {}).items():
+        _validate_enum(f"{summary_name}.{field_name}", data[field_name], allowed_values)
+    return data
+
+
+def _build_summary(template: dict, summary_name: str, overrides: dict | None = None) -> dict:
+    data = _apply(template, overrides)
+    return _validate_summary(summary_name, data)
+
+
 def build_active_universe_summary(**overrides) -> dict:
     return _apply(ACTIVE_UNIVERSE_SUMMARY_TEMPLATE, overrides)
 
 
 def build_source_coverage(**overrides) -> dict:
-    return _apply(SOURCE_COVERAGE_TEMPLATE, overrides)
+    return _build_summary(SOURCE_COVERAGE_TEMPLATE, "source_coverage", overrides)
 
 
 def build_supportability_summary(**overrides) -> dict:
-    return _apply(SUPPORTABILITY_SUMMARY_TEMPLATE, overrides)
+    return _build_summary(SUPPORTABILITY_SUMMARY_TEMPLATE, "supportability_summary", overrides)
 
 
 def build_premium_join_summary(**overrides) -> dict:
-    return _apply(PREMIUM_JOIN_SUMMARY_TEMPLATE, overrides)
+    return _build_summary(PREMIUM_JOIN_SUMMARY_TEMPLATE, "premium_join_summary", overrides)
 
 
 def build_is_st_join_summary(**overrides) -> dict:
-    return _apply(IS_ST_JOIN_SUMMARY_TEMPLATE, overrides)
+    return _build_summary(IS_ST_JOIN_SUMMARY_TEMPLATE, "is_st_join_summary", overrides)
 
 
 def build_redemption_summary(**overrides) -> dict:
-    return _apply(REDEMPTION_SUMMARY_TEMPLATE, overrides)
+    return _build_summary(REDEMPTION_SUMMARY_TEMPLATE, "redemption_summary", overrides)
 
 
 def build_validator_summary(**overrides) -> dict:
-    return _apply(VALIDATOR_SUMMARY_TEMPLATE, overrides)
+    return _build_summary(VALIDATOR_SUMMARY_TEMPLATE, "validator_summary", overrides)
 
 
 def build_pipeline_results() -> dict:
@@ -208,29 +287,75 @@ def build_pipeline_results() -> dict:
 
 
 def build_root_blocker(blocker_type: str, stage: str, trigger: str = "", evidence: dict | None = None) -> dict:
-    if blocker_type not in ROOT_BLOCKER_TYPES:
-        raise ValueError(f"Unsupported root blocker type: {blocker_type}")
-    if stage not in ROOT_BLOCKER_STAGES:
-        raise ValueError(f"Unsupported root blocker stage: {stage}")
-    return {
+    blocker = {
         "type": blocker_type,
         "stage": stage,
-        "trigger": trigger,
+        "trigger": _normalize_trigger(trigger),
         "evidence": evidence or {},
     }
+    _validate_item_schema(
+        "root_blockers[]",
+        blocker,
+        allowed_types=ROOT_BLOCKER_TYPES,
+        allowed_stages=ROOT_BLOCKER_STAGES,
+    )
+    return blocker
 
 
 def build_secondary_finding(finding_type: str, stage: str, trigger: str = "", evidence: dict | None = None) -> dict:
-    if finding_type not in SECONDARY_FINDING_TYPES:
-        raise ValueError(f"Unsupported secondary finding type: {finding_type}")
-    if stage not in SECONDARY_FINDING_STAGES:
-        raise ValueError(f"Unsupported secondary finding stage: {stage}")
-    return {
+    finding = {
         "type": finding_type,
         "stage": stage,
-        "trigger": trigger,
+        "trigger": _normalize_trigger(trigger),
         "evidence": evidence or {},
     }
+    _validate_item_schema(
+        "secondary_findings[]",
+        finding,
+        allowed_types=SECONDARY_FINDING_TYPES,
+        allowed_stages=SECONDARY_FINDING_STAGES,
+    )
+    return finding
+
+
+def _validate_report(report: dict) -> dict:
+    expected_keys = set(FINAL_REPORT_TEMPLATE.keys())
+    if set(report.keys()) != expected_keys:
+        raise ValueError(f"Invalid final report keys: {sorted(report.keys())}. Expected: {sorted(expected_keys)}")
+
+    if report["execution_mode"] != EXECUTION_MODE_AUDIT:
+        raise ValueError(f"Invalid execution_mode: {report['execution_mode']!r}")
+    if report["non_promotion_disclaimer"] != NON_PROMOTION_DISCLAIMER:
+        raise ValueError(f"Invalid non_promotion_disclaimer: {report['non_promotion_disclaimer']!r}")
+
+    _validate_enum("final_status", report["final_status"], FINAL_STATUS_VALUES)
+    _validate_enum("core_path_status", report["core_path_status"], CORE_PATH_STATUS_VALUES)
+    _validate_enum("enrichment_path_status", report["enrichment_path_status"], ENRICHMENT_PATH_STATUS_VALUES)
+
+    build_active_universe_summary(**report["active_universe_summary"])
+    build_source_coverage(**report["source_coverage"])
+    build_supportability_summary(**report["supportability_summary"])
+    build_premium_join_summary(**report["premium_join_summary"])
+    build_is_st_join_summary(**report["is_st_join_summary"])
+    build_redemption_summary(**report["redemption_summary"])
+    build_validator_summary(**report["validator_summary"])
+
+    for blocker in report["root_blockers"]:
+        _validate_item_schema(
+            "root_blockers[]",
+            blocker,
+            allowed_types=ROOT_BLOCKER_TYPES,
+            allowed_stages=ROOT_BLOCKER_STAGES,
+        )
+    for finding in report["secondary_findings"]:
+        _validate_item_schema(
+            "secondary_findings[]",
+            finding,
+            allowed_types=SECONDARY_FINDING_TYPES,
+            allowed_stages=SECONDARY_FINDING_STAGES,
+        )
+
+    return report
 
 
 def build_final_report(
@@ -263,4 +388,4 @@ def build_final_report(
     report["is_st_join_summary"] = build_is_st_join_summary(**results.get("is_st_join_summary", {}))
     report["redemption_summary"] = build_redemption_summary(**results.get("redemption_summary", {}))
     report["validator_summary"] = build_validator_summary(**results.get("validator_summary", {}))
-    return report
+    return _validate_report(report)
