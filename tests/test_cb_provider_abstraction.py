@@ -47,6 +47,60 @@ def test_pipeline_provider_neutrality():
     # Verify no jqdatasdk import in pipeline (this is harder to verify at runtime but we can check sys.modules)
     # Actually, we can just rely on the code review and the fact that we replaced the imports.
 
+
+def test_tushare_orchestrator_uses_only_adapter_contract_methods(tmp_path):
+    """Premium reconstruction must not reach through provider.pro internals."""
+
+    class ProForbiddenProvider:
+        def __init__(self):
+            self._bond_to_stock_map = {"113052.SH": "601236.SH"}
+            self.pro = None
+            self.fetch_stock_daily_called = False
+
+        def fetch_cb_price_changes(self, ticker):
+            return pd.DataFrame(
+                {
+                    "ts_code": [ticker],
+                    "change_date": ["2023-01-01"],
+                    "convert_price_initial": [10.0],
+                    "convertprice_aft": [9.0],
+                }
+            )
+
+        def fetch_cb_basic(self):
+            return pd.DataFrame({"code": ["113052.SH"], "conv_price": [10.0]})
+
+        def fetch_cb_daily(self, tickers, start_date, end_date):
+            return pd.DataFrame(
+                {
+                    "code": ["113052.SH"],
+                    "time": ["2023-02-01"],
+                    "close": [110.0],
+                }
+            ).set_index(["code", "time"])
+
+        def fetch_stock_daily(self, tickers, start_date, end_date):
+            self.fetch_stock_daily_called = True
+            assert tickers == ["601236.SH"]
+            return pd.DataFrame(
+                {
+                    "stk_code": ["601236.SH"],
+                    "time": ["2023-02-01"],
+                    "close": [10.0],
+                }
+            )
+
+    from etl.tushare_enrichment_orchestrator import TuShareEnrichmentOrchestrator
+
+    provider = ProForbiddenProvider()
+    orchestrator = TuShareEnrichmentOrchestrator(provider, cache_dir=str(tmp_path), sleep_seconds_between_calls=0)
+    result = orchestrator.run(["113052.SH"], "2023-02-01", "2023-02-28")
+
+    assert provider.fetch_stock_daily_called is True
+    assert not result.empty
+    assert result["convert_price"].iloc[0] == 9.0
+    assert round(result["convert_premium_rate"].iloc[0], 2) == -1.0
+
 def test_jq_provider_quota_error_handling():
     """Verify JQDataProvider raises classified errors when JQData quota is hit."""
     mock_client = MagicMock()

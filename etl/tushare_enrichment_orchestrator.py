@@ -320,19 +320,17 @@ class TuShareEnrichmentOrchestrator:
         underlying_stocks = list(set([bond_to_stock.get(t) for t in tickers if t in bond_to_stock]))
         df_stock_daily = pd.DataFrame()
         if underlying_stocks:
-            stock_frames = []
-            for i in range(0, len(underlying_stocks), 100):
-                batch = underlying_stocks[i : i + 100]
-                try:
-                    df_s = self.provider.pro.daily(ts_code=",".join(batch), start_date=ts_start, end_date=ts_end)
-                    if df_s is not None and not df_s.empty:
-                        stock_frames.append(df_s)
-                except Exception:
-                    pass
-            if stock_frames:
-                df_stock_daily = pd.concat(stock_frames)
-                df_stock_daily = df_stock_daily.rename(columns={"ts_code": "stk_code", "trade_date": "time"})
-                df_stock_daily["time"] = pd.to_datetime(df_stock_daily["time"]).dt.strftime("%Y-%m-%d")
+            df_stock_daily = self.provider.fetch_stock_daily(underlying_stocks, start_date, end_date)
+            if df_stock_daily is None:
+                df_stock_daily = pd.DataFrame()
+            elif not df_stock_daily.empty:
+                df_stock_daily = df_stock_daily.copy()
+                if "ts_code" in df_stock_daily.columns and "stk_code" not in df_stock_daily.columns:
+                    df_stock_daily = df_stock_daily.rename(columns={"ts_code": "stk_code"})
+                if "trade_date" in df_stock_daily.columns and "time" not in df_stock_daily.columns:
+                    df_stock_daily = df_stock_daily.rename(columns={"trade_date": "time"})
+                if "time" in df_stock_daily.columns:
+                    df_stock_daily["time"] = pd.to_datetime(df_stock_daily["time"]).dt.strftime("%Y-%m-%d")
 
         reconstructed_frames = []
         for ticker in tickers:

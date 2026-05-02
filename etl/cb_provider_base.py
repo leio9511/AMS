@@ -42,6 +42,17 @@ class BaseDataProvider(ABC):
         pass
 
     @abstractmethod
+    def fetch_stock_daily(self, tickers: list[str], start_date: str, end_date: str) -> pd.DataFrame:
+        """
+        Fetch underlying stock daily price data using full tickers.
+
+        :param tickers: List of full stock tickers (e.g., ['000001.SZ', '600000.SH']).
+        :param start_date: Start date in YYYY-MM-DD format.
+        :param end_date: End date in YYYY-MM-DD format.
+        """
+        pass
+
+    @abstractmethod
     def fetch_stock_st_by_date(self, tickers: list[str], start_date: str, end_date: str) -> pd.DataFrame:
         """
         Fetch ST status for stocks by date.

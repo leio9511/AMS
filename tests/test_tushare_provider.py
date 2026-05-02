@@ -162,3 +162,24 @@ def test_tushare_full_ticker_contract_compliance():
     # Verify that it didn't do any complex parsing, just a straight 'isin' filter
     # which is the current implementation.
 
+
+def test_tushare_provider_exposes_stock_daily_adapter_method_for_enrichment_reconstruction():
+    mock_pro = MagicMock()
+    mock_pro.daily.return_value = pd.DataFrame(
+        {
+            "ts_code": ["601236.SH"],
+            "trade_date": ["20230201"],
+            "close": [10.0],
+        }
+    )
+
+    provider = TuShareProvider(pro=mock_pro)
+    df = provider.fetch_stock_daily(["601236.SH"], "2023-02-01", "2023-02-28")
+
+    mock_pro.daily.assert_called_once_with(ts_code="601236.SH", start_date="20230201", end_date="20230228")
+    assert "stk_code" in df.columns
+    assert "time" in df.columns
+    assert df.iloc[0]["stk_code"] == "601236.SH"
+    assert df.iloc[0]["time"] == "2023-02-01"
+    assert df.iloc[0]["close"] == 10.0
+

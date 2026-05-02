@@ -118,6 +118,39 @@ class TuShareProvider(BaseDataProvider):
         except Exception as e:
             self._handle_exception(e)
 
+    def fetch_stock_daily(self, tickers: list[str], start_date: str, end_date: str) -> pd.DataFrame:
+        """Fetch and normalize underlying stock daily data for enrichment reconstruction.
+
+        TuShare's ``daily`` endpoint is exposed here as an adapter-level method so
+        orchestration code never reaches through provider internals such as
+        ``provider.pro``. The method remains intentionally thin: provider call,
+        basic column normalization, date normalization, and provider-error
+        translation only.
+        """
+        try:
+            if not tickers:
+                return pd.DataFrame(columns=["stk_code", "time", "close"])
+
+            ts_start = start_date.replace("-", "")
+            ts_end = end_date.replace("-", "")
+            frames = []
+            for i in range(0, len(tickers), 100):
+                batch = tickers[i : i + 100]
+                df_batch = self.pro.daily(ts_code=",".join(batch), start_date=ts_start, end_date=ts_end)
+                if df_batch is not None and not df_batch.empty:
+                    frames.append(df_batch)
+
+            if not frames:
+                return pd.DataFrame(columns=["stk_code", "time", "close"])
+
+            df = pd.concat(frames)
+            df = df.rename(columns={"ts_code": "stk_code", "trade_date": "time"})
+            if "time" in df.columns:
+                df["time"] = pd.to_datetime(df["time"]).dt.strftime("%Y-%m-%d")
+            return df
+        except Exception as e:
+            self._handle_exception(e)
+
     def fetch_stock_st_by_date(self, tickers: list[str], start_date: str, end_date: str) -> pd.DataFrame:
         """
         Optimized ST status fetching: Queries by trade_date for the range to avoid 

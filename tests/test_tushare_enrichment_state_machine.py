@@ -58,6 +58,13 @@ class _StateMachineProvider:
             )
         return pd.DataFrame(rows).set_index(["code", "time"])
 
+    def fetch_stock_daily(self, tickers, start_date, end_date):
+        return self.pro.daily(
+            ts_code=",".join(tickers),
+            start_date=start_date.replace("-", ""),
+            end_date=end_date.replace("-", ""),
+        ).rename(columns={"ts_code": "stk_code", "trade_date": "time"})
+
 
 def _write_state(orchestrator, start_date, end_date, state):
     state_path = orchestrator._get_state_path(start_date, end_date)

@@ -93,6 +93,9 @@ class JQDataProvider(BaseDataProvider):
                 raise e
             self._handle_exception(e)
 
+    def fetch_stock_daily(self, tickers: list[str], start_date: str, end_date: str) -> pd.DataFrame:
+        return pd.DataFrame()
+
     def fetch_stock_st_by_date(self, tickers: list[str], start_date: str, end_date: str) -> pd.DataFrame:
         try:
             df = self.client.get_extras("is_st", tickers, start_date=start_date, end_date=end_date)

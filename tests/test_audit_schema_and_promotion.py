@@ -641,6 +641,76 @@ def test_concurrent_run_blocked_reports_only_orch_blocker():
     assert all(item["type"] != "VALIDATOR_SCHEMA_FAILURE" for item in report["root_blockers"])
 
 
+def test_core_path_is_not_masked_when_supportability_stage_fails():
+    pipeline = CBETLPipeline("2025-01-06", "2025-01-06", provider=MagicMock())
+    pipeline.df = pd.DataFrame(
+        {
+            "ticker": ["110001.XSHG"],
+            "date": [pd.Timestamp("2025-01-06")],
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.5],
+            "volume": [1000],
+            "bond_code_raw": ["110001"],
+            "bond_exchange_code": ["XSHG"],
+            "supportability_bucket": [SUPPORTABILITY_BUCKET_SUPPORTABLE],
+            "underlying_ticker": [None],
+            "is_st": [False],
+            "is_redeemed": [False],
+        }
+    )
+    pipeline.results["source_coverage"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
+    pipeline.results["supportability_summary"].update(
+        {
+            "status": "FAIL",
+            "failure_type": "SUPPORTABILITY_REGRESSION",
+            "message": "Missing underlying_ticker for supportable bonds in CONBOND_BASIC_INFO",
+            "supportable_row_count": 1,
+            "supportable_unique_bond_count": 1,
+            "missing_underlying_row_count": 1,
+            "missing_underlying_unique_bond_count": 1,
+            "unexpected_contract_regression_row_count": 0,
+            "unexpected_contract_regression_unique_bond_count": 0,
+        }
+    )
+    pipeline.results["premium_join_summary"].update(
+        {
+            "status": "DEGRADED",
+            "failure_type": "RATE_LIMITED_ENRICHMENT",
+            "message": "TuShare cb_price_chg rate limit hit",
+            "premium_missing_ratio_against_active_universe": 1.0,
+            "rate_limited_enrichment": True,
+            "permission_degraded_enrichment": False,
+        }
+    )
+    pipeline.results["is_st_join_summary"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
+    pipeline.results["redemption_summary"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
+    pipeline.results["validator_summary"].update(
+        {
+            "status": "PASS",
+            "failure_type": "NONE",
+            "message": "",
+            "core_validator_status": "PASS",
+            "core_validator_message": "",
+            "enrichment_validator_status": STAGE_STATUS_DEGRADED,
+            "enrichment_validator_message": "High missing ratio on premium: 100.00%",
+        }
+    )
+
+    report = pipeline.get_final_report()
+
+    assert report["core_path_status"] == "FAIL"
+    assert report["enrichment_path_status"] == STAGE_STATUS_DEGRADED
+    assert report["supportability_summary"]["failure_type"] == "SUPPORTABILITY_REGRESSION"
+    assert report["premium_join_summary"]["failure_type"] == "RATE_LIMITED_ENRICHMENT"
+    assert report["validator_summary"]["promotion_gate_status"] == PROMOTION_STATUS_BLOCKED
+    assert report["validator_summary"]["promotion_gate_message"] == "Promotion blocked: core_path_status != PASS"
+    blocker_types = [item["type"] for item in report["root_blockers"]]
+    assert "SUPPORTABILITY_REGRESSION" in blocker_types
+    assert "RATE_LIMITED_ENRICHMENT" in blocker_types
+
+
 def test_pipeline_rejects_tushare_convert_price_without_provenance_instead_of_stamping_jqdata():
     class _TuShareLikePremiumProvider(_AuditProvider):
         pass

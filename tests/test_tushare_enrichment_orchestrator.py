@@ -41,6 +41,12 @@ def mock_provider():
         "close": [110.0]
     }).set_index(["code", "time"])
     
+    provider.fetch_stock_daily.return_value = pd.DataFrame({
+        "stk_code": ["601236.SH"],
+        "time": ["2023-02-01"],
+        "close": [10.0]
+    })
+    
     provider.pro.daily.return_value = pd.DataFrame({
         "ts_code": ["601236.SH"],
         "trade_date": ["20230201"],
@@ -301,3 +307,17 @@ def test_tushare_latest_non_null_convertprice_aft_takes_precedence_over_initial_
     assert not df_result.empty
     assert df_result["convert_price"].iloc[0] == 9.0
     assert df_result["convert_price_provenance"].iloc[0] == TUSHARE_CONVERT_PRICE_PROVENANCE_LATEST
+
+
+def test_tushare_orchestrator_does_not_access_provider_pro_for_stock_daily(tmp_path, mock_provider):
+    class ForbiddenPro:
+        def __getattr__(self, name):
+            raise AssertionError("orchestrator must not access provider.pro internals")
+
+    mock_provider.pro = ForbiddenPro()
+    orchestrator = TuShareEnrichmentOrchestrator(mock_provider, cache_dir=str(tmp_path))
+
+    df_result = orchestrator.run(["113052.SH"], "2023-02-01", "2023-02-28")
+
+    assert not df_result.empty
+    mock_provider.fetch_stock_daily.assert_called_once_with(["601236.SH"], "2023-02-01", "2023-02-28")

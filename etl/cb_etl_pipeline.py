@@ -787,10 +787,6 @@ class CBETLPipeline:
 
         supportability_status = self.results["supportability_summary"]["status"]
         if supportability_status != STAGE_STATUS_PASS:
-            supportable_row_count = self.results["supportability_summary"].get("supportable_row_count", 0)
-            missing_underlying_row_count = self.results["supportability_summary"].get("missing_underlying_row_count", 0)
-            if supportable_row_count == 0 or missing_underlying_row_count > 0:
-                return STAGE_STATUS_PASS
             return supportability_status
 
         supportable_row_count = self.results["supportability_summary"].get("supportable_row_count", 0)
