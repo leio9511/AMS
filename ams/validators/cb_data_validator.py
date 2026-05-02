@@ -1,7 +1,5 @@
 import pandera as pa
 import pandas as pd
-import json
-import os
 
 cb_schema = pa.DataFrameSchema(
     {
@@ -58,6 +56,15 @@ class EnrichmentValidator:
         return "PASS", ""
 
 class DatasetSemanticValidator:
+    """Legacy dataset-wide validator retained for backward-compatible direct callers.
+
+    Stage F no longer invokes this class. The field-governed audit path is
+    limited to the PRD validator contract: core checks in ``CBDataValidator``
+    and enrichment checks in ``EnrichmentValidator``. The legacy semantic
+    thresholds below intentionally remain available to older direct tests/tools
+    until those callers are migrated.
+    """
+
     def __init__(self, baseline_path="/root/projects/AMS/data/cb_history_factors.metrics.json"):
         self.baseline_path = baseline_path
         self.thresholds = {
@@ -72,6 +79,9 @@ class DatasetSemanticValidator:
         }
 
     def validate_dataframe(self, df: pd.DataFrame) -> bool:
+        import json
+        import os
+
         row_count = len(df)
         if row_count < self.thresholds["row_count_min"]:
             raise DataSemanticViolation("[DataSemanticViolation] row_count below minimum threshold.")

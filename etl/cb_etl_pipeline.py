@@ -894,12 +894,10 @@ class CBETLPipeline:
                 stage["promotion_gate_status"] = PROMOTION_STATUS_PASS
                 return True
 
-            from ams.validators.cb_data_validator import CBDataValidator, DatasetSemanticValidator
+            from ams.validators.cb_data_validator import CBDataValidator
 
             validator_l1 = CBDataValidator()
-            validator_l2 = DatasetSemanticValidator()
 
-            missing_cols = [c for c in CANONICAL_CB_COLUMNS if c not in df_work.columns]
             core_missing_cols = [c for c in CORE_VALIDATOR_COLUMNS if c not in df_work.columns]
             enrichment_missing_cols = [c for c in ("premium_rate", "double_low") if c not in df_work.columns]
             if core_missing_cols:
@@ -912,80 +910,36 @@ class CBETLPipeline:
                 stage["promotion_gate_message"] = "Promotion blocked: core_validator_status != PASS"
                 return False
 
-            if premium_orchestrator_blocker == "CONCURRENT_RUN_BLOCKED" and missing_cols:
-                unexpected_missing = [c for c in missing_cols if c not in premium_orchestrator_missing_columns]
-                if unexpected_missing:
-                    stage["status"] = STAGE_STATUS_FAIL
-                    stage["failure_type"] = "VALIDATOR_SCHEMA_FAILURE"
-                    stage["message"] = f"Validator skipped because required canonical columns are missing after upstream stage failures: {unexpected_missing}"
-                    stage["core_validator_status"] = STAGE_STATUS_FAIL
-                    stage["core_validator_message"] = stage["message"]
-                    stage["promotion_gate_status"] = PROMOTION_STATUS_BLOCKED
-                    stage["promotion_gate_message"] = "Promotion blocked: core_validator_status != PASS"
-                    return False
-                for col in sorted(premium_orchestrator_missing_columns.intersection(missing_cols)):
-                    df_work[col] = pd.Series(float("nan"), index=df_work.index)
-            elif missing_cols:
-                for col in sorted(enrichment_missing_cols):
-                    df_work[col] = pd.Series(float("nan"), index=df_work.index)
+            for col in sorted(enrichment_missing_cols):
+                df_work[col] = pd.Series(float("nan"), index=df_work.index)
 
-            df_to_val = df_work[CANONICAL_CB_COLUMNS].copy()
-            df_to_val["ticker"] = df_to_val["ticker"].astype(str)
-            df_to_val["close"] = df_to_val["close"].astype(float)
-            df_to_val["premium_rate"] = df_to_val["premium_rate"].astype(float)
-            df_to_val["is_st"] = df_to_val["is_st"].astype(bool)
-            df_to_val["is_redeemed"] = df_to_val["is_redeemed"].astype(bool)
+            df_core_to_val = df_work[CORE_VALIDATOR_COLUMNS].copy()
+            df_core_to_val["close"] = pd.to_numeric(df_core_to_val["close"], errors="coerce")
+            for bool_col in ("is_st", "is_redeemed"):
+                if df_core_to_val[bool_col].isna().any():
+                    continue
+                df_core_to_val[bool_col] = df_core_to_val[bool_col].astype(bool)
 
-            val_l1 = validator_l1.validate_dataframe(df_to_val)
+            val_l1 = validator_l1.validate_dataframe(df_core_to_val)
             stage["core_validator_status"] = STAGE_STATUS_PASS if val_l1 else STAGE_STATUS_FAIL
             if not val_l1 and getattr(validator_l1, "last_error_message", ""):
                 stage["core_validator_message"] = validator_l1.last_error_message
 
-            should_run_dataset_semantic_validator = not (
-                self.results["premium_join_summary"].get("failure_type") in ENRICHMENT_DEGRADED_FAILURE_TYPES
-                or self.results["premium_join_summary"].get("orchestrator_blocker_type") == "CONCURRENT_RUN_BLOCKED"
-            )
-
-            if premium_orchestrator_blocker == "CONCURRENT_RUN_BLOCKED":
-                stage["enrichment_validator_status"] = STAGE_STATUS_NOT_RUN
-                stage["enrichment_validator_message"] = ""
-                if stage["core_validator_status"] == STAGE_STATUS_FAIL:
-                    stage["status"] = STAGE_STATUS_FAIL
-                    if stage["failure_type"] == "NONE":
-                        stage["failure_type"] = "VALIDATOR_SCHEMA_FAILURE"
-                    stage["message"] = f"Schema validation failed: {stage['core_validator_message']}" if stage["core_validator_message"] else "Schema validation failed"
-                else:
-                    stage["status"] = STAGE_STATUS_PASS
-                    stage["message"] = ""
-
-                core_path_status = self._compute_core_path_status()
-                promotion_status, promotion_message = self._compute_promotion_gate(core_path_status)
-                stage["promotion_gate_status"] = promotion_status
-                stage["promotion_gate_message"] = promotion_message
-                return stage["status"] == STAGE_STATUS_PASS
-
             try:
-                if should_run_dataset_semantic_validator:
-                    val_l2 = validator_l2.validate_dataframe(df_to_val)
-                    if not val_l2:
-                        stage["core_validator_status"] = STAGE_STATUS_FAIL
-            except Exception as e:
-                stage["core_validator_status"] = STAGE_STATUS_FAIL
-                stage["core_validator_message"] = str(e)
-                if stage["failure_type"] == "NONE":
-                    stage["failure_type"] = "VALIDATOR_SEMANTIC_FAILURE"
-
-            try:
-                from ams.validators.cb_data_validator import EnrichmentValidator
-                validator_enrichment = EnrichmentValidator()
-                df_enrichment_target = df_work[df_work["underlying_ticker"].notna()].copy()
-                if not df_enrichment_target.empty:
-                    st, msg = validator_enrichment.validate_dataframe(df_enrichment_target)
-                    stage["enrichment_validator_status"] = st
-                    stage["enrichment_validator_message"] = msg
-                else:
+                if premium_orchestrator_blocker == "CONCURRENT_RUN_BLOCKED":
                     stage["enrichment_validator_status"] = STAGE_STATUS_NOT_RUN
                     stage["enrichment_validator_message"] = ""
+                else:
+                    from ams.validators.cb_data_validator import EnrichmentValidator
+                    validator_enrichment = EnrichmentValidator()
+                    df_enrichment_target = df_work[df_work["underlying_ticker"].notna()].copy()
+                    if not df_enrichment_target.empty:
+                        st, msg = validator_enrichment.validate_dataframe(df_enrichment_target)
+                        stage["enrichment_validator_status"] = st
+                        stage["enrichment_validator_message"] = msg
+                    else:
+                        stage["enrichment_validator_status"] = STAGE_STATUS_NOT_RUN
+                        stage["enrichment_validator_message"] = ""
             except Exception as e:
                 stage["enrichment_validator_status"] = STAGE_STATUS_FAIL
                 stage["enrichment_validator_message"] = str(e)

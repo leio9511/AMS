@@ -51,6 +51,39 @@ def test_validator_catches_missing_columns():
     validator = CBDataValidator()
     assert validator.validate_dataframe(df) is False
 
+
+def test_core_validator_only_checks_prd_required_columns_and_close_semantics():
+    validator = CBDataValidator()
+    valid_core = pd.DataFrame(
+        {
+            "ticker": ["110001.XSHG", "110002.XSHG"],
+            "date": [pd.Timestamp("2025-01-06"), pd.Timestamp("2025-01-06")],
+            "close": [100.0, 101.0],
+            "is_st": [False, False],
+            "is_redeemed": [False, False],
+        }
+    )
+
+    assert validator.validate_dataframe(valid_core) is True
+
+    invalid_cases = [
+        valid_core.assign(ticker=[None, "110002.XSHG"]),
+        valid_core.assign(date=[pd.NaT, pd.Timestamp("2025-01-06")]),
+        valid_core.assign(close=[0.0, 101.0]),
+        valid_core.assign(close=[-1.0, 101.0]),
+        valid_core.assign(is_st=[None, False]),
+        valid_core.assign(is_redeemed=[False, None]),
+    ]
+    for invalid_df in invalid_cases:
+        assert validator.validate_dataframe(invalid_df) is False
+
+    with_non_contract_enrichment_gap = valid_core.assign(
+        premium_rate=[float("nan"), float("nan")],
+        double_low=[float("nan"), float("nan")],
+        underlying_ticker=[None, None],
+    )
+    assert validator.validate_dataframe(with_non_contract_enrichment_gap) is True
+
 def test_requirements_file_exists():
     req_path = os.path.join(os.path.dirname(__file__), "..", "requirements.txt")
     assert os.path.exists(req_path)
@@ -97,6 +130,7 @@ def test_cli_invalid_csv(tmp_path):
 from ams.validators.cb_data_validator import DatasetSemanticValidator, DataSemanticViolation, DataDriftViolation
 import json
 
+@pytest.mark.legacy_dataset_semantic
 def test_semantic_validation_success(tmp_path):
     baseline_file = tmp_path / "baseline.json"
     baseline_data = {
@@ -117,6 +151,7 @@ def test_semantic_validation_success(tmp_path):
     validator = DatasetSemanticValidator(baseline_path=str(baseline_file))
     assert validator.validate_dataframe(df) is True
 
+@pytest.mark.legacy_dataset_semantic
 def test_semantic_validation_collapsed_premium(tmp_path):
     baseline_file = tmp_path / "baseline.json"
     baseline_data = {
@@ -140,6 +175,7 @@ def test_semantic_validation_collapsed_premium(tmp_path):
         validator.validate_dataframe(df)
     assert "[DataSemanticViolation] premium_rate_nonzero_ratio below minimum threshold." in str(excinfo.value)
 
+@pytest.mark.legacy_dataset_semantic
 def test_semantic_validation_zero_st_events(tmp_path):
     baseline_file = tmp_path / "baseline.json"
     baseline_data = {
@@ -162,6 +198,7 @@ def test_semantic_validation_zero_st_events(tmp_path):
         validator.validate_dataframe(df)
     assert "[DataSemanticViolation] is_st_true_count below minimum threshold." in str(excinfo.value)
 
+@pytest.mark.legacy_dataset_semantic
 def test_semantic_validation_drift_violation(tmp_path):
     baseline_file = tmp_path / "baseline.json"
     # mock a baseline with 100k rows
@@ -209,3 +246,33 @@ def test_enrichment_validator_reports_degradation():
     status, msg = validator.validate_dataframe(df)
     assert status == "DEGRADED"
     assert "High missing ratio on premium" in msg
+
+
+def test_enrichment_validator_only_targets_enrichment_universe_semantics():
+    validator = EnrichmentValidator()
+    compliant_enrichment_rows = pd.DataFrame(
+        {
+            "close": [100.0, 101.0],
+            "premium_rate": [0.10, 0.12],
+            "double_low": [110.0, 113.0],
+            "ticker": [None, None],
+            "is_st": [None, None],
+            "is_redeemed": [None, None],
+        }
+    )
+
+    status, msg = validator.validate_dataframe(compliant_enrichment_rows)
+    assert status == "PASS"
+    assert msg == ""
+
+    degraded_rows = compliant_enrichment_rows.copy()
+    degraded_rows.loc[0, "premium_rate"] = float("nan")
+    status, msg = validator.validate_dataframe(degraded_rows)
+    assert status == "DEGRADED"
+    assert "High missing ratio on premium" in msg
+
+    failing_rows = compliant_enrichment_rows.copy()
+    failing_rows.loc[0, "double_low"] = 999.0
+    status, msg = validator.validate_dataframe(failing_rows)
+    assert status == "FAIL"
+    assert "double_low does not match canonical formula" in msg

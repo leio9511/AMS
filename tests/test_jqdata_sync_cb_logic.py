@@ -397,8 +397,8 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         mock_jq.bond.run_query.side_effect = [self._mock_bonds_info(), premium]
         mock_jq.get_extras.return_value = pd.DataFrame({self.underlying: [True]}, index=pd.to_datetime(["2024-01-03"]))
 
-        mock_validator.return_value.validate_dataframe.return_value = True
-        mock_semantic_validator.return_value.validate_dataframe.return_value = False
+        mock_validator.return_value.validate_dataframe.return_value = False
+        mock_semantic_validator.return_value.validate_dataframe.return_value = True
 
         with patch("sys.stdout", new_callable=unittest.mock.MagicMock), patch("os.replace") as mock_replace:
             with self.assertRaises(SystemExit) as cm:
@@ -456,13 +456,10 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         mock_jq.bond.run_query.side_effect = [self._mock_bonds_info(), premium]
         mock_jq.get_extras.return_value = pd.DataFrame({self.underlying: [True]}, index=pd.to_datetime(["2024-01-03"]))
 
-        mock_validator.return_value.validate_dataframe.return_value = True
-
-        class DataSemanticViolation(Exception):
-            pass
-
-        mock_semantic_validator.return_value.validate_dataframe.side_effect = DataSemanticViolation(
-            "[DataSemanticViolation] premium_rate_nonzero_ratio below minimum threshold."
+        mock_validator.return_value.validate_dataframe.return_value = False
+        mock_validator.return_value.last_error_message = "[DataContractViolation] close must be positive"
+        mock_semantic_validator.return_value.validate_dataframe.side_effect = AssertionError(
+            "legacy DatasetSemanticValidator must not run in Stage F"
         )
 
         from io import StringIO
@@ -479,7 +476,8 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
             sys.stdout = original_stdout
 
         output = captured_output.getvalue()
-        self.assertIn("[DataSemanticViolation] premium_rate_nonzero_ratio below minimum threshold.", output)
+        self.assertIn("[DataContractViolation] close must be positive", output)
+        mock_semantic_validator.return_value.validate_dataframe.assert_not_called()
 
     @patch("etl.jqdata_sync_cb.jqdatasdk")
     @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
