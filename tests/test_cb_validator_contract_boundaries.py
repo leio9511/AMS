@@ -7,6 +7,7 @@ from etl.cb_etl_pipeline import (
     SUPPORTABILITY_BUCKET_SUPPORTABLE,
     _normalize_core_validator_input,
 )
+from ams.validators.cb_data_validator import CBDataValidator
 
 
 def _contract_valid_pipeline() -> CBETLPipeline:
@@ -79,6 +80,7 @@ def test_stage_f_normalizes_ticker_dtype_before_core_validator():
 
     def capture_core_frame(df):
         captured["ticker_dtype"] = str(df["ticker"].dtype)
+        captured["ticker_storage"] = getattr(df["ticker"].dtype, "storage", None)
         return True
 
     with patch("ams.validators.cb_data_validator.CBDataValidator") as validator_cls:
@@ -87,6 +89,7 @@ def test_stage_f_normalizes_ticker_dtype_before_core_validator():
 
     report = pipeline.get_final_report()
     assert captured["ticker_dtype"] == "string"
+    assert captured["ticker_storage"] == "pyarrow"
     assert report["validator_summary"]["status"] == "PASS"
     assert report["validator_summary"]["failure_type"] == "NONE"
     assert report["validator_summary"]["core_validator_status"] == "PASS"
@@ -111,6 +114,7 @@ def test_core_validator_input_normalization_preserves_numeric_and_bool_contracts
     normalized = _normalize_core_validator_input(df_core)
 
     assert str(normalized["ticker"].dtype) == "string"
+    assert getattr(normalized["ticker"].dtype, "storage", None) == "pyarrow"
     assert is_numeric_dtype(normalized["close"])
     assert normalized["close"].iloc[0] == 100.5
     assert pd.isna(normalized["close"].iloc[1])
@@ -122,6 +126,17 @@ def test_core_validator_input_normalization_preserves_numeric_and_bool_contracts
     normalized_nullable = _normalize_core_validator_input(nullable_bool_core)
     assert normalized_nullable["is_redeemed"].dtype == nullable_bool_core["is_redeemed"].dtype
     assert pd.isna(normalized_nullable["is_redeemed"].iloc[1])
+
+    valid_core = pd.DataFrame(
+        {
+            "ticker": pd.Series(["110001.XSHG", "110002.XSHG"], dtype="object"),
+            "date": [pd.Timestamp("2025-01-06"), pd.Timestamp("2025-01-06")],
+            "close": pd.Series(["100.5", "101.0"], dtype="object"),
+            "is_st": pd.Series([False, True], dtype="object"),
+            "is_redeemed": pd.Series([False, False], dtype="object"),
+        }
+    )
+    assert CBDataValidator().validate_dataframe(_normalize_core_validator_input(valid_core)) is True
 
 
 def test_stage_f_does_not_run_legacy_dataset_thresholds_for_small_audit_window():
