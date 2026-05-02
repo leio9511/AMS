@@ -67,6 +67,19 @@ CORE_VALIDATOR_COLUMNS = [
     "is_redeemed",
 ]
 
+
+def _normalize_core_validator_input(df_core: pd.DataFrame) -> pd.DataFrame:
+    """Return the canonical core-validator frame with Stage-F boundary dtypes."""
+    normalized = df_core.copy()
+    if "ticker" in normalized.columns:
+        normalized["ticker"] = normalized["ticker"].astype("string[pyarrow]")
+    if "close" in normalized.columns:
+        normalized["close"] = pd.to_numeric(normalized["close"], errors="coerce")
+    for bool_col in ("is_st", "is_redeemed"):
+        if bool_col in normalized.columns and not normalized[bool_col].isna().any():
+            normalized[bool_col] = normalized[bool_col].astype(bool)
+    return normalized
+
 ENRICHMENT_DEGRADED_FAILURE_TYPES = {
     "RATE_LIMITED_ENRICHMENT",
     "PERMISSION_DEGRADED_ENRICHMENT",
@@ -237,17 +250,6 @@ def _normalize_premium_source(
     working["date"] = pd.to_datetime(working["date"])
     working["premium_rate"] = working["convert_premium_rate"] / 100.0
     return working[output_columns]
-
-def _normalize_core_validator_input(df_core: pd.DataFrame) -> pd.DataFrame:
-    normalized = df_core.copy()
-    if "ticker" in normalized.columns:
-        normalized["ticker"] = normalized["ticker"].astype("string[pyarrow]")
-    if "close" in normalized.columns:
-        normalized["close"] = pd.to_numeric(normalized["close"], errors="coerce")
-    for bool_col in ("is_st", "is_redeemed"):
-        if bool_col in normalized.columns and not normalized[bool_col].isna().any():
-            normalized[bool_col] = normalized[bool_col].astype(bool)
-    return normalized
 
 def _extract_sorted_unique_codes(series: pd.Series) -> list[str]:
     if series is None or series.empty:
@@ -925,7 +927,10 @@ class CBETLPipeline:
             for col in sorted(enrichment_missing_cols):
                 df_work[col] = pd.Series(float("nan"), index=df_work.index)
 
-            df_core_to_val = _normalize_core_validator_input(df_work[CORE_VALIDATOR_COLUMNS])
+            # Normalize the core boundary frame immediately before CBDataValidator.
+            df_core_to_val = _normalize_core_validator_input(
+                df_work[CORE_VALIDATOR_COLUMNS]
+            )
 
             val_l1 = validator_l1.validate_dataframe(df_core_to_val)
             stage["core_validator_status"] = STAGE_STATUS_PASS if val_l1 else STAGE_STATUS_FAIL
