@@ -4,6 +4,7 @@ import pytest
 import pandas as pd
 from unittest.mock import MagicMock, patch
 from etl.tushare_enrichment_orchestrator import TuShareEnrichmentOrchestrator
+from etl.cb_etl_pipeline import _normalize_premium_source
 from etl.cb_provider_base import DataProviderQuotaError
 
 @pytest.fixture
@@ -106,6 +107,8 @@ def test_tushare_orchestrator_fallback_logic(tmp_path, mock_provider):
     # bond_close = 110.0
     # premium = (110 / ((100/10) * 10)) - 1 = (110 / 100) - 1 = 10%
     assert round(df_result["convert_premium_rate"].iloc[0], 2) == 10.0
+    assert df_result["convert_price"].iloc[0] == 10.0
+    assert df_result["convert_price_provenance"].iloc[0] == "tushare.cb_basic.conv_price"
 
 def test_tushare_orchestrator_rate_limit_degradation(tmp_path, mock_provider):
     orchestrator = TuShareEnrichmentOrchestrator(mock_provider, cache_dir=str(tmp_path))
@@ -117,3 +120,17 @@ def test_tushare_orchestrator_rate_limit_degradation(tmp_path, mock_provider):
         
     final_state = orchestrator.load_state("2023-02-01", "2023-02-28", ["113052.SH"])
     assert final_state["run_status"] == "RATE_LIMITED"
+
+
+def test_tushare_governed_payload_provenance_survives_normalization_without_jqdata_rewrite(tmp_path, mock_provider):
+    orchestrator = TuShareEnrichmentOrchestrator(mock_provider, cache_dir=str(tmp_path))
+
+    df_result = orchestrator.run(["113052.SH"], "2023-02-01", "2023-02-28")
+
+    assert not df_result.empty
+    assert df_result["convert_price"].iloc[0] == 9.0
+    assert df_result["convert_price_provenance"].iloc[0] == "tushare.cb_price_chg.latest_non_null_convertprice_aft"
+
+    normalized = _normalize_premium_source(df_result)
+
+    assert normalized.loc[0, "convert_price_provenance"] == "tushare.cb_price_chg.latest_non_null_convertprice_aft"

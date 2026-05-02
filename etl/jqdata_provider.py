@@ -1,6 +1,7 @@
 import pandas as pd
 import jqdatasdk
 from etl.cb_provider_base import BaseDataProvider, DataProviderAuthError, DataProviderQuotaError, DataProviderError
+from etl.cb_etl_pipeline import JQDATA_CONVERT_PRICE_PROVENANCE
 
 class JQDataProvider(BaseDataProvider):
     def __init__(self, jqdata_client=None):
@@ -72,6 +73,9 @@ class JQDataProvider(BaseDataProvider):
                         self.client.bond.CONBOND_DAILY_CONVERT.date <= e_date,
                     )
                     df_batch = self.client.bond.run_query(q)
+                    if df_batch is not None and not df_batch.empty and "convert_price" in df_batch.columns:
+                        df_batch = df_batch.copy()
+                        df_batch["convert_price_provenance"] = JQDATA_CONVERT_PRICE_PROVENANCE
                     
                     if len(df_batch) == 5000:
                         raise DataProviderError("Premium source query returned the provider single-call cap characteristic and must be retried with deterministic batching.")

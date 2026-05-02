@@ -24,6 +24,8 @@ from etl.cb_audit_contract import (
     build_validator_summary,
 )
 
+JQDATA_CONVERT_PRICE_PROVENANCE = "jqdata.CONBOND_DAILY_CONVERT.convert_price"
+
 # Constants from jqdata_sync_cb.py
 SUPPORTABILITY_BUCKET_SUPPORTABLE = "supportable"
 SUPPORTABILITY_BUCKET_OUTSIDE_BASIC_INFO = "outside_basic_info"
@@ -158,15 +160,61 @@ def _build_bond_key_columns(df: pd.DataFrame, ticker_col: str = "ticker") -> pd.
     result[["bond_code_raw", "bond_exchange_code"]] = normalized_df
     return result
 
-def _normalize_premium_source(df_premium: pd.DataFrame) -> pd.DataFrame:
+def _normalize_premium_source(
+    df_premium: pd.DataFrame,
+    *,
+    source_provider: str | None = None,
+    convert_price_provenance_default: str | None = None,
+) -> pd.DataFrame:
+    output_columns = [
+        "date",
+        "bond_code_raw",
+        "bond_exchange_code",
+        "premium_rate",
+        "convert_price",
+        "convert_price_provenance",
+    ]
     if df_premium is None or df_premium.empty:
-        return pd.DataFrame(columns=["date", "bond_code_raw", "bond_exchange_code", "premium_rate"])
+        return pd.DataFrame(columns=output_columns)
 
     required_columns = {"code", "date", "convert_premium_rate"}
     if not required_columns.issubset(df_premium.columns):
         raise ValueError("CONBOND_DAILY_CONVERT response missing required premium-rate columns")
 
     working = df_premium.copy()
+
+    if "convert_price" in working.columns:
+        convert_price_non_null = working["convert_price"].notna()
+        if convert_price_non_null.any():
+            has_provenance = "convert_price_provenance" in working.columns
+            if has_provenance:
+                provenance = working["convert_price_provenance"]
+                missing_provenance = provenance.isna() | provenance.astype(str).str.strip().eq("")
+            else:
+                missing_provenance = pd.Series(True, index=working.index)
+
+            rows_requiring_default = convert_price_non_null & missing_provenance
+            if rows_requiring_default.any():
+                explicit_jqdata_source = source_provider == "jqdata"
+                explicit_jqdata_default = convert_price_provenance_default == JQDATA_CONVERT_PRICE_PROVENANCE
+                if not (explicit_jqdata_source or explicit_jqdata_default):
+                    raise ValueError(
+                        "convert_price_provenance is required when convert_price is non-null "
+                        "unless the caller explicitly authorizes the exact JQData provenance default"
+                    )
+
+                if convert_price_provenance_default is not None and convert_price_provenance_default != JQDATA_CONVERT_PRICE_PROVENANCE:
+                    raise ValueError("JQData convert_price provenance default must be exact")
+
+                if "convert_price_provenance" not in working.columns:
+                    working["convert_price_provenance"] = pd.NA
+                working.loc[rows_requiring_default, "convert_price_provenance"] = JQDATA_CONVERT_PRICE_PROVENANCE
+    else:
+        working["convert_price"] = pd.NA
+
+    if "convert_price_provenance" not in working.columns:
+        working["convert_price_provenance"] = pd.NA
+
     code_as_str = working["code"].astype(str)
     split_keys = code_as_str.apply(_split_bond_ticker)
     split_df = pd.DataFrame(
@@ -184,7 +232,7 @@ def _normalize_premium_source(df_premium: pd.DataFrame) -> pd.DataFrame:
 
     working["date"] = pd.to_datetime(working["date"])
     working["premium_rate"] = working["convert_premium_rate"] / 100.0
-    return working[["date", "bond_code_raw", "bond_exchange_code", "premium_rate"]]
+    return working[output_columns]
 
 def _extract_sorted_unique_codes(series: pd.Series) -> list[str]:
     if series is None or series.empty:
@@ -575,7 +623,8 @@ class CBETLPipeline:
             if merged is None or merged.empty:
                 return pd.DataFrame()
                 
-            normalized = _normalize_premium_source(merged)
+            source_provider = "jqdata" if type(self.provider).__name__ == "JQDataProvider" else None
+            normalized = _normalize_premium_source(merged, source_provider=source_provider)
             return normalized.drop_duplicates(subset=["date", "bond_code_raw", "bond_exchange_code"])
         except Exception as e:
             from etl.cb_provider_base import DataProviderAuthError, DataProviderQuotaError

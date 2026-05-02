@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 from etl.cb_provider_base import DataProviderAuthError
 from etl.cb_etl_pipeline import (
     CBETLPipeline,
+    JQDATA_CONVERT_PRICE_PROVENANCE,
     STAGE_STATUS_DEGRADED,
     PROMOTION_STATUS_BLOCKED,
     SUPPORTABILITY_BUCKET_SUPPORTABLE,
@@ -565,6 +566,37 @@ def test_concurrent_run_blocked_reports_only_orch_blocker():
     blocker_types = [item["type"] for item in report["root_blockers"]]
     assert blocker_types == ["CONCURRENT_RUN_BLOCKED"]
     assert all(item["type"] != "VALIDATOR_SCHEMA_FAILURE" for item in report["root_blockers"])
+
+
+def test_pipeline_rejects_tushare_convert_price_without_provenance_instead_of_stamping_jqdata():
+    class _TuShareLikePremiumProvider(_AuditProvider):
+        pass
+
+    provider = _TuShareLikePremiumProvider()
+    with patch.object(
+        provider,
+        "fetch_cb_price_changes",
+        return_value=pd.DataFrame(
+            {
+                "date": [pd.Timestamp("2025-01-06")],
+                "code": ["110001.XSHG"],
+                "convert_price": [10.0],
+                "convert_premium_rate": [10.0],
+            }
+        ),
+    ):
+        pipeline = CBETLPipeline("2025-01-06", "2025-01-06", provider=provider)
+        assert pipeline.run_stage_a_source_acquisition() is True
+        assert pipeline.run_stage_b_supportability_classification() is True
+        assert pipeline.run_stage_c_premium_join() is False
+
+    summary = pipeline.results["premium_join_summary"]
+    assert summary["status"] == "FAIL"
+    assert "convert_price_provenance is required" in summary["message"]
+    assert JQDATA_CONVERT_PRICE_PROVENANCE not in summary["message"]
+    assert "convert_price_provenance" not in pipeline.df.columns or not (
+        pipeline.df["convert_price_provenance"] == JQDATA_CONVERT_PRICE_PROVENANCE
+    ).any()
 
 
 def test_run_etl_promotion_gate_blocks_promotion(tmp_path):

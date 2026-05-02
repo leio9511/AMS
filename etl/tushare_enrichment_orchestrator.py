@@ -254,13 +254,32 @@ class TuShareEnrichmentOrchestrator:
                      merged["convertprice_aft"] = float("nan")
                 if "convert_price_initial" not in merged.columns:
                      merged["convert_price_initial"] = float("nan")
-                     
-                merged["effective_conv_price"] = merged["convertprice_aft"]
-                merged["effective_conv_price"] = merged["effective_conv_price"].fillna(merged["convert_price_initial"])
+
+                latest_aft = pd.to_numeric(merged["convertprice_aft"], errors="coerce")
+                initial = pd.to_numeric(merged["convert_price_initial"], errors="coerce")
+                basic = pd.Series(basic_conv.get(ticker, float("nan")), index=merged.index)
+                basic = pd.to_numeric(basic, errors="coerce")
+
+                merged["effective_conv_price"] = latest_aft
+                merged["convert_price_provenance"] = pd.NA
+                aft_mask = latest_aft.notna()
+                merged.loc[aft_mask, "convert_price_provenance"] = "tushare.cb_price_chg.latest_non_null_convertprice_aft"
+
+                use_initial = merged["effective_conv_price"].isna() & initial.notna()
+                merged.loc[use_initial, "effective_conv_price"] = initial.loc[use_initial]
+                merged.loc[use_initial, "convert_price_provenance"] = "tushare.cb_price_chg.convert_price_initial"
+
+                use_basic = merged["effective_conv_price"].isna() & basic.notna()
+                merged.loc[use_basic, "effective_conv_price"] = basic.loc[use_basic]
+                merged.loc[use_basic, "convert_price_provenance"] = "tushare.cb_basic.conv_price"
+                merged.loc[merged["effective_conv_price"].isna(), "convert_price_provenance"] = pd.NA
             else:
-                merged["effective_conv_price"] = float("nan")
-                
-            merged["effective_conv_price"] = merged["effective_conv_price"].fillna(basic_conv.get(ticker, float("nan")))
+                merged["effective_conv_price"] = pd.to_numeric(pd.Series(basic_conv.get(ticker, float("nan")), index=merged.index), errors="coerce")
+                merged["convert_price_provenance"] = pd.NA
+                basic_mask = merged["effective_conv_price"].notna()
+                merged.loc[basic_mask, "convert_price_provenance"] = "tushare.cb_basic.conv_price"
+            
+            merged["convert_price"] = merged["effective_conv_price"]
             
             merged["convert_premium_rate"] = (
                 merged["bond_close"] / ((100 / merged["effective_conv_price"]) * merged["stock_close"]) - 1
@@ -272,4 +291,4 @@ class TuShareEnrichmentOrchestrator:
             return pd.DataFrame()
             
         df_result = pd.concat(reconstructed_frames)
-        return df_result[["code", "date", "convert_premium_rate"]]
+        return df_result[["code", "date", "convert_price", "convert_price_provenance", "convert_premium_rate"]]
