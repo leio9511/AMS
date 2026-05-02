@@ -6,6 +6,11 @@ import socket
 import datetime
 import pandas as pd
 from etl.cb_provider_base import DataProviderQuotaError
+from etl.cb_field_registry import (
+    TUSHARE_CONVERT_PRICE_PROVENANCE_BASIC,
+    TUSHARE_CONVERT_PRICE_PROVENANCE_INITIAL,
+    TUSHARE_CONVERT_PRICE_PROVENANCE_LATEST,
+)
 
 class TuShareEnrichmentOrchestrator:
     def __init__(self, provider, cache_dir="cache"):
@@ -250,10 +255,13 @@ class TuShareEnrichmentOrchestrator:
                 bond_chg["latest_non_null_convertprice_aft"] = pd.to_numeric(
                     bond_chg["convertprice_aft"], errors="coerce"
                 ).ffill()
+                bond_chg["latest_available_convert_price_initial"] = pd.to_numeric(
+                    bond_chg["convert_price_initial"], errors="coerce"
+                ).ffill()
 
                 merged = pd.merge_asof(
                     merged,
-                    bond_chg[["change_date_dt", "latest_non_null_convertprice_aft", "convert_price_initial"]],
+                    bond_chg[["change_date_dt", "latest_non_null_convertprice_aft", "latest_available_convert_price_initial"]],
                     left_on="time_dt",
                     right_on="change_date_dt",
                     direction="backward"
@@ -261,32 +269,32 @@ class TuShareEnrichmentOrchestrator:
                 
                 if "latest_non_null_convertprice_aft" not in merged.columns:
                      merged["latest_non_null_convertprice_aft"] = float("nan")
-                if "convert_price_initial" not in merged.columns:
-                     merged["convert_price_initial"] = float("nan")
+                if "latest_available_convert_price_initial" not in merged.columns:
+                     merged["latest_available_convert_price_initial"] = float("nan")
 
                 latest_aft = pd.to_numeric(merged["latest_non_null_convertprice_aft"], errors="coerce")
-                initial = pd.to_numeric(merged["convert_price_initial"], errors="coerce")
+                initial = pd.to_numeric(merged["latest_available_convert_price_initial"], errors="coerce")
                 basic = pd.Series(basic_conv.get(ticker, float("nan")), index=merged.index)
                 basic = pd.to_numeric(basic, errors="coerce")
 
                 merged["effective_conv_price"] = latest_aft
                 merged["convert_price_provenance"] = pd.NA
                 aft_mask = latest_aft.notna()
-                merged.loc[aft_mask, "convert_price_provenance"] = "tushare.cb_price_chg.latest_non_null_convertprice_aft"
+                merged.loc[aft_mask, "convert_price_provenance"] = TUSHARE_CONVERT_PRICE_PROVENANCE_LATEST
 
                 use_initial = merged["effective_conv_price"].isna() & initial.notna()
                 merged.loc[use_initial, "effective_conv_price"] = initial.loc[use_initial]
-                merged.loc[use_initial, "convert_price_provenance"] = "tushare.cb_price_chg.convert_price_initial"
+                merged.loc[use_initial, "convert_price_provenance"] = TUSHARE_CONVERT_PRICE_PROVENANCE_INITIAL
 
                 use_basic = merged["effective_conv_price"].isna() & basic.notna()
                 merged.loc[use_basic, "effective_conv_price"] = basic.loc[use_basic]
-                merged.loc[use_basic, "convert_price_provenance"] = "tushare.cb_basic.conv_price"
+                merged.loc[use_basic, "convert_price_provenance"] = TUSHARE_CONVERT_PRICE_PROVENANCE_BASIC
                 merged.loc[merged["effective_conv_price"].isna(), "convert_price_provenance"] = pd.NA
             else:
                 merged["effective_conv_price"] = pd.to_numeric(pd.Series(basic_conv.get(ticker, float("nan")), index=merged.index), errors="coerce")
                 merged["convert_price_provenance"] = pd.NA
                 basic_mask = merged["effective_conv_price"].notna()
-                merged.loc[basic_mask, "convert_price_provenance"] = "tushare.cb_basic.conv_price"
+                merged.loc[basic_mask, "convert_price_provenance"] = TUSHARE_CONVERT_PRICE_PROVENANCE_BASIC
             
             merged["convert_price"] = merged["effective_conv_price"]
             

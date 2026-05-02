@@ -6,6 +6,11 @@ from unittest.mock import MagicMock, patch
 from etl.tushare_enrichment_orchestrator import TuShareEnrichmentOrchestrator
 from etl.cb_etl_pipeline import _normalize_premium_source
 from etl.cb_provider_base import DataProviderQuotaError
+from etl.cb_field_registry import (
+    TUSHARE_CONVERT_PRICE_PROVENANCE_BASIC,
+    TUSHARE_CONVERT_PRICE_PROVENANCE_INITIAL,
+    TUSHARE_CONVERT_PRICE_PROVENANCE_LATEST,
+)
 
 @pytest.fixture
 def mock_provider():
@@ -108,7 +113,7 @@ def test_tushare_orchestrator_fallback_logic(tmp_path, mock_provider):
     # premium = (110 / ((100/10) * 10)) - 1 = (110 / 100) - 1 = 10%
     assert round(df_result["convert_premium_rate"].iloc[0], 2) == 10.0
     assert df_result["convert_price"].iloc[0] == 10.0
-    assert df_result["convert_price_provenance"].iloc[0] == "tushare.cb_basic.conv_price"
+    assert df_result["convert_price_provenance"].iloc[0] == TUSHARE_CONVERT_PRICE_PROVENANCE_BASIC
 
 def test_tushare_orchestrator_rate_limit_degradation(tmp_path, mock_provider):
     orchestrator = TuShareEnrichmentOrchestrator(mock_provider, cache_dir=str(tmp_path))
@@ -129,11 +134,11 @@ def test_tushare_governed_payload_provenance_survives_normalization_without_jqda
 
     assert not df_result.empty
     assert df_result["convert_price"].iloc[0] == 9.0
-    assert df_result["convert_price_provenance"].iloc[0] == "tushare.cb_price_chg.latest_non_null_convertprice_aft"
+    assert df_result["convert_price_provenance"].iloc[0] == TUSHARE_CONVERT_PRICE_PROVENANCE_LATEST
 
     normalized = _normalize_premium_source(df_result)
 
-    assert normalized.loc[0, "convert_price_provenance"] == "tushare.cb_price_chg.latest_non_null_convertprice_aft"
+    assert normalized.loc[0, "convert_price_provenance"] == TUSHARE_CONVERT_PRICE_PROVENANCE_LATEST
 
 
 def test_tushare_latest_non_null_convertprice_aft_wins_when_latest_change_row_is_null(tmp_path, mock_provider):
@@ -152,4 +157,90 @@ def test_tushare_latest_non_null_convertprice_aft_wins_when_latest_change_row_is
 
     assert not df_result.empty
     assert df_result["convert_price"].iloc[0] == 9.0
-    assert df_result["convert_price_provenance"].iloc[0] == "tushare.cb_price_chg.latest_non_null_convertprice_aft"
+    assert df_result["convert_price_provenance"].iloc[0] == TUSHARE_CONVERT_PRICE_PROVENANCE_LATEST
+
+
+def test_tushare_fallback_uses_initial_when_convertprice_aft_column_missing(tmp_path, mock_provider):
+    orchestrator = TuShareEnrichmentOrchestrator(mock_provider, cache_dir=str(tmp_path))
+
+    mock_provider.fetch_cb_price_changes.side_effect = lambda t: pd.DataFrame(
+        {
+            "ts_code": ["113052.SH"],
+            "change_date": ["2023-01-01"],
+            "convert_price_initial": [11.0],
+        }
+    )
+
+    df_result = orchestrator.run(["113052.SH"], "2023-02-01", "2023-02-28")
+
+    assert not df_result.empty
+    assert df_result["convert_price"].iloc[0] == 11.0
+    assert df_result["convert_price_provenance"].iloc[0] == TUSHARE_CONVERT_PRICE_PROVENANCE_INITIAL
+    assert round(df_result["convert_premium_rate"].iloc[0], 6) == round((110.0 / ((100 / 11.0) * 10.0) - 1) * 100, 6)
+
+
+def test_tushare_fallback_uses_cb_basic_when_change_price_columns_missing(tmp_path, mock_provider):
+    orchestrator = TuShareEnrichmentOrchestrator(mock_provider, cache_dir=str(tmp_path))
+
+    mock_provider.fetch_cb_price_changes.side_effect = lambda t: pd.DataFrame(
+        {
+            "ts_code": ["113052.SH"],
+            "change_date": ["2023-01-01"],
+        }
+    )
+
+    df_result = orchestrator.run(["113052.SH"], "2023-02-01", "2023-02-28")
+
+    assert not df_result.empty
+    assert df_result["convert_price"].iloc[0] == 10.0
+    assert df_result["convert_price_provenance"].iloc[0] == TUSHARE_CONVERT_PRICE_PROVENANCE_BASIC
+    assert round(df_result["convert_premium_rate"].iloc[0], 2) == 10.0
+
+
+def test_tushare_fallback_marks_missing_without_synthesizing_default_when_all_conversion_prices_missing(tmp_path, mock_provider):
+    orchestrator = TuShareEnrichmentOrchestrator(mock_provider, cache_dir=str(tmp_path))
+
+    mock_provider.fetch_cb_price_changes.side_effect = lambda t: pd.DataFrame(
+        {
+            "ts_code": ["113052.SH"],
+            "change_date": ["2023-01-01"],
+        }
+    )
+    mock_provider.fetch_cb_basic.return_value = pd.DataFrame(
+        {
+            "code": ["113052.SH"],
+            "conv_price": [None],
+        }
+    )
+
+    df_result = orchestrator.run(["113052.SH"], "2023-02-01", "2023-02-28")
+
+    assert not df_result.empty
+    assert pd.isna(df_result["convert_price"].iloc[0])
+    assert pd.isna(df_result["convert_price_provenance"].iloc[0])
+    assert pd.isna(df_result["convert_premium_rate"].iloc[0])
+
+
+def test_tushare_latest_non_null_convertprice_aft_takes_precedence_over_initial_and_basic(tmp_path, mock_provider):
+    orchestrator = TuShareEnrichmentOrchestrator(mock_provider, cache_dir=str(tmp_path))
+
+    mock_provider.fetch_cb_price_changes.side_effect = lambda t: pd.DataFrame(
+        {
+            "ts_code": ["113052.SH", "113052.SH"],
+            "change_date": ["2023-01-01", "2023-01-20"],
+            "convert_price_initial": [10.0, 8.0],
+            "convertprice_aft": [9.0, None],
+        }
+    )
+    mock_provider.fetch_cb_basic.return_value = pd.DataFrame(
+        {
+            "code": ["113052.SH"],
+            "conv_price": [7.0],
+        }
+    )
+
+    df_result = orchestrator.run(["113052.SH"], "2023-02-01", "2023-02-28")
+
+    assert not df_result.empty
+    assert df_result["convert_price"].iloc[0] == 9.0
+    assert df_result["convert_price_provenance"].iloc[0] == TUSHARE_CONVERT_PRICE_PROVENANCE_LATEST
