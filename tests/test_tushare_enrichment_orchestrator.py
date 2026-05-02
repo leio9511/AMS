@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import pytest
 import pandas as pd
 from unittest.mock import MagicMock, patch
@@ -63,6 +64,62 @@ def test_tushare_orchestrator_concurrent_run_blocked(tmp_path, mock_provider):
         
     with pytest.raises(RuntimeError, match="CONCURRENT_RUN_BLOCKED"):
         orchestrator.run(["113052.SH"], start_date, end_date)
+
+def test_resume_after_stale_takeover_reuses_completed_tickers_and_only_processes_pending(tmp_path, mock_provider):
+    orchestrator = TuShareEnrichmentOrchestrator(mock_provider, cache_dir=str(tmp_path), sleep_seconds_between_calls=0)
+    start_date = "2023-02-01"
+    end_date = "2023-02-28"
+    tickers = ["113052.SH", "110088.SH"]
+
+    state = {
+        "run_status": "RUNNING",
+        "provider": "tushare",
+        "start_date": start_date,
+        "end_date": end_date,
+        "sorted_tickers": sorted(tickers),
+        "completed_tickers": ["113052.SH"],
+        "pending_tickers": ["110088.SH"],
+        "failed_tickers": [],
+        "last_processed_ticker": "113052.SH",
+        "sleep_seconds_between_calls": 0,
+        "last_attempt_at": "2023-02-01T00:00:00",
+        "next_eligible_at": "",
+    }
+    orchestrator.save_state(state)
+    state_path = orchestrator._get_state_path(start_date, end_date)
+
+    stale_mtime = time.time() - (31 * 60)
+    os.utime(state_path, (stale_mtime, stale_mtime))
+    with open(orchestrator._get_lock_path(start_date, end_date), "w") as f:
+        json.dump(
+            {
+                "owner_pid": os.getpid(),
+                "owner_hostname": "test-host",
+                "created_at": "2000-01-01T00:00:00",
+                "run_state_path": state_path,
+            },
+            f,
+        )
+
+    mock_provider.fetch_cb_price_changes.side_effect = lambda t: pd.DataFrame(
+        {
+            "ts_code": [t],
+            "change_date": ["2023-01-01"],
+            "convert_price_initial": [10.0],
+            "convertprice_aft": [9.0],
+        }
+    )
+
+    result = orchestrator.run(tickers, start_date, end_date)
+
+    assert not result.empty
+    mock_provider.fetch_cb_price_changes.assert_called_once_with("110088.SH")
+    final_state = orchestrator.load_state(start_date, end_date, tickers)
+    assert final_state["run_status"] == "COMPLETED"
+    assert final_state["completed_tickers"] == ["113052.SH", "110088.SH"]
+    assert final_state["pending_tickers"] == []
+    assert final_state["last_processed_ticker"] == "110088.SH"
+
 
 def test_tushare_orchestrator_resume_from_pending(tmp_path, mock_provider):
     orchestrator = TuShareEnrichmentOrchestrator(mock_provider, cache_dir=str(tmp_path))
