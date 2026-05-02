@@ -242,20 +242,29 @@ class TuShareEnrichmentOrchestrator:
                 bond_chg["change_date_dt"] = pd.to_datetime(bond_chg["change_date"])
                 bond_chg = bond_chg.sort_values("change_date_dt")
                 
+                if "convertprice_aft" not in bond_chg.columns:
+                    bond_chg["convertprice_aft"] = float("nan")
+                if "convert_price_initial" not in bond_chg.columns:
+                    bond_chg["convert_price_initial"] = float("nan")
+
+                bond_chg["latest_non_null_convertprice_aft"] = pd.to_numeric(
+                    bond_chg["convertprice_aft"], errors="coerce"
+                ).ffill()
+
                 merged = pd.merge_asof(
                     merged,
-                    bond_chg[["change_date_dt", "convertprice_aft", "convert_price_initial"]],
+                    bond_chg[["change_date_dt", "latest_non_null_convertprice_aft", "convert_price_initial"]],
                     left_on="time_dt",
                     right_on="change_date_dt",
                     direction="backward"
                 )
                 
-                if "convertprice_aft" not in merged.columns:
-                     merged["convertprice_aft"] = float("nan")
+                if "latest_non_null_convertprice_aft" not in merged.columns:
+                     merged["latest_non_null_convertprice_aft"] = float("nan")
                 if "convert_price_initial" not in merged.columns:
                      merged["convert_price_initial"] = float("nan")
 
-                latest_aft = pd.to_numeric(merged["convertprice_aft"], errors="coerce")
+                latest_aft = pd.to_numeric(merged["latest_non_null_convertprice_aft"], errors="coerce")
                 initial = pd.to_numeric(merged["convert_price_initial"], errors="coerce")
                 basic = pd.Series(basic_conv.get(ticker, float("nan")), index=merged.index)
                 basic = pd.to_numeric(basic, errors="coerce")

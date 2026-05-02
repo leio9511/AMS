@@ -19,6 +19,8 @@ FINAL_STATUS_FAIL_SECONDARY_ONLY = "FAIL_SECONDARY_ONLY"
 
 FAILURE_TYPE_NONE = "NONE"
 
+JQDATA_CONVERT_PRICE_PROVENANCE = "jqdata.CONBOND_DAILY_CONVERT.convert_price"
+
 NON_PROMOTION_DISCLAIMER = "[AUDIT-ONLY] This run is diagnostic only. No canonical dataset promotion was attempted."
 
 ROOT_BLOCKER_STAGES = {"A", "B", "C", "D", "E", "F", "ORCH"}

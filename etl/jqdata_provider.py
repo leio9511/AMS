@@ -1,7 +1,7 @@
 import pandas as pd
 import jqdatasdk
 from etl.cb_provider_base import BaseDataProvider, DataProviderAuthError, DataProviderQuotaError, DataProviderError
-from etl.cb_etl_pipeline import JQDATA_CONVERT_PRICE_PROVENANCE
+from etl.cb_audit_contract import JQDATA_CONVERT_PRICE_PROVENANCE
 
 class JQDataProvider(BaseDataProvider):
     def __init__(self, jqdata_client=None):

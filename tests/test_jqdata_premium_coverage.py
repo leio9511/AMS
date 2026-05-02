@@ -2,9 +2,9 @@ import pandas as pd
 import pytest
 from unittest.mock import MagicMock
 from etl.jqdata_provider import JQDataProvider
+from etl.cb_audit_contract import JQDATA_CONVERT_PRICE_PROVENANCE
 from etl.cb_etl_pipeline import (
     CBETLPipeline,
-    JQDATA_CONVERT_PRICE_PROVENANCE,
     SUPPORTABILITY_BUCKET_SUPPORTABLE,
     SUPPORTABILITY_BUCKET_OUTSIDE_BASIC_INFO,
     _normalize_premium_source,

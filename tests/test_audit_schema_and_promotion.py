@@ -2,9 +2,9 @@ import pandas as pd
 from unittest.mock import MagicMock, patch
 
 from etl.cb_provider_base import DataProviderAuthError
+from etl.cb_audit_contract import JQDATA_CONVERT_PRICE_PROVENANCE
 from etl.cb_etl_pipeline import (
     CBETLPipeline,
-    JQDATA_CONVERT_PRICE_PROVENANCE,
     STAGE_STATUS_DEGRADED,
     PROMOTION_STATUS_BLOCKED,
     SUPPORTABILITY_BUCKET_SUPPORTABLE,

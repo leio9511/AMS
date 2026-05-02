@@ -16,6 +16,7 @@ from etl.cb_audit_contract import (
     build_is_st_join_summary,
     build_pipeline_results,
     build_premium_join_summary,
+    JQDATA_CONVERT_PRICE_PROVENANCE,
     build_redemption_summary,
     build_root_blocker,
     build_secondary_finding,
@@ -23,8 +24,6 @@ from etl.cb_audit_contract import (
     build_supportability_summary,
     build_validator_summary,
 )
-
-JQDATA_CONVERT_PRICE_PROVENANCE = "jqdata.CONBOND_DAILY_CONVERT.convert_price"
 
 # Constants from jqdata_sync_cb.py
 SUPPORTABILITY_BUCKET_SUPPORTABLE = "supportable"

@@ -134,3 +134,22 @@ def test_tushare_governed_payload_provenance_survives_normalization_without_jqda
     normalized = _normalize_premium_source(df_result)
 
     assert normalized.loc[0, "convert_price_provenance"] == "tushare.cb_price_chg.latest_non_null_convertprice_aft"
+
+
+def test_tushare_latest_non_null_convertprice_aft_wins_when_latest_change_row_is_null(tmp_path, mock_provider):
+    orchestrator = TuShareEnrichmentOrchestrator(mock_provider, cache_dir=str(tmp_path))
+
+    mock_provider.fetch_cb_price_changes.side_effect = lambda t: pd.DataFrame(
+        {
+            "ts_code": ["113052.SH", "113052.SH"],
+            "change_date": ["2023-01-01", "2023-01-20"],
+            "convert_price_initial": [10.0, 8.0],
+            "convertprice_aft": [9.0, None],
+        }
+    )
+
+    df_result = orchestrator.run(["113052.SH"], "2023-02-01", "2023-02-28")
+
+    assert not df_result.empty
+    assert df_result["convert_price"].iloc[0] == 9.0
+    assert df_result["convert_price_provenance"].iloc[0] == "tushare.cb_price_chg.latest_non_null_convertprice_aft"
