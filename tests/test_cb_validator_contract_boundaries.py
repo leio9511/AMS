@@ -1,7 +1,12 @@
 import pandas as pd
+from pandas.api.types import is_bool_dtype, is_numeric_dtype
 from unittest.mock import MagicMock, patch
 
-from etl.cb_etl_pipeline import CBETLPipeline, SUPPORTABILITY_BUCKET_SUPPORTABLE
+from etl.cb_etl_pipeline import (
+    CBETLPipeline,
+    SUPPORTABILITY_BUCKET_SUPPORTABLE,
+    _normalize_core_validator_input,
+)
 
 
 def _contract_valid_pipeline() -> CBETLPipeline:
@@ -67,7 +72,7 @@ def _contract_valid_pipeline() -> CBETLPipeline:
     return pipeline
 
 
-def test_stage_f_normalizes_ticker_to_validator_string_dtype_before_schema_validation():
+def test_stage_f_normalizes_ticker_dtype_before_core_validator():
     pipeline = _contract_valid_pipeline()
     pipeline.df["ticker"] = pd.Series(pipeline.df["ticker"].tolist(), dtype="object")
     captured = {}
@@ -80,7 +85,43 @@ def test_stage_f_normalizes_ticker_to_validator_string_dtype_before_schema_valid
         validator_cls.return_value.validate_dataframe.side_effect = capture_core_frame
         assert pipeline.run_stage_f_validator() is True
 
+    report = pipeline.get_final_report()
     assert captured["ticker_dtype"] == "string"
+    assert report["validator_summary"]["status"] == "PASS"
+    assert report["validator_summary"]["failure_type"] == "NONE"
+    assert report["validator_summary"]["core_validator_status"] == "PASS"
+    validator_text = " ".join(
+        str(report["validator_summary"].get(key, ""))
+        for key in ("message", "core_validator_message")
+    )
+    assert "expected series 'ticker' to have type string[pyarrow], got object" not in validator_text
+
+
+def test_core_validator_input_normalization_preserves_numeric_and_bool_contracts():
+    df_core = pd.DataFrame(
+        {
+            "ticker": pd.Series(["110001.XSHG", "110002.XSHG", pd.NA], dtype="object"),
+            "date": [pd.Timestamp("2025-01-06")] * 3,
+            "close": pd.Series(["100.5", "not-a-number", 101], dtype="object"),
+            "is_st": pd.Series([True, False, True], dtype="object"),
+            "is_redeemed": pd.Series([False, False, True], dtype="object"),
+        }
+    )
+
+    normalized = _normalize_core_validator_input(df_core)
+
+    assert str(normalized["ticker"].dtype) == "string"
+    assert is_numeric_dtype(normalized["close"])
+    assert normalized["close"].iloc[0] == 100.5
+    assert pd.isna(normalized["close"].iloc[1])
+    assert is_bool_dtype(normalized["is_st"])
+    assert is_bool_dtype(normalized["is_redeemed"])
+
+    nullable_bool_core = df_core.copy()
+    nullable_bool_core["is_redeemed"] = pd.Series([False, pd.NA, True], dtype="object")
+    normalized_nullable = _normalize_core_validator_input(nullable_bool_core)
+    assert normalized_nullable["is_redeemed"].dtype == nullable_bool_core["is_redeemed"].dtype
+    assert pd.isna(normalized_nullable["is_redeemed"].iloc[1])
 
 
 def test_stage_f_does_not_run_legacy_dataset_thresholds_for_small_audit_window():
