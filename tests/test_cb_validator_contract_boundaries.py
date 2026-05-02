@@ -67,6 +67,22 @@ def _contract_valid_pipeline() -> CBETLPipeline:
     return pipeline
 
 
+def test_stage_f_normalizes_ticker_to_validator_string_dtype_before_schema_validation():
+    pipeline = _contract_valid_pipeline()
+    pipeline.df["ticker"] = pd.Series(pipeline.df["ticker"].tolist(), dtype="object")
+    captured = {}
+
+    def capture_core_frame(df):
+        captured["ticker_dtype"] = str(df["ticker"].dtype)
+        return True
+
+    with patch("ams.validators.cb_data_validator.CBDataValidator") as validator_cls:
+        validator_cls.return_value.validate_dataframe.side_effect = capture_core_frame
+        assert pipeline.run_stage_f_validator() is True
+
+    assert captured["ticker_dtype"] == "string"
+
+
 def test_stage_f_does_not_run_legacy_dataset_thresholds_for_small_audit_window():
     pipeline = _contract_valid_pipeline()
 

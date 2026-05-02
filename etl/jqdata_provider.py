@@ -42,6 +42,25 @@ class JQDataProvider(BaseDataProvider):
         """
         if not tickers:
             return pd.DataFrame()
+
+        raw_code_to_exchange: dict[str, str] = {}
+        for ticker in tickers:
+            ticker_str = str(ticker).strip()
+            if not ticker_str:
+                continue
+            parts = ticker_str.split(".", 1)
+            raw_code = parts[0].strip()
+            exchange_code = parts[1].strip() if len(parts) > 1 else ""
+            if not raw_code or not exchange_code:
+                continue
+
+            existing_exchange = raw_code_to_exchange.get(raw_code)
+            if existing_exchange is not None and existing_exchange != exchange_code:
+                raise DataProviderError(
+                    f"Conflicting JQData premium exchange suffixes for raw bond code {raw_code}: "
+                    f"{existing_exchange} vs {exchange_code}"
+                )
+            raw_code_to_exchange[raw_code] = exchange_code
             
         start_dt = pd.to_datetime(start_date)
         end_dt = pd.to_datetime(end_date)
@@ -61,7 +80,7 @@ class JQDataProvider(BaseDataProvider):
                 for i in range(0, len(tickers), code_batch_size):
                     batch_codes = tickers[i:i + code_batch_size]
                     # Strip suffixes for JQData CONBOND_DAILY_CONVERT query which expects raw codes
-                    raw_batch_codes = [c.split('.')[0] for c in batch_codes]
+                    raw_batch_codes = [str(c).split('.')[0].strip() for c in batch_codes]
                     q = self.client.query(
                         self.client.bond.CONBOND_DAILY_CONVERT.code,
                         self.client.bond.CONBOND_DAILY_CONVERT.date,
@@ -73,9 +92,27 @@ class JQDataProvider(BaseDataProvider):
                         self.client.bond.CONBOND_DAILY_CONVERT.date <= e_date,
                     )
                     df_batch = self.client.bond.run_query(q)
-                    if df_batch is not None and not df_batch.empty and "convert_price" in df_batch.columns:
+                    if df_batch is not None and not df_batch.empty:
                         df_batch = df_batch.copy()
-                        df_batch["convert_price_provenance"] = JQDATA_CONVERT_PRICE_PROVENANCE
+                        if "code" in df_batch.columns and raw_code_to_exchange:
+                            response_raw_codes = df_batch["code"].astype(str).str.split(".", n=1).str[0].str.strip()
+                            restored_exchange = response_raw_codes.map(raw_code_to_exchange)
+                            if "exchange_code" not in df_batch.columns:
+                                df_batch["exchange_code"] = restored_exchange
+                            else:
+                                exchange_as_text = df_batch["exchange_code"].astype("string")
+                                missing_exchange = (
+                                    df_batch["exchange_code"].isna()
+                                    | exchange_as_text.str.strip().fillna("").eq("")
+                                    | exchange_as_text.str.strip().str.lower().fillna("").isin(["nan", "none", "nat"])
+                                )
+                                df_batch.loc[missing_exchange & restored_exchange.notna(), "exchange_code"] = restored_exchange
+
+                        if "convert_price" in df_batch.columns:
+                            if "convert_price_provenance" not in df_batch.columns:
+                                df_batch["convert_price_provenance"] = pd.NA
+                            has_convert_price = df_batch["convert_price"].notna()
+                            df_batch.loc[has_convert_price, "convert_price_provenance"] = JQDATA_CONVERT_PRICE_PROVENANCE
                     
                     if len(df_batch) == 5000:
                         raise DataProviderError("Premium source query returned the provider single-call cap characteristic and must be retried with deterministic batching.")

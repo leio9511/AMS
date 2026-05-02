@@ -28,6 +28,56 @@ def mock_jqdata():
     mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
     return mock_jq
 
+def test_stage_c_joins_jqdata_live_shape_raw_premium_rows_with_restored_exchange_code(mock_jqdata):
+    start_date = "2025-01-06"
+    end_date = "2025-01-06"
+    pipeline = CBETLPipeline(start_date, end_date, jqdata_provider=mock_jqdata)
+    pipeline.results["source_coverage"]["status"] = STAGE_STATUS_PASS
+    pipeline.results["supportability_summary"].update(
+        {
+            "status": STAGE_STATUS_PASS,
+            "supportable_row_count": 1,
+            "supportable_unique_bond_count": 1,
+        }
+    )
+    pipeline.results["active_universe_summary"].update(
+        {
+            "enrichment_target_row_count": 1,
+            "enrichment_target_unique_bond_count": 1,
+        }
+    )
+    pipeline.df = pd.DataFrame(
+        {
+            "date": [pd.Timestamp(start_date)],
+            "ticker": ["110001.XSHG"],
+            "bond_code_raw": ["110001"],
+            "bond_exchange_code": ["XSHG"],
+            "supportability_bucket": ["supportable"],
+            "underlying_ticker": ["600001.XSHG"],
+            "close": [100.0],
+        }
+    )
+    mock_jqdata.bond.run_query.return_value = pd.DataFrame(
+        {
+            "code": ["110001"],
+            "date": [start_date],
+            "convert_price": [10.0],
+            "convert_premium_rate": [15.0],
+        }
+    )
+
+    pipeline.run_stage_c_premium_join()
+
+    summary = pipeline.results["premium_join_summary"]
+    assert pipeline.results["source_coverage"]["premium_source_row_count"] > 0
+    assert summary["premium_joined_row_count"] > 0
+    assert not (
+        pipeline.results["source_coverage"]["premium_source_row_count"] > 0
+        and summary["premium_joined_row_count"] == 0
+    )
+    assert pipeline.df.loc[0, "premium_rate"] == 0.15
+
+
 def test_stage_c_deterministic_batching_by_month_and_code(mock_jqdata):
     # Setup pipeline with 2-month window and 150 codes (should trigger multiple batches)
     start_date = "2025-01-01"
