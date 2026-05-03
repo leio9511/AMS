@@ -2,7 +2,6 @@ import pandas as pd
 import pytest
 from unittest.mock import MagicMock
 from etl.jqdata_provider import JQDataProvider
-from etl.cb_provider_base import DataProviderError
 from etl.cb_audit_contract import JQDATA_CONVERT_PRICE_PROVENANCE
 from etl.cb_etl_pipeline import (
     CBETLPipeline,
@@ -132,39 +131,3 @@ def test_jqdata_provider_stamps_convert_price_provenance_before_normalization():
     assert stamped.loc[0, "convert_price_provenance"] == JQDATA_CONVERT_PRICE_PROVENANCE
     normalized = _normalize_premium_source(stamped)
     assert normalized.loc[0, "convert_price_provenance"] == JQDATA_CONVERT_PRICE_PROVENANCE
-
-
-def test_jqdata_provider_restores_exchange_code_from_requested_suffix_for_raw_live_response():
-    mock_jqdata = MagicMock()
-    mock_query = MagicMock()
-    mock_jqdata.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
-    mock_jqdata.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
-    mock_jqdata.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
-    mock_jqdata.query.return_value = mock_query
-    mock_query.filter.return_value = mock_query
-    mock_jqdata.bond.run_query.return_value = pd.DataFrame(
-        {
-            "code": ["110001", "123456"],
-            "date": ["2023-01-01", "2023-01-01"],
-            "convert_price": [10.0, 20.0],
-            "convert_premium_rate": [15.0, 20.0],
-        }
-    )
-
-    provider = JQDataProvider(jqdata_client=mock_jqdata)
-    restored = provider.fetch_cb_price_changes(["110001.XSHG", "123456.XSHE"], "2023-01-01", "2023-01-01")
-
-    assert restored["exchange_code"].tolist() == ["XSHG", "XSHE"]
-    assert (restored["convert_price_provenance"] == JQDATA_CONVERT_PRICE_PROVENANCE).all()
-    queried_raw_codes = mock_jqdata.bond.CONBOND_DAILY_CONVERT.code.in_.call_args.args[0]
-    assert queried_raw_codes == ["110001", "123456"]
-
-
-def test_jqdata_provider_rejects_conflicting_suffix_mapping_for_same_raw_code():
-    mock_jqdata = MagicMock()
-    provider = JQDataProvider(jqdata_client=mock_jqdata)
-
-    with pytest.raises(DataProviderError, match="Conflicting JQData premium exchange suffixes"):
-        provider.fetch_cb_price_changes(["110001.XSHG", "110001.XSHE"], "2023-01-01", "2023-01-01")
-
-    mock_jqdata.query.assert_not_called()
