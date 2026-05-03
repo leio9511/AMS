@@ -67,6 +67,19 @@ def _contract_valid_pipeline() -> CBETLPipeline:
     return pipeline
 
 
+def test_stage_f_normalizes_ticker_dtype_before_core_validator():
+    pipeline = _contract_valid_pipeline()
+    pipeline.df["ticker"] = pipeline.df["ticker"].astype(object)
+
+    assert pipeline.run_stage_f_validator() is True
+
+    report = pipeline.get_final_report()
+    assert report["validator_summary"]["status"] == "PASS"
+    assert report["validator_summary"]["failure_type"] == "NONE"
+    assert report["validator_summary"]["core_validator_status"] == "PASS"
+    assert "expected series 'ticker'" not in report["validator_summary"]["core_validator_message"]
+
+
 def test_stage_f_does_not_run_legacy_dataset_thresholds_for_small_audit_window():
     pipeline = _contract_valid_pipeline()
 

@@ -131,3 +131,44 @@ def test_jqdata_provider_stamps_convert_price_provenance_before_normalization():
     assert stamped.loc[0, "convert_price_provenance"] == JQDATA_CONVERT_PRICE_PROVENANCE
     normalized = _normalize_premium_source(stamped)
     assert normalized.loc[0, "convert_price_provenance"] == JQDATA_CONVERT_PRICE_PROVENANCE
+
+
+def test_fetch_cb_price_changes_recovers_exchange_code_from_requested_tickers_when_response_contains_raw_code_only():
+    mock_jqdata = MagicMock()
+    mock_query = MagicMock()
+    mock_jqdata.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+    mock_jqdata.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+    mock_jqdata.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+    mock_jqdata.query.return_value = mock_query
+    mock_query.filter.return_value = mock_query
+    mock_jqdata.bond.run_query.return_value = pd.DataFrame(
+        {
+            "code": ["110001", "123001"],
+            "date": ["2023-01-01", "2023-01-01"],
+            "convert_price": [10.0, 20.0],
+            "convert_premium_rate": [15.0, 25.0],
+        }
+    )
+
+    provider = JQDataProvider(jqdata_client=mock_jqdata)
+    result = provider.fetch_cb_price_changes(
+        ["110001.XSHG", "123001.XSHE"],
+        "2023-01-01",
+        "2023-01-01",
+    )
+
+    assert not result.empty
+    assert "exchange_code" in result.columns
+    assert result.set_index("code")["exchange_code"].to_dict() == {
+        "110001": "XSHG",
+        "123001": "XSHE",
+    }
+    assert (result["convert_price_provenance"] == JQDATA_CONVERT_PRICE_PROVENANCE).all()
+    assert result.set_index("code")["convert_price"].to_dict() == {
+        "110001": 10.0,
+        "123001": 20.0,
+    }
+    assert result.set_index("code")["convert_premium_rate"].to_dict() == {
+        "110001": 15.0,
+        "123001": 25.0,
+    }

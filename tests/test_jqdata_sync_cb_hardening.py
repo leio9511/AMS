@@ -119,3 +119,41 @@ def test_stage_d_is_st_full_gap_message(mock_jqdata):
     
     assert pipeline.results["is_st_join_summary"]["status"] == STAGE_STATUS_FAIL
     assert "is_st source query exceeded the provider-supported date window" in pipeline.results["is_st_join_summary"]["message"]
+
+
+def test_stage_c_premium_join_succeeds_for_live_shape_without_exchange_code(mock_jqdata):
+    start_date = "2025-01-01"
+    end_date = "2025-01-01"
+    pipeline = CBETLPipeline(start_date, end_date, jqdata_provider=mock_jqdata)
+
+    pipeline.results["source_coverage"]["status"] = STAGE_STATUS_PASS
+    pipeline.results["supportability_summary"]["supportable_row_count"] = 2
+    pipeline.df = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2025-01-01"), pd.Timestamp("2025-01-01")],
+            "ticker": ["110059.XSHG", "123001.XSHE"],
+            "bond_code_raw": ["110059", "123001"],
+            "bond_exchange_code": ["XSHG", "XSHE"],
+            "underlying_ticker": ["600001.XSHG", "000001.XSHE"],
+            "supportability_bucket": ["supportable", "supportable"],
+            "close": [100.0, 200.0],
+        }
+    )
+
+    mock_jqdata.bond.run_query.return_value = pd.DataFrame(
+        {
+            "code": ["110059", "123001"],
+            "date": ["2025-01-01", "2025-01-01"],
+            "convert_price": [10.0, 20.0],
+            "convert_premium_rate": [15.0, 25.0],
+        }
+    )
+
+    pipeline.run_stage_c_premium_join()
+
+    summary = pipeline.results["premium_join_summary"]
+    assert summary["premium_joined_row_count"] > 0
+    assert summary["premium_missing_ratio_against_active_universe"] < 1.0
+    assert pipeline.df["premium_rate"].notna().sum() == 2
+    assert pipeline.df["bond_code_raw"].tolist() == ["110059", "123001"]
+    assert pipeline.df["bond_exchange_code"].tolist() == ["XSHG", "XSHE"]
