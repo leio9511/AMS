@@ -92,3 +92,30 @@ def test_stage_f_normalizes_ticker_dtype_before_validator_contract_check():
     summary = pipeline.results["validator_summary"]
     assert summary["core_validator_status"] == "PASS"
     assert "expected series 'ticker' to have type string[pyarrow], got object" not in summary["core_validator_message"]
+
+
+def test_stage_f_normalizes_ticker_dtype_before_core_schema_validation():
+    pipeline = _contract_valid_pipeline()
+    pipeline.df["ticker"] = pd.Series(["110001.XSHG", "110002.XSHG"], dtype=object)
+
+    assert pipeline.run_stage_f_validator() is True
+
+    summary = pipeline.results["validator_summary"]
+    assert summary["core_validator_status"] == "PASS"
+    assert summary["status"] == "PASS"
+    assert "expected series 'ticker' to have type string[pyarrow], got object" not in summary["core_validator_message"]
+
+
+def test_stage_f_normalization_does_not_mask_real_core_contract_failures():
+    pipeline = _contract_valid_pipeline()
+    pipeline.df["ticker"] = pd.Series([None, "110002.XSHG"], dtype=object)
+    pipeline.df["close"] = ["100.5", "not-a-number"]
+    pipeline.df["is_st"] = [False, "bad-bool"]
+
+    assert pipeline.run_stage_f_validator() is False
+
+    summary = pipeline.results["validator_summary"]
+    assert summary["core_validator_status"] == "FAIL"
+    assert summary["failure_type"] == "VALIDATOR_SCHEMA_FAILURE"
+    assert summary["status"] == "FAIL"
+    assert "Schema" in summary["message"] or "schema" in summary["core_validator_message"]

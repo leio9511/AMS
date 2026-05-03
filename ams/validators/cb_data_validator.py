@@ -1,5 +1,6 @@
 import pandera as pa
 import pandas as pd
+import numpy as np
 
 cb_schema = pa.DataFrameSchema(
     {
@@ -10,6 +11,52 @@ cb_schema = pa.DataFrameSchema(
         "is_redeemed": pa.Column(bool, nullable=False),
     }
 )
+
+CORE_VALIDATOR_TICKER_DTYPE = pd.StringDtype(storage="pyarrow")
+
+
+def _normalize_contract_bool_value(value):
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+
+    if isinstance(value, (int, np.integer)) and value in (0, 1):
+        return bool(value)
+
+    if isinstance(value, (float, np.floating)) and value in (0.0, 1.0):
+        return bool(int(value))
+
+    return pd.NA
+
+
+def _normalize_contract_bool_series(series: pd.Series) -> pd.Series:
+    normalized = series.map(
+        lambda value: pd.NA if pd.isna(value) else _normalize_contract_bool_value(value)
+    )
+    invalid_mask = series.notna() & normalized.isna()
+    if invalid_mask.any():
+        return series
+
+    if normalized.isna().any():
+        return normalized.astype("boolean")
+
+    return normalized.astype(bool)
+
+
+def normalize_core_validator_frame(df: pd.DataFrame) -> pd.DataFrame:
+    normalized = df.copy()
+
+    if "ticker" in normalized.columns:
+        normalized["ticker"] = normalized["ticker"].astype(CORE_VALIDATOR_TICKER_DTYPE)
+
+    if "close" in normalized.columns:
+        normalized["close"] = pd.to_numeric(normalized["close"], errors="coerce")
+
+    for bool_col in ("is_st", "is_redeemed"):
+        if bool_col not in normalized.columns:
+            continue
+        normalized[bool_col] = _normalize_contract_bool_series(normalized[bool_col])
+
+    return normalized
 
 class CBDataValidator:
     def __init__(self):
@@ -157,13 +204,8 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Error reading CSV: {e}")
         sys.exit(1)
-    
-    if "ticker" in df.columns:
-        df["ticker"] = df["ticker"].astype(str)
-    if "is_st" in df.columns:
-        df["is_st"] = df["is_st"].astype(bool)
-    if "is_redeemed" in df.columns:
-        df["is_redeemed"] = df["is_redeemed"].astype(bool)
+
+    df = normalize_core_validator_frame(df)
 
     validator = CBDataValidator()
     if validator.validate_dataframe(df):

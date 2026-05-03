@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import pytest
-from ams.validators.cb_data_validator import CBDataValidator
+from ams.validators.cb_data_validator import CBDataValidator, normalize_core_validator_frame
 
 def test_validator_with_perfect_dataframe():
     df = pd.DataFrame({
@@ -54,25 +54,27 @@ def test_validator_catches_missing_columns():
 
 def test_core_validator_only_checks_prd_required_columns_and_close_semantics():
     validator = CBDataValidator()
-    valid_core = pd.DataFrame(
-        {
-            "ticker": ["110001.XSHG", "110002.XSHG"],
-            "date": [pd.Timestamp("2025-01-06"), pd.Timestamp("2025-01-06")],
-            "close": [100.0, 101.0],
-            "is_st": [False, False],
-            "is_redeemed": [False, False],
-        }
+    valid_core = normalize_core_validator_frame(
+        pd.DataFrame(
+            {
+                "ticker": ["110001.XSHG", "110002.XSHG"],
+                "date": [pd.Timestamp("2025-01-06"), pd.Timestamp("2025-01-06")],
+                "close": [100.0, 101.0],
+                "is_st": [False, False],
+                "is_redeemed": [False, False],
+            }
+        )
     )
 
     assert validator.validate_dataframe(valid_core) is True
 
     invalid_cases = [
-        valid_core.assign(ticker=[None, "110002.XSHG"]),
-        valid_core.assign(date=[pd.NaT, pd.Timestamp("2025-01-06")]),
-        valid_core.assign(close=[0.0, 101.0]),
-        valid_core.assign(close=[-1.0, 101.0]),
-        valid_core.assign(is_st=[None, False]),
-        valid_core.assign(is_redeemed=[False, None]),
+        normalize_core_validator_frame(valid_core.assign(ticker=[None, "110002.XSHG"])),
+        normalize_core_validator_frame(valid_core.assign(date=[pd.NaT, pd.Timestamp("2025-01-06")])),
+        normalize_core_validator_frame(valid_core.assign(close=[0.0, 101.0])),
+        normalize_core_validator_frame(valid_core.assign(close=[-1.0, 101.0])),
+        normalize_core_validator_frame(valid_core.assign(is_st=[None, False])),
+        normalize_core_validator_frame(valid_core.assign(is_redeemed=[False, None])),
     ]
     for invalid_df in invalid_cases:
         assert validator.validate_dataframe(invalid_df) is False
@@ -83,6 +85,38 @@ def test_core_validator_only_checks_prd_required_columns_and_close_semantics():
         underlying_ticker=[None, None],
     )
     assert validator.validate_dataframe(with_non_contract_enrichment_gap) is True
+
+
+def test_normalize_core_validator_frame_returns_schema_compatible_core_dtypes():
+    raw = pd.DataFrame(
+        {
+            "ticker": pd.Series(["110001.XSHG", None], dtype=object),
+            "date": [pd.Timestamp("2025-01-06"), pd.Timestamp("2025-01-07")],
+            "close": ["100.5", "bad-close"],
+            "is_st": [0, 1],
+            "is_redeemed": [False, None],
+        }
+    )
+
+    normalized = normalize_core_validator_frame(raw)
+
+    assert str(normalized["ticker"].dtype) == "string"
+    assert getattr(normalized["ticker"].dtype, "storage", None) == "pyarrow"
+    assert normalized.loc[0, "ticker"] == "110001.XSHG"
+    assert normalized.loc[1, "ticker"] is pd.NA
+
+    assert normalized["close"].dtype.kind == "f"
+    assert normalized.loc[0, "close"] == pytest.approx(100.5)
+    assert pd.isna(normalized.loc[1, "close"])
+
+    assert normalized["is_st"].dtype == bool
+    assert normalized["is_st"].tolist() == [False, True]
+
+    assert str(normalized["is_redeemed"].dtype) == "boolean"
+    assert normalized.loc[0, "is_redeemed"] == False
+    assert normalized.loc[1, "is_redeemed"] is pd.NA
+
+    assert raw["ticker"].dtype == object
 
 def test_requirements_file_exists():
     req_path = os.path.join(os.path.dirname(__file__), "..", "requirements.txt")
