@@ -263,17 +263,6 @@ def _build_empty_canonical_cb_frame() -> pd.DataFrame:
         }
     )[CANONICAL_CB_COLUMNS]
 
-
-def _normalize_core_validator_input(df: pd.DataFrame) -> pd.DataFrame:
-    result = df.copy()
-    result["ticker"] = result["ticker"].astype("string")
-    result["close"] = pd.to_numeric(result["close"], errors="coerce")
-    for bool_col in ("is_st", "is_redeemed"):
-        if result[bool_col].isna().any():
-            continue
-        result[bool_col] = result[bool_col].astype(bool)
-    return result
-
 class CBETLPipeline:
     def __init__(self, start_date: str, end_date: str, provider: BaseDataProvider = None, **kwargs):
         self.start_date = start_date
@@ -920,7 +909,12 @@ class CBETLPipeline:
             for col in sorted(enrichment_missing_cols):
                 df_work[col] = pd.Series(float("nan"), index=df_work.index)
 
-            df_core_to_val = _normalize_core_validator_input(df_work[CORE_VALIDATOR_COLUMNS])
+            df_core_to_val = df_work[CORE_VALIDATOR_COLUMNS].copy()
+            df_core_to_val["close"] = pd.to_numeric(df_core_to_val["close"], errors="coerce")
+            for bool_col in ("is_st", "is_redeemed"):
+                if df_core_to_val[bool_col].isna().any():
+                    continue
+                df_core_to_val[bool_col] = df_core_to_val[bool_col].astype(bool)
 
             val_l1 = validator_l1.validate_dataframe(df_core_to_val)
             stage["core_validator_status"] = STAGE_STATUS_PASS if val_l1 else STAGE_STATUS_FAIL
