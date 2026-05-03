@@ -41,6 +41,36 @@ def test_jqdata_premium_fetches_direct_rates():
     assert mock_jqdata.bond.CONBOND_DAILY_CONVERT.convert_price in query_call
     assert mock_jqdata.bond.CONBOND_DAILY_CONVERT.convert_premium_rate in query_call
 
+def test_jqdata_provider_restores_exchange_code_from_requested_tickers_when_live_rows_are_raw_only():
+    mock_jqdata = MagicMock()
+    mock_query = MagicMock()
+    mock_jqdata.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+    mock_jqdata.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+    mock_jqdata.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+    mock_jqdata.query.return_value = mock_query
+    mock_query.filter.return_value = mock_query
+    mock_jqdata.bond.run_query.return_value = pd.DataFrame(
+        {
+            "code": ["110001", "123071"],
+            "date": ["2023-01-01", "2023-01-01"],
+            "convert_price": [10.0, 20.0],
+            "convert_premium_rate": [15.0, 20.0],
+        }
+    )
+
+    provider = JQDataProvider(jqdata_client=mock_jqdata)
+    restored = provider.fetch_cb_price_changes(
+        ["110001.XSHG", "123071.XSHE"],
+        "2023-01-01",
+        "2023-01-01",
+    )
+
+    queried_raw_codes = mock_jqdata.bond.CONBOND_DAILY_CONVERT.code.in_.call_args.args[0]
+    assert queried_raw_codes == ["110001", "123071"]
+    assert restored["exchange_code"].tolist() == ["XSHG", "XSHE"]
+    assert (restored["convert_price_provenance"] == JQDATA_CONVERT_PRICE_PROVENANCE).all()
+
+
 def test_premium_coverage_uses_enrichment_target_universe():
     # Expected: The missing premium ratio is calculated using only supportable, valid-underlying rows as the denominator.
     mock_provider = MagicMock()
@@ -83,6 +113,62 @@ def test_premium_coverage_uses_enrichment_target_universe():
     assert summary["premium_missing_ratio_against_active_universe"] == 0.5
     assert summary["missing_premium_row_count"] == 2
     assert summary["premium_joined_row_count"] == 1
+
+
+def test_stage_c_premium_join_succeeds_when_jqdata_live_rows_lack_exchange_code():
+    mock_jqdata = MagicMock()
+    mock_query = MagicMock()
+    mock_jqdata.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+    mock_jqdata.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+    mock_jqdata.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+    mock_jqdata.query.return_value = mock_query
+    mock_query.filter.return_value = mock_query
+    mock_jqdata.bond.run_query.return_value = pd.DataFrame(
+        {
+            "date": ["2023-01-01", "2023-01-01"],
+            "code": ["110001", "123071"],
+            "convert_price": [10.0, 20.0],
+            "convert_premium_rate": [15.0, 20.0],
+        }
+    )
+
+    provider = JQDataProvider(jqdata_client=mock_jqdata)
+    pipeline = CBETLPipeline(start_date="2023-01-01", end_date="2023-01-01", provider=provider)
+    pipeline.results["source_coverage"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
+    pipeline.results["supportability_summary"].update(
+        {
+            "status": "PASS",
+            "failure_type": "NONE",
+            "message": "",
+            "supportable_row_count": 2,
+            "supportable_unique_bond_count": 2,
+        }
+    )
+    pipeline.results["active_universe_summary"].update(
+        {
+            "enrichment_target_row_count": 2,
+            "enrichment_target_unique_bond_count": 2,
+        }
+    )
+    pipeline.df = pd.DataFrame(
+        {
+            "ticker": ["110001.XSHG", "123071.XSHE"],
+            "date": pd.to_datetime(["2023-01-01", "2023-01-01"]),
+            "bond_code_raw": ["110001", "123071"],
+            "bond_exchange_code": ["XSHG", "XSHE"],
+            "close": [100.0, 101.0],
+            "supportability_bucket": [SUPPORTABILITY_BUCKET_SUPPORTABLE, SUPPORTABILITY_BUCKET_SUPPORTABLE],
+            "underlying_ticker": ["600001.XSHG", "000001.XSHE"],
+        }
+    )
+
+    assert pipeline.run_stage_c_premium_join() is True
+
+    summary = pipeline.results["premium_join_summary"]
+    assert summary["premium_joined_row_count"] == 2
+    assert summary["premium_missing_ratio_against_active_universe"] == 0.0
+    assert summary["premium_missing_ratio_against_active_universe"] != 1.0
+    assert pipeline.df["premium_rate"].notna().all()
 
 
 def test_normalize_premium_source_does_not_default_missing_provenance_without_explicit_jqdata_source():

@@ -233,6 +233,21 @@ def _normalize_premium_source(
     working["premium_rate"] = working["convert_premium_rate"] / 100.0
     return working[output_columns]
 
+def _normalize_canonical_core_validator_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+    normalized = df.copy()
+    if "ticker" in normalized.columns:
+        normalized["ticker"] = normalized["ticker"].astype("string[pyarrow]")
+    if "close" in normalized.columns:
+        normalized["close"] = pd.to_numeric(normalized["close"], errors="coerce")
+    for bool_col in ("is_st", "is_redeemed"):
+        if bool_col not in normalized.columns:
+            continue
+        if normalized[bool_col].isna().any():
+            continue
+        normalized[bool_col] = normalized[bool_col].astype(bool)
+    return normalized
+
+
 def _extract_sorted_unique_codes(series: pd.Series) -> list[str]:
     if series is None or series.empty:
         return []
@@ -909,12 +924,7 @@ class CBETLPipeline:
             for col in sorted(enrichment_missing_cols):
                 df_work[col] = pd.Series(float("nan"), index=df_work.index)
 
-            df_core_to_val = df_work[CORE_VALIDATOR_COLUMNS].copy()
-            df_core_to_val["close"] = pd.to_numeric(df_core_to_val["close"], errors="coerce")
-            for bool_col in ("is_st", "is_redeemed"):
-                if df_core_to_val[bool_col].isna().any():
-                    continue
-                df_core_to_val[bool_col] = df_core_to_val[bool_col].astype(bool)
+            df_core_to_val = _normalize_canonical_core_validator_dtypes(df_work[CORE_VALIDATOR_COLUMNS].copy())
 
             val_l1 = validator_l1.validate_dataframe(df_core_to_val)
             stage["core_validator_status"] = STAGE_STATUS_PASS if val_l1 else STAGE_STATUS_FAIL

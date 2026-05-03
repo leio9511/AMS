@@ -3,6 +3,39 @@ import jqdatasdk
 from etl.cb_provider_base import BaseDataProvider, DataProviderAuthError, DataProviderQuotaError, DataProviderError
 from etl.cb_audit_contract import JQDATA_CONVERT_PRICE_PROVENANCE
 
+
+def _build_requested_exchange_code_map(tickers: list[str]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for ticker in tickers:
+        if not isinstance(ticker, str):
+            continue
+        raw_code, _, exchange_code = ticker.partition(".")
+        raw_code = raw_code.strip()
+        exchange_code = exchange_code.strip()
+        if not raw_code or not exchange_code or raw_code in mapping:
+            continue
+        mapping[raw_code] = exchange_code
+    return mapping
+
+
+def _restore_exchange_code_column(df_batch: pd.DataFrame, requested_exchange_codes: dict[str, str]) -> pd.DataFrame:
+    if df_batch is None or df_batch.empty or "code" not in df_batch.columns:
+        return df_batch
+
+    restored = df_batch.copy()
+    raw_codes = restored["code"].astype(str).str.strip()
+    requested_exchange = raw_codes.map(requested_exchange_codes)
+
+    if "exchange_code" not in restored.columns:
+        restored["exchange_code"] = requested_exchange
+        return restored
+
+    exchange_code = restored["exchange_code"].astype("string").str.strip()
+    missing_exchange = exchange_code.isna() | exchange_code.eq("")
+    restored["exchange_code"] = exchange_code.where(~missing_exchange, requested_exchange)
+    return restored
+
+
 class JQDataProvider(BaseDataProvider):
     def __init__(self, jqdata_client=None):
         self.client = jqdata_client if jqdata_client is not None else jqdatasdk
@@ -42,10 +75,11 @@ class JQDataProvider(BaseDataProvider):
         """
         if not tickers:
             return pd.DataFrame()
-            
+
         start_dt = pd.to_datetime(start_date)
         end_dt = pd.to_datetime(end_date)
-        
+        requested_exchange_codes = _build_requested_exchange_code_map(tickers)
+
         all_frames = []
         current_start = start_dt
         try:
@@ -53,10 +87,10 @@ class JQDataProvider(BaseDataProvider):
                 current_end = (current_start + pd.offsets.MonthEnd(0))
                 if current_end > end_dt:
                     current_end = end_dt
-                
+
                 s_date = current_start.strftime("%Y-%m-%d")
                 e_date = current_end.strftime("%Y-%m-%d")
-                
+
                 code_batch_size = 100
                 for i in range(0, len(tickers), code_batch_size):
                     batch_codes = tickers[i:i + code_batch_size]
@@ -73,20 +107,21 @@ class JQDataProvider(BaseDataProvider):
                         self.client.bond.CONBOND_DAILY_CONVERT.date <= e_date,
                     )
                     df_batch = self.client.bond.run_query(q)
-                    if df_batch is not None and not df_batch.empty and "convert_price" in df_batch.columns:
-                        df_batch = df_batch.copy()
-                        df_batch["convert_price_provenance"] = JQDATA_CONVERT_PRICE_PROVENANCE
-                    
+                    if df_batch is not None and not df_batch.empty:
+                        df_batch = _restore_exchange_code_column(df_batch, requested_exchange_codes)
+                        if "convert_price" in df_batch.columns:
+                            df_batch["convert_price_provenance"] = JQDATA_CONVERT_PRICE_PROVENANCE
+
                     if len(df_batch) == 5000:
                         raise DataProviderError("Premium source query returned the provider single-call cap characteristic and must be retried with deterministic batching.")
-                    
+
                     all_frames.append(df_batch)
-                
+
                 current_start = current_end + pd.Timedelta(days=1)
-                
+
             if not all_frames:
                 return pd.DataFrame()
-                
+
             return pd.concat(all_frames)
         except Exception as e:
             if isinstance(e, DataProviderError):

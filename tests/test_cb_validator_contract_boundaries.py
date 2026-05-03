@@ -81,3 +81,14 @@ def test_stage_f_does_not_run_legacy_dataset_thresholds_for_small_audit_window()
     assert report["validator_summary"]["enrichment_validator_status"] == "PASS"
     assert "row_count" not in report["validator_summary"]["message"]
     assert report["root_blockers"] == []
+
+
+def test_stage_f_normalizes_ticker_dtype_before_validator_contract_check():
+    pipeline = _contract_valid_pipeline()
+    pipeline.df["ticker"] = pipeline.df["ticker"].astype(object)
+
+    assert pipeline.run_stage_f_validator() is True
+
+    summary = pipeline.results["validator_summary"]
+    assert summary["core_validator_status"] == "PASS"
+    assert "expected series 'ticker' to have type string[pyarrow], got object" not in summary["core_validator_message"]

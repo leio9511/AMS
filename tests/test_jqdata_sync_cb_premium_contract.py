@@ -106,3 +106,22 @@ def test_normalize_premium_source_accepts_split_code_and_exchange_columns():
     assert normalized.loc[0, "bond_code_raw"] == "123071"
     assert normalized.loc[0, "bond_exchange_code"] == "XSHE"
     assert normalized.loc[0, "premium_rate"] == 0.155
+
+
+def test_normalize_premium_source_uses_provider_restored_exchange_code_for_raw_jqdata_rows():
+    premium = pd.DataFrame(
+        {
+            "date": ["2020-01-02"],
+            "code": ["123071"],
+            "exchange_code": ["XSHE"],
+            "convert_price": [101.0],
+            "convert_price_provenance": ["jqdata_convert_price"],
+            "convert_premium_rate": [15.5],
+        }
+    )
+
+    normalized = _normalize_premium_source(premium)
+
+    assert normalized.loc[0, "bond_code_raw"] == "123071"
+    assert normalized.loc[0, "bond_exchange_code"] == "XSHE"
+    assert pd.notna(normalized.loc[0, "bond_exchange_code"])
