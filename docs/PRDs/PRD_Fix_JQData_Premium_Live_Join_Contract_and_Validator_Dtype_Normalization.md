@@ -61,8 +61,27 @@ live audit 证据：
 - JQData 5000 行上限的完整 anti-truncation / recursive batching 方案（由 `ISSUE-1196` 继续独立跟踪）
 - TuShare premium 慢字段限流与替代源策略
 - dual-source gap filling / provider routing / full-history rebuild 平台化能力
+- live rerun 后 newly discovered 的其它独立问题；这些问题的分析、归因、是否立项、是否扩展需求，均不属于本 PRD 当前 coder scope，必须由 Manager/Boss 在本 PRD 之外单独处理
 
 本 PRD 的目标不是把 JQData premium 路径一次性做成全窗口最终版，而是把当前已证实的 live correctness bug 修平，让 2025-11 audit 先从“本地 join/dtype bug 导致的假失败”变成“可信的真实 coverage 结果”。
+
+### 1.4 外部前置假设（External Preconditions / Launch Notes）
+本 PRD 的 supporting evidence 依赖真实 JQData live rerun。该依赖属于 **SDLC 启动前的外部前置条件**，是给决定是否启动 SDLC 的 Manager / Launcher 看的，不属于 coder、reviewer、planner、verifier 或 UAT 的执行职责。
+
+**当前人工前置假设：**
+- `JQDATA_USER` 环境变量存在且非空
+- `JQDATA_PWD` 环境变量存在且非空
+- 以下真实 supporting-evidence 命令具备最小可执行条件：
+
+```bash
+JQDATA_USER=... JQDATA_PWD=... PYTHONPATH=/root/projects/AMS \
+python3 -m etl.cb_etl_runner --data-source jqdata --start 2025-11-01 --end 2025-11-30 --audit
+```
+
+**责任边界说明：**
+- 这些前置条件由启动 SDLC 流程的人在流程外部手动确认。
+- 若未来要自动化，应由 SDLC 启动器/编排层增加自动检测，而不是把该检查动作下放给 coder 或其它 SDLC 内部执行角色。
+- 如果这些外部前置条件不成立，正确动作是“不启动本 PRD 的 SDLC execution”，而不是在 SDLC 内部创建额外修复任务。
 
 ## 2. Requirements & User Stories (需求定义)
 
@@ -87,6 +106,7 @@ live audit 证据：
 #### FR-4: 修复后 audit 结果必须把“本地 bug”与“真实 source gap”分开
 - 修复后，如果 premium 仍有缺口，audit 必须将其反映为真实 source / query limitation，或真实 coverage gap。
 - 不允许再由本地 join contract bug 或 dtype bug 伪造 100% missing premium 结论。
+- 本 PRD 对真实 rerun 的要求，仅限于为这两个已知 bug 的修复提供 supporting evidence 或 artifact capture；若 rerun 暴露新的独立问题，其分析与后续处置不属于本 PRD coder scope。
 
 ### 2.2 Non-Functional Requirements
 - 修复必须保持当前 field-governed 设计边界，不得把 provider 再次写回 God Object。
@@ -153,10 +173,34 @@ live audit 证据：
 
 ## 4. Acceptance Criteria (BDD 黑盒验收标准)
 
+### 4.1 Acceptance Semantics (验收语义总则)
+本 PRD 的验收对象不是“整份 live audit 必须全绿”，而是“本 PRD 明确承诺修复的两个已知本地 bug 是否被消除”。
+
+**因此，验收必须分成三层：**
+1. **Implementation Proof**：代码修改落地到允许的文件边界，且 targeted regression tests 通过。
+2. **Bug-Specific Regression Proof**：受控测试场景下，两个已知 bug 的旧错误签名都被消除。
+3. **Live Witness / Artifact Capture**：真实 JQData rerun 只用于确认这两个旧错误签名在真实环境下不再出现，并保留客观 artifact；它不是“所有下游问题必须同时清零”的总闸门。
+
+**以下两类旧错误签名，才是本 PRD 的精确验收对象：**
+- **旧签名 A（premium live join contract bug）**
+  - 在 2025-11-01 ~ 2025-11-30 这个固定窗口里，`source_coverage.premium_source_row_count > 0`
+  - 且 `premium_join_summary.premium_joined_row_count == 0`
+  - 且该结果源于 live premium rows 缺失 `exchange_code` 导致 canonical key contract 断裂
+- **旧签名 B（Stage-F ticker dtype bug）**
+  - `validator_summary.core_validator_message` 包含以下精确文本：
+
+```text
+expected series 'ticker' to have type string[pyarrow], got object
+```
+
+**只要本 PRD rerun 后旧签名 A/B 均消失，就说明本 PRD 承诺修复的问题已经被验证修复。**
+任何新暴露出来的、与旧签名 A/B 无关的问题，都不得反向污染本 PRD 的验收结果。
+
 - **Scenario 1: JQData live premium rows can join into canonical active universe when source data exists**
   - **Given** 2025-11 JQData live premium source rows exist and the provider returns raw `code` values without exchange suffixes
   - **When** the CB ETL audit runs Stage C on the JQData path
-  - **Then** the premium source rows are normalized into canonical bond keys with valid exchange codes and the audit no longer reports `premium_source_row_count > 0` together with `premium_joined_row_count = 0`
+  - **Then** the premium source rows are normalized into canonical bond keys with valid exchange codes
+  - **And Then** the fixed window live witness must not reproduce old signature A (`premium_source_row_count > 0` together with `premium_joined_row_count == 0` caused by local exchange-code loss)
 
 - **Scenario 2: Live-shape regression is covered explicitly**
   - **Given** a regression test where requested JQData tickers include suffixes but the mocked `CONBOND_DAILY_CONVERT` response contains only raw `code` and no `exchange_code`
@@ -166,17 +210,40 @@ live audit 证据：
 - **Scenario 3: Validator no longer fails on ticker dtype mismatch**
   - **Given** a live-path canonical core DataFrame whose `ticker` values are semantically correct
   - **When** Stage F runs schema validation
-  - **Then** the audit does not fail with `expected series 'ticker' to have type string[pyarrow], got object`
+  - **Then** the audit does not fail with the exact old signature B text:
+
+```text
+expected series 'ticker' to have type string[pyarrow], got object
+```
 
 - **Scenario 4: Remaining missing premium after the fix is reported as real coverage, not local contract failure**
   - **Given** the Nov 2025 JQData audit is rerun after the fix
   - **When** premium coverage is computed against the active in-window universe
   - **Then** any remaining missing premium rows are reflected as a real source/query limitation or coverage gap rather than a local exchange-code join bug or dtype bug
+  - **And Then** any newly exposed blocker outside old signatures A/B must be treated as a separate follow-up issue rather than a failure of this PRD’s acceptance
 
 - **Scenario 5: Scope guard — no accidental expansion into 5000-cap anti-truncation project**
   - **Given** this PRD is executed downstream
   - **When** the implementation is completed
   - **Then** the delivered code fixes the Nov 2025 live join/dtype correctness issues without claiming to solve the separate full-window 5000-row anti-truncation problem tracked under `ISSUE-1196`
+
+### 4.2 Verification Outcome Matrix (验收结果矩阵)
+- **PASS-A**
+  - targeted code/test gates 全部通过；
+  - 真实 rerun 中旧签名 A 消失；
+  - 真实 rerun 中旧签名 B 消失；
+  - 且未暴露新的独立 blocker。
+- **PASS-B**
+  - targeted code/test gates 全部通过；
+  - 真实 rerun 中旧签名 A 消失；
+  - 真实 rerun 中旧签名 B 消失；
+  - 但真实 rerun 暴露了新的、与本 PRD 无关的独立问题。
+  - **解释**：本 PRD 仍然验收通过，但必须单独记录 follow-up issue。
+- **FAIL-A**
+  - 真实 rerun 或 targeted regression 仍然复现旧签名 A。
+- **FAIL-B**
+  - 真实 rerun 或 targeted regression 仍然复现旧签名 B。
+
 
 ## 5. Overall Test Strategy & Quality Goal (测试策略与质量目标)
 核心质量风险不是“代码跑不跑”，而是：
@@ -192,17 +259,23 @@ live audit 证据：
   - 断言 Stage-C join 不再为 0
 - **保留并复用现有 JQData premium coverage 测试**，确认 provenance、convert_price 等 governed fields 不回退。
 - **增加 validator contract test**，明确 `ticker` dtype normalization 在 Stage-F 前发生，而不是依赖隐式 pandas 行为。
-- **做一次 real JQData audit recheck**（2025-11-01 ~ 2025-11-30），作为本 PRD 的 live acceptance evidence。
+- **做一次 real JQData audit recheck**（2025-11-01 ~ 2025-11-30），但该 rerun 的验证职责仅限于：
+  - 检查旧签名 A 是否消失；
+  - 检查旧签名 B 是否消失；
+  - 产出可供 Manager/Boss 后续研判的客观 artifact。
+- **明确禁止**把该 real rerun 扩展解释为“所有新暴露问题都必须在本 PRD 内修完”。
 
 ### 5.2 Quality Goal
-本 PRD 的质量目标不是“让 JQData 在所有窗口都 100% 覆盖 premium”，而是：
-- 消除已证实的本地 live join bug
-- 消除已证实的 dtype schema 假失败
-- 让 2025-11 JQData audit 的 premium coverage 结论第一次变得可信
+本 PRD 的质量目标不是“让 JQData 在所有窗口都 100% 覆盖 premium”，也不是“让整份 rerun audit 必须整体全绿”，而是：
+- 消除已证实的本地 live join bug（旧签名 A）
+- 消除已证实的 dtype schema 假失败（旧签名 B）
+- 让 2025-11 JQData audit 的结果第一次可以把“本地假失败”与“真实剩余问题”精确区分开
 
 ### 5.3 Mocking / Live Balance
 - 单元/集成测试中必须 mock JQData provider shape。
-- 但最终 closure 必须包含一次真实 JQData audit evidence。
+- 但最终 closure 应尽量包含一次真实 JQData audit evidence / artifact capture。
+- 该真实 rerun 在本 PRD 内的职责，仅限于辅助确认两个已知本地 bug 是否已消除，以及保留可供 Manager/Boss 后续研判的客观 artifact。
+- 如果真实 rerun 暴露新的 scope 外问题，应单独记录并单独立项；这不授权 coder 在当前 PRD 内继续自由修复，也不把 audit 深度分析责任下放给 SDLC coder。
 - 不允许仅凭 mock tests 通过就宣称 `ISSUE-1218` 关闭。
 
 ## 6. Framework Modifications (框架防篡改声明)
