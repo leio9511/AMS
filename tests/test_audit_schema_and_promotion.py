@@ -26,6 +26,7 @@ EXPECTED_TOP_LEVEL_KEYS = {
     "is_st_join_summary",
     "redemption_summary",
     "validator_summary",
+    "issue_1218_witness",
     "root_blockers",
     "secondary_findings",
 }
@@ -121,6 +122,13 @@ EXPECTED_VALIDATOR_SUMMARY_KEYS = {
     "promotion_gate_message",
 }
 
+EXPECTED_ISSUE_1218_WITNESS_KEYS = {
+    "issue_key",
+    "old_signatures_absent",
+    "signature_a",
+    "signature_b",
+}
+
 EXPECTED_ROOT_BLOCKER_TYPES = {
     "SOURCE_AUTH_FAILURE",
     "PRICE_SOURCE_UNREADABLE",
@@ -212,6 +220,7 @@ def test_audit_schema_matches_exact_keys():
     assert set(report["is_st_join_summary"].keys()) == EXPECTED_IS_ST_JOIN_SUMMARY_KEYS
     assert set(report["redemption_summary"].keys()) == EXPECTED_REDEMPTION_SUMMARY_KEYS
     assert set(report["validator_summary"].keys()) == EXPECTED_VALIDATOR_SUMMARY_KEYS
+    assert set(report["issue_1218_witness"].keys()) == EXPECTED_ISSUE_1218_WITNESS_KEYS
 
 
 def test_root_blockers_and_secondary_findings_use_exact_item_schema():

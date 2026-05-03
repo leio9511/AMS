@@ -78,7 +78,7 @@ def test_audit_runner_emits_required_top_level_and_stage_summary_schema(mock_env
         "core_path_status", "enrichment_path_status",
         "non_promotion_disclaimer", "active_universe_summary", "source_coverage", "supportability_summary",
         "premium_join_summary", "is_st_join_summary", "redemption_summary",
-        "validator_summary", "root_blockers", "secondary_findings"
+        "validator_summary", "issue_1218_witness", "root_blockers", "secondary_findings"
     }
     assert set(report.keys()) == expected_top_level
     assert report["execution_mode"] == "audit"
@@ -91,6 +91,9 @@ def test_audit_runner_emits_required_top_level_and_stage_summary_schema(mock_env
         assert "status" in report[stage]
         assert "failure_type" in report[stage]
         assert "message" in report[stage]
+
+    assert report["issue_1218_witness"]["issue_key"] == "ISSUE-1218"
+    assert set(report["issue_1218_witness"].keys()) == {"issue_key", "old_signatures_absent", "signature_a", "signature_b"}
 
 def test_stage_a_failure_forces_fixed_not_run_propagation_for_stage_b_to_f(mock_env, mock_jqdata, mock_validators, isolated_paths):
     start_date = "2025-01-06"

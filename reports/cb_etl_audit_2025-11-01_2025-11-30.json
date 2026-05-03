@@ -1,0 +1,132 @@
+{
+  "execution_mode": "audit",
+  "start_date": "2025-11-01",
+  "end_date": "2025-11-30",
+  "final_status": "FAIL_SECONDARY_ONLY",
+  "core_path_status": "PASS",
+  "enrichment_path_status": "PASS",
+  "non_promotion_disclaimer": "[AUDIT-ONLY] This run is diagnostic only. No canonical dataset promotion was attempted.",
+  "active_universe_summary": {
+    "core_price_row_count_before_filter": 20940,
+    "core_price_row_count_after_filter": 7989,
+    "all_null_ohlcv_row_count_filtered": 12951,
+    "core_universe_row_count": 7989,
+    "core_universe_unique_bond_count": 405,
+    "active_bond_universe_count": 405,
+    "enrichment_target_row_count": 7989,
+    "enrichment_target_unique_bond_count": 405
+  },
+  "source_coverage": {
+    "status": "PASS",
+    "failure_type": "NONE",
+    "message": "",
+    "basic_info_row_count": 1064,
+    "all_bond_security_count": 1047,
+    "price_row_count": 20940,
+    "price_unique_bond_count": 1047,
+    "premium_source_row_count": 7621,
+    "premium_source_unique_bond_count": 385,
+    "is_st_source_row_count": 7980,
+    "is_st_source_unique_underlying_count": 399,
+    "redemption_source_row_count": 1064,
+    "redemption_source_unique_bond_count": 1063
+  },
+  "supportability_summary": {
+    "status": "PASS",
+    "failure_type": "NONE",
+    "message": "",
+    "supportable_row_count": 7989,
+    "supportable_unique_bond_count": 405,
+    "outside_basic_info_row_count": 0,
+    "outside_basic_info_unique_bond_count": 0,
+    "missing_company_code_legacy_row_count": 0,
+    "missing_company_code_legacy_unique_bond_count": 0,
+    "unexpected_contract_regression_row_count": 0,
+    "unexpected_contract_regression_unique_bond_count": 0,
+    "missing_underlying_row_count": 0,
+    "missing_underlying_unique_bond_count": 0
+  },
+  "premium_join_summary": {
+    "status": "PASS",
+    "failure_type": "NONE",
+    "message": "",
+    "premium_joined_row_count": 7621,
+    "premium_joined_unique_bond_count": 385,
+    "missing_premium_row_count": 368,
+    "missing_premium_unique_bond_count": 20,
+    "missing_premium_ratio": 0.046063337088496685,
+    "premium_missing_ratio_against_active_universe": 0.046063337088496685,
+    "rate_limited_enrichment": false,
+    "permission_degraded_enrichment": false
+  },
+  "is_st_join_summary": {
+    "status": "PASS",
+    "failure_type": "NONE",
+    "message": "",
+    "is_st_joined_row_count": 7989,
+    "is_st_joined_unique_bond_count": 405,
+    "missing_is_st_row_count": 0,
+    "missing_is_st_unique_bond_count": 0,
+    "missing_is_st_ratio": 0.0
+  },
+  "redemption_summary": {
+    "status": "PASS",
+    "failure_type": "NONE",
+    "message": "",
+    "redemption_joined_row_count": 1961,
+    "redemption_joined_unique_bond_count": 102,
+    "missing_redemption_row_count": 6028,
+    "missing_redemption_unique_bond_count": 303,
+    "missing_redemption_ratio": 0.7545374890474402
+  },
+  "validator_summary": {
+    "status": "PASS",
+    "failure_type": "NONE",
+    "message": "",
+    "core_validator_status": "PASS",
+    "core_validator_message": "",
+    "enrichment_validator_status": "PASS",
+    "enrichment_validator_message": "",
+    "promotion_gate_status": "PASS",
+    "promotion_gate_message": ""
+  },
+  "issue_1218_witness": {
+    "issue_key": "ISSUE-1218",
+    "old_signatures_absent": true,
+    "signature_a": {
+      "present": false,
+      "rule": "premium_source_row_count > 0 and premium_joined_row_count == 0",
+      "evidence": {
+        "premium_source_row_count": 7621,
+        "premium_joined_row_count": 7621
+      }
+    },
+    "signature_b": {
+      "present": false,
+      "legacy_text": "expected series 'ticker' to have type string[pyarrow], got object",
+      "evidence": {
+        "core_validator_message": "",
+        "legacy_text_match": false
+      }
+    }
+  },
+  "root_blockers": [],
+  "secondary_findings": [
+    {
+      "type": "MISSING_PREMIUM_RATE_ROWS",
+      "stage": "C",
+      "trigger": "missing_premium_row_count > 0",
+      "evidence": {
+        "count": 368
+      }
+    },
+    {
+      "type": "MISSING_REDEMPTION_ROWS",
+      "stage": "E",
+      "trigger": "missing_redemption_row_count > 0",
+      "evidence": {
+        "count": 6028
+      }
+    }
+  ]
+}

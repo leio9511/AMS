@@ -23,6 +23,7 @@ from etl.cb_audit_contract import (
     build_source_coverage,
     build_supportability_summary,
     build_validator_summary,
+    ensure_issue_1218_witness,
 )
 
 # Constants from jqdata_sync_cb.py
@@ -1038,4 +1039,5 @@ class CBETLPipeline:
             secondary_findings=secondary_findings,
         )
         report["non_promotion_disclaimer"] = NON_PROMOTION_DISCLAIMER
+        report = ensure_issue_1218_witness(report)
         return report

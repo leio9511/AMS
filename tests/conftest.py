@@ -24,23 +24,29 @@ def isolated_paths(tmp_path):
     data_dir.mkdir()
     reports_dir = tmp_path / "reports"
     reports_dir.mkdir()
-    
+
     mock_data_path = str(data_dir / "cb_history_factors.csv")
     mock_metrics_path = str(data_dir / "cb_history_factors.metrics.json")
     mock_reports_dir = str(reports_dir)
-    
+
     import os
     original_os_path_join = os.path.join
-    
+    original_makedirs = os.makedirs
+
     def mock_join(d, *args):
-        if isinstance(d, str) and "reports" in d:
+        if isinstance(d, str) and d == "/root/projects/AMS/reports":
             return original_os_path_join(mock_reports_dir, *args)
         return original_os_path_join(d, *args)
 
+    def mock_makedirs(path, *args, **kwargs):
+        if path == "/root/projects/AMS/reports":
+            return original_makedirs(mock_reports_dir, *args, **kwargs)
+        return original_makedirs(path, *args, **kwargs)
+
     with patch("etl.jqdata_sync_cb.DATA_PATH", mock_data_path), \
          patch("etl.jqdata_sync_cb.METRICS_PATH", mock_metrics_path), \
-         patch("os.makedirs"), \
-         patch("os.path.join", side_effect=mock_join):
+         patch("etl.cb_etl_runner.os.path.join", side_effect=mock_join), \
+         patch("etl.cb_etl_runner.os.makedirs", side_effect=mock_makedirs):
              yield {
                  "data": mock_data_path,
                  "metrics": mock_metrics_path,

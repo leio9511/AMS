@@ -19,6 +19,10 @@ FINAL_STATUS_FAIL_SECONDARY_ONLY = "FAIL_SECONDARY_ONLY"
 
 FAILURE_TYPE_NONE = "NONE"
 
+ISSUE_1218_KEY = "ISSUE-1218"
+ISSUE_1218_SIGNATURE_A_RULE = "premium_source_row_count > 0 and premium_joined_row_count == 0"
+ISSUE_1218_LEGACY_TICKER_DTYPE_TEXT = "expected series 'ticker' to have type string[pyarrow], got object"
+
 JQDATA_CONVERT_PRICE_PROVENANCE = "jqdata.CONBOND_DAILY_CONVERT.convert_price"
 
 NON_PROMOTION_DISCLAIMER = "[AUDIT-ONLY] This run is diagnostic only. No canonical dataset promotion was attempted."
@@ -140,6 +144,27 @@ VALIDATOR_SUMMARY_TEMPLATE = {
     "promotion_gate_message": "",
 }
 
+ISSUE_1218_WITNESS_TEMPLATE = {
+    "issue_key": ISSUE_1218_KEY,
+    "old_signatures_absent": True,
+    "signature_a": {
+        "present": False,
+        "rule": ISSUE_1218_SIGNATURE_A_RULE,
+        "evidence": {
+            "premium_source_row_count": 0,
+            "premium_joined_row_count": 0,
+        },
+    },
+    "signature_b": {
+        "present": False,
+        "legacy_text": ISSUE_1218_LEGACY_TICKER_DTYPE_TEXT,
+        "evidence": {
+            "core_validator_message": "",
+            "legacy_text_match": False,
+        },
+    },
+}
+
 FINAL_REPORT_TEMPLATE = {
     "execution_mode": EXECUTION_MODE_AUDIT,
     "start_date": "",
@@ -155,6 +180,7 @@ FINAL_REPORT_TEMPLATE = {
     "is_st_join_summary": IS_ST_JOIN_SUMMARY_TEMPLATE,
     "redemption_summary": REDEMPTION_SUMMARY_TEMPLATE,
     "validator_summary": VALIDATOR_SUMMARY_TEMPLATE,
+    "issue_1218_witness": ISSUE_1218_WITNESS_TEMPLATE,
     "root_blockers": [],
     "secondary_findings": [],
 }
@@ -276,6 +302,50 @@ def build_validator_summary(**overrides) -> dict:
     return _build_summary(VALIDATOR_SUMMARY_TEMPLATE, "validator_summary", overrides)
 
 
+def build_issue_1218_witness(
+    *,
+    source_coverage: dict | None = None,
+    premium_join_summary: dict | None = None,
+    validator_summary: dict | None = None,
+) -> dict:
+    source_coverage = source_coverage or {}
+    premium_join_summary = premium_join_summary or {}
+    validator_summary = validator_summary or {}
+
+    premium_source_row_count = int(source_coverage.get("premium_source_row_count", 0) or 0)
+    premium_joined_row_count = int(premium_join_summary.get("premium_joined_row_count", 0) or 0)
+    core_validator_message = validator_summary.get("core_validator_message", "") or ""
+    if not isinstance(core_validator_message, str):
+        core_validator_message = str(core_validator_message)
+
+    signature_a_present = premium_source_row_count > 0 and premium_joined_row_count == 0
+    signature_b_present = ISSUE_1218_LEGACY_TICKER_DTYPE_TEXT in core_validator_message
+
+    witness = deepcopy(ISSUE_1218_WITNESS_TEMPLATE)
+    witness["old_signatures_absent"] = not (signature_a_present or signature_b_present)
+    witness["signature_a"]["present"] = signature_a_present
+    witness["signature_a"]["evidence"] = {
+        "premium_source_row_count": premium_source_row_count,
+        "premium_joined_row_count": premium_joined_row_count,
+    }
+    witness["signature_b"]["present"] = signature_b_present
+    witness["signature_b"]["evidence"] = {
+        "core_validator_message": core_validator_message,
+        "legacy_text_match": signature_b_present,
+    }
+    return witness
+
+
+def ensure_issue_1218_witness(report: dict) -> dict:
+    enriched = deepcopy(report)
+    enriched["issue_1218_witness"] = build_issue_1218_witness(
+        source_coverage=enriched.get("source_coverage", {}),
+        premium_join_summary=enriched.get("premium_join_summary", {}),
+        validator_summary=enriched.get("validator_summary", {}),
+    )
+    return enriched
+
+
 def build_pipeline_results() -> dict:
     return {
         "source_coverage": build_source_coverage(),
@@ -342,6 +412,17 @@ def _validate_report(report: dict) -> dict:
     build_redemption_summary(**report["redemption_summary"])
     build_validator_summary(**report["validator_summary"])
 
+    expected_witness = build_issue_1218_witness(
+        source_coverage=report["source_coverage"],
+        premium_join_summary=report["premium_join_summary"],
+        validator_summary=report["validator_summary"],
+    )
+    if report["issue_1218_witness"] != expected_witness:
+        raise ValueError(
+            "Invalid issue_1218_witness: report witness must be deterministically derived from "
+            "source_coverage, premium_join_summary, and validator_summary"
+        )
+
     for blocker in report["root_blockers"]:
         _validate_item_schema(
             "root_blockers[]",
@@ -390,4 +471,9 @@ def build_final_report(
     report["is_st_join_summary"] = build_is_st_join_summary(**results.get("is_st_join_summary", {}))
     report["redemption_summary"] = build_redemption_summary(**results.get("redemption_summary", {}))
     report["validator_summary"] = build_validator_summary(**results.get("validator_summary", {}))
+    report["issue_1218_witness"] = build_issue_1218_witness(
+        source_coverage=report["source_coverage"],
+        premium_join_summary=report["premium_join_summary"],
+        validator_summary=report["validator_summary"],
+    )
     return _validate_report(report)
