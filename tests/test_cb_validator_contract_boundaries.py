@@ -119,3 +119,42 @@ def test_stage_f_normalization_does_not_mask_real_core_contract_failures():
     assert summary["failure_type"] == "VALIDATOR_SCHEMA_FAILURE"
     assert summary["status"] == "FAIL"
     assert "Schema" in summary["message"] or "schema" in summary["core_validator_message"]
+
+
+
+def test_stage_f_validator_allows_is_st_gap_without_erasing_stage_d_gap_witness():
+    pipeline = _contract_valid_pipeline()
+    pipeline.df["is_st"] = [False, None]
+    pipeline.results["is_st_join_summary"].update(
+        {
+            "status": "PASS",
+            "failure_type": "NONE",
+            "message": "Observed source coverage gap for is_st but within tolerance.",
+            "missing_is_st_row_count": 1,
+            "missing_is_st_ratio": 0.5,
+        }
+    )
+
+    assert pipeline.run_stage_f_validator() is True
+
+    summary = pipeline.results["validator_summary"]
+    assert summary["core_validator_status"] == "PASS"
+    assert "non-nullable series 'is_st' contains null values:" not in summary["core_validator_message"]
+
+    report = pipeline.get_final_report()
+    assert report["is_st_join_summary"]["missing_is_st_row_count"] == 1
+    assert report["is_st_join_summary"]["missing_is_st_ratio"] == 0.5
+
+
+
+def test_stage_f_normalization_does_not_mask_invalid_is_st_non_boolean_values():
+    pipeline = _contract_valid_pipeline()
+    pipeline.df["is_st"] = [False, "bad-bool"]
+
+    assert pipeline.run_stage_f_validator() is False
+
+    summary = pipeline.results["validator_summary"]
+    assert summary["core_validator_status"] == "FAIL"
+    assert summary["failure_type"] == "VALIDATOR_SCHEMA_FAILURE"
+    assert summary["status"] == "FAIL"
+    assert "is_st" in summary["core_validator_message"]

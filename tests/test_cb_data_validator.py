@@ -73,7 +73,7 @@ def test_core_validator_only_checks_prd_required_columns_and_close_semantics():
         normalize_core_validator_frame(valid_core.assign(date=[pd.NaT, pd.Timestamp("2025-01-06")])),
         normalize_core_validator_frame(valid_core.assign(close=[0.0, 101.0])),
         normalize_core_validator_frame(valid_core.assign(close=[-1.0, 101.0])),
-        normalize_core_validator_frame(valid_core.assign(is_st=[None, False])),
+        normalize_core_validator_frame(valid_core.assign(is_st=["bad-bool", False])),
         normalize_core_validator_frame(valid_core.assign(is_redeemed=[False, None])),
     ]
     for invalid_df in invalid_cases:
@@ -85,6 +85,84 @@ def test_core_validator_only_checks_prd_required_columns_and_close_semantics():
         underlying_ticker=[None, None],
     )
     assert validator.validate_dataframe(with_non_contract_enrichment_gap) is True
+
+
+
+def test_normalize_core_validator_frame_fills_is_st_nulls_with_false_for_core_schema():
+    raw = pd.DataFrame(
+        {
+            "ticker": ["110001.XSHG", "110002.XSHG", "110003.XSHG", "110004.XSHG"],
+            "date": [pd.Timestamp("2025-01-06")] * 4,
+            "close": [100.0, 101.0, 102.0, 103.0],
+            "is_st": [False, None, pd.NA, 1],
+            "is_redeemed": [False, False, False, False],
+        }
+    )
+
+    normalized = normalize_core_validator_frame(raw)
+
+    assert normalized["is_st"].dtype == bool
+    assert normalized["is_st"].tolist() == [False, False, False, True]
+
+
+
+def test_normalize_core_validator_frame_keeps_is_redeemed_nullable_behavior_unchanged():
+    raw = pd.DataFrame(
+        {
+            "ticker": ["110001.XSHG", "110002.XSHG", "110003.XSHG", "110004.XSHG"],
+            "date": [pd.Timestamp("2025-01-06")] * 4,
+            "close": [100.0, 101.0, 102.0, 103.0],
+            "is_st": [False, False, True, False],
+            "is_redeemed": [False, None, pd.NA, 1],
+        }
+    )
+
+    normalized = normalize_core_validator_frame(raw)
+
+    assert str(normalized["is_redeemed"].dtype) == "boolean"
+    assert normalized.loc[0, "is_redeemed"] == False
+    assert normalized.loc[1, "is_redeemed"] is pd.NA
+    assert normalized.loc[2, "is_redeemed"] is pd.NA
+    assert normalized.loc[3, "is_redeemed"] == True
+
+
+
+def test_core_validator_accepts_is_st_source_gap_after_field_specific_normalization():
+    validator = CBDataValidator()
+    normalized = normalize_core_validator_frame(
+        pd.DataFrame(
+            {
+                "ticker": ["110001.XSHG", "110002.XSHG", "110003.XSHG"],
+                "date": [pd.Timestamp("2025-01-06")] * 3,
+                "close": [100.0, 101.0, 102.0],
+                "is_st": [False, None, pd.NA],
+                "is_redeemed": [False, False, False],
+            }
+        )
+    )
+
+    assert validator.validate_dataframe(normalized) is True
+    assert "non-nullable series 'is_st' contains null values:" not in validator.last_error_message
+
+
+
+def test_core_validator_still_rejects_nullable_is_redeemed_contract_violation():
+    validator = CBDataValidator()
+    normalized = normalize_core_validator_frame(
+        pd.DataFrame(
+            {
+                "ticker": ["110001.XSHG", "110002.XSHG"],
+                "date": [pd.Timestamp("2025-01-06"), pd.Timestamp("2025-01-06")],
+                "close": [100.0, 101.0],
+                "is_st": [False, None],
+                "is_redeemed": [False, None],
+            }
+        )
+    )
+
+    assert validator.validate_dataframe(normalized) is False
+    assert "is_redeemed" in validator.last_error_message
+
 
 
 def test_normalize_core_validator_frame_returns_schema_compatible_core_dtypes():

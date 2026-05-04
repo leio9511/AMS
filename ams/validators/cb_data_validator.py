@@ -42,6 +42,26 @@ def _normalize_contract_bool_series(series: pd.Series) -> pd.Series:
     return normalized.astype(bool)
 
 
+def _normalize_is_st_for_core_validator(series: pd.Series) -> pd.Series:
+    """Normalize is_st for Stage-F core validation only.
+
+    The shared contract bool helper intentionally preserves nulls as nullable
+    booleans. Stage-F core validation treats ``is_st`` as an explicit
+    field-specific exception: source-gap nulls are normalized to ``False`` for
+    validator input only, while invalid non-boolean-like values are preserved so
+    the schema validator still rejects them.
+    """
+
+    normalized = series.map(
+        lambda value: False if pd.isna(value) else _normalize_contract_bool_value(value)
+    )
+    invalid_mask = series.notna() & normalized.isna()
+    if invalid_mask.any():
+        return series
+
+    return normalized.astype(bool)
+
+
 def normalize_core_validator_frame(df: pd.DataFrame) -> pd.DataFrame:
     normalized = df.copy()
 
@@ -51,10 +71,11 @@ def normalize_core_validator_frame(df: pd.DataFrame) -> pd.DataFrame:
     if "close" in normalized.columns:
         normalized["close"] = pd.to_numeric(normalized["close"], errors="coerce")
 
-    for bool_col in ("is_st", "is_redeemed"):
-        if bool_col not in normalized.columns:
-            continue
-        normalized[bool_col] = _normalize_contract_bool_series(normalized[bool_col])
+    if "is_st" in normalized.columns:
+        normalized["is_st"] = _normalize_is_st_for_core_validator(normalized["is_st"])
+
+    if "is_redeemed" in normalized.columns:
+        normalized["is_redeemed"] = _normalize_contract_bool_series(normalized["is_redeemed"])
 
     return normalized
 
