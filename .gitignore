@@ -4,6 +4,7 @@ Review_Report.md
 .coder_session
 memory/
 *.log
+.sdlc_guardrail
 
 # Python
 __pycache__/

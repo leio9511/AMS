@@ -6,6 +6,8 @@
 
 PROJECT_DIR=$(dirname "$0")
 LOG_FILE="$PROJECT_DIR/build_preflight.log"
+IGNORE_MANIFEST_PATH="$PROJECT_DIR/ignore_tests.json"
+IGNORE_HELPER_PATH="$PROJECT_DIR/scripts/preflight_ignore_manifest.py"
 
 echo "[$(date '+%H:%M:%S')] Starting Smart Preflight Checks..."
 
@@ -30,7 +32,21 @@ fi
 
 # --- Contract Compliance Test ---
 echo "[$(date '+%H:%M:%S')] Running Contract Compliance Test..."
-pytest >> "$LOG_FILE" 2>&1
+mapfile -t PYTEST_IGNORE_ARGS < <(python3 "$IGNORE_HELPER_PATH" --manifest "$IGNORE_MANIFEST_PATH" --repo-root "$PROJECT_DIR" 2>> "$LOG_FILE")
+EXIT_CODE=$?
+if [ $EXIT_CODE -ne 0 ]; then
+    echo "❌ PREFLIGHT FAILED (Exit Code: $EXIT_CODE)!"
+    echo "=== ERROR DETAILS (Extracting relevant logs to save tokens) ==="
+    if grep -iE -A 10 -B 2 "error:|exception|failed|unresolved|expecting|traceback|❌" "$LOG_FILE" | head -n 50; then
+        :
+    else
+        tail -n 50 "$LOG_FILE"
+    fi
+    echo "==============================================================="
+    echo "Please fix the code above to pass the preflight gate."
+    exit $EXIT_CODE
+fi
+pytest "${PYTEST_IGNORE_ARGS[@]}" >> "$LOG_FILE" 2>&1
 EXIT_CODE=$?
 
 if [ $EXIT_CODE -ne 0 ]; then
