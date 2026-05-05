@@ -1,0 +1,5 @@
+{
+  "reasoning": "I identified AMS as a Python event-driven trading framework whose change surface here is its repo-level preflight gate. The right patterns are config-as-data, deterministic structured parsing, fail-closed validation, and explicit debt quarantine; the key anti-patterns are shell-parsed JSON, hidden bypass branches, and silently rotting whitelists. This PRD explicitly bans grep/sed/awk parsing, pins the manifest contract and seed content in Section 7, defines fail-closed semantics, and supplies black-box acceptance plus isolation tests. Red-line check passes. The only caveat is implementation discipline: any helper must stay inline or in an approved subdirectory rather than adding a stray root-level Python file.",
+  "status": "APPROVED",
+  "comments": "APPROVED. This is the correct level of abstraction: quarantine debt as audited data, not magic shell branches. The design is minimal, reversible, and aligned with fail-closed repo hygiene. Do not let the implementation sneak in a root-level parser helper or weaken canonical-empty semantics—those are the only easy ways to turn this into structural debt."
+}
