@@ -8,7 +8,7 @@ PROJECT_DIR=$(dirname "$0")
 cd "$PROJECT_DIR" || exit 1
 
 SKILL_NAME="ams"
-SRC_DIR="/root/projects/AMS"
+SRC_DIR="$PROJECT_DIR"
 DEST_SKILL_DIR="$HOME/.openclaw/skills/$SKILL_NAME"
 DATA_DIR="$HOME/.openclaw/data/$SKILL_NAME"
 BACKUP_DIR="$HOME/.openclaw/skills"
