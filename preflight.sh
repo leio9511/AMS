@@ -32,7 +32,7 @@ fi
 
 # --- Contract Compliance Test ---
 echo "[$(date '+%H:%M:%S')] Running Contract Compliance Test..."
-mapfile -t PYTEST_IGNORE_ARGS < <(python3 "$IGNORE_HELPER_PATH" --manifest "$IGNORE_MANIFEST_PATH" --repo-root "$PROJECT_DIR" 2>> "$LOG_FILE")
+PYTEST_IGNORE_OUTPUT=$(python3 "$IGNORE_HELPER_PATH" --manifest "$IGNORE_MANIFEST_PATH" --repo-root "$PROJECT_DIR" 2>> "$LOG_FILE")
 EXIT_CODE=$?
 if [ $EXIT_CODE -ne 0 ]; then
     echo "❌ PREFLIGHT FAILED (Exit Code: $EXIT_CODE)!"
@@ -45,6 +45,10 @@ if [ $EXIT_CODE -ne 0 ]; then
     echo "==============================================================="
     echo "Please fix the code above to pass the preflight gate."
     exit $EXIT_CODE
+fi
+PYTEST_IGNORE_ARGS=()
+if [ -n "$PYTEST_IGNORE_OUTPUT" ]; then
+    mapfile -t PYTEST_IGNORE_ARGS <<< "$PYTEST_IGNORE_OUTPUT"
 fi
 pytest "${PYTEST_IGNORE_ARGS[@]}" >> "$LOG_FILE" 2>&1
 EXIT_CODE=$?

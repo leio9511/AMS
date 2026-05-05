@@ -21,6 +21,21 @@ EXPECTED_PYTEST_IGNORE_ENTRIES = [
 ]
 
 
+def _write_fake_pytest(fake_pytest: Path) -> None:
+    fake_pytest.write_text(
+        textwrap.dedent(
+            """\
+            #!/bin/sh
+            printf '%s\\n' "$@" > "$PYTEST_ARGS_FILE"
+            printf '1 passed\\n'
+            """
+        ),
+        encoding="utf-8",
+    )
+    fake_pytest.chmod(fake_pytest.stat().st_mode | stat.S_IXUSR)
+
+
+
 def test_seed_manifest_matches_current_known_failure_surface():
     repo_root = Path(__file__).resolve().parents[1]
     manifest = json.loads((repo_root / "ignore_tests.json").read_text(encoding="utf-8"))
@@ -83,17 +98,7 @@ def test_preflight_invokes_pytest_with_manifest_supplied_ignore_args(tmp_path):
         file_path.write_text("def test_placeholder():\n    assert True\n", encoding="utf-8")
 
     fake_pytest = fake_bin_dir / "pytest"
-    fake_pytest.write_text(
-        textwrap.dedent(
-            """\
-            #!/bin/sh
-            printf '%s\\n' "$@" > "$PYTEST_ARGS_FILE"
-            printf '1 passed\\n'
-            """
-        ),
-        encoding="utf-8",
-    )
-    fake_pytest.chmod(fake_pytest.stat().st_mode | stat.S_IXUSR)
+    _write_fake_pytest(fake_pytest)
 
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin_dir}{os.pathsep}{env['PATH']}"
@@ -111,3 +116,44 @@ def test_preflight_invokes_pytest_with_manifest_supplied_ignore_args(tmp_path):
     assert args_capture_path.read_text(encoding="utf-8").splitlines() == [
         f"--ignore={entry}" for entry in manifest_entries
     ]
+
+
+
+def test_preflight_fails_closed_when_manifest_is_missing(tmp_path):
+    repo_root = Path(__file__).resolve().parents[1]
+    temp_repo = tmp_path / "repo"
+    scripts_dir = temp_repo / "scripts"
+    fake_bin_dir = tmp_path / "bin"
+    args_capture_path = tmp_path / "pytest_args.txt"
+
+    scripts_dir.mkdir(parents=True)
+    fake_bin_dir.mkdir(parents=True)
+
+    (temp_repo / "preflight.sh").write_text(
+        (repo_root / "preflight.sh").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (scripts_dir / "preflight_ignore_manifest.py").write_text(
+        (repo_root / "scripts" / "preflight_ignore_manifest.py").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    fake_pytest = fake_bin_dir / "pytest"
+    _write_fake_pytest(fake_pytest)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin_dir}{os.pathsep}{env['PATH']}"
+    env["PYTEST_ARGS_FILE"] = str(args_capture_path)
+
+    result = subprocess.run(
+        ["bash", "preflight.sh"],
+        cwd=temp_repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert not args_capture_path.exists()
+    assert "PREFLIGHT FAILED" in result.stdout
+    assert "ignore_tests.json" in result.stdout
