@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -9,11 +10,13 @@ DEFAULT_MANIFEST_PATH = Path("ignore_tests.json")
 _ALLOWED_TOP_LEVEL_KEYS = {"pytest"}
 
 
-def load_manifest(manifest_path: str | Path = DEFAULT_MANIFEST_PATH) -> dict[str, Any]:
-    path = Path(manifest_path)
+def _parse_manifest_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as handle:
-        manifest = json.load(handle)
+        return json.load(handle)
 
+
+
+def _validate_manifest_structure(manifest: Any) -> dict[str, list[str]]:
     if not isinstance(manifest, dict):
         raise ValueError("ignore_tests.json must contain a top-level JSON object")
     if set(manifest.keys()) != _ALLOWED_TOP_LEVEL_KEYS:
@@ -25,7 +28,15 @@ def load_manifest(manifest_path: str | Path = DEFAULT_MANIFEST_PATH) -> dict[str
     if not all(isinstance(entry, str) for entry in pytest_entries):
         raise ValueError("ignore_tests.json 'pytest' entries must all be strings")
 
-    return manifest
+    return {"pytest": pytest_entries}
+
+
+
+def load_manifest(manifest_path: str | Path = DEFAULT_MANIFEST_PATH) -> dict[str, Any]:
+    path = Path(manifest_path)
+    manifest = _parse_manifest_json(path)
+    return _validate_manifest_structure(manifest)
+
 
 
 def _validate_pytest_entry(entry: str, repo_root: Path, seen: set[str]) -> None:
@@ -80,8 +91,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    manifest = load_manifest(args.manifest)
-    ignore_args = build_pytest_ignore_args(manifest, args.repo_root)
+
+    try:
+        manifest = load_manifest(args.manifest)
+        ignore_args = build_pytest_ignore_args(manifest, args.repo_root)
+    except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
     if ignore_args:
         print("\n".join(ignore_args))
     return 0

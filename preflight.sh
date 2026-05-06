@@ -4,10 +4,54 @@
 # ==========================================
 # Rule: Token-Optimized CI (Silent on Success, Verbose on Failure)
 
+set -uo pipefail
+
 PROJECT_DIR=$(dirname "$0")
 LOG_FILE="$PROJECT_DIR/build_preflight.log"
 IGNORE_MANIFEST_PATH="$PROJECT_DIR/ignore_tests.json"
 IGNORE_HELPER_PATH="$PROJECT_DIR/scripts/preflight_ignore_manifest.py"
+PYTEST_IGNORE_OUTPUT_FILE=$(mktemp)
+PYTEST_IGNORE_ARGS=()
+
+cleanup_temp_files() {
+    rm -f "$PYTEST_IGNORE_OUTPUT_FILE"
+}
+
+print_failure_details() {
+    local exit_code="$1"
+
+    echo "❌ PREFLIGHT FAILED (Exit Code: $exit_code)!"
+    echo "=== ERROR DETAILS (Extracting relevant logs to save tokens) ==="
+    if grep -iE -A 10 -B 2 "error:|exception|failed|unresolved|expecting|traceback|❌" "$LOG_FILE" | head -n 50; then
+        :
+    else
+        tail -n 50 "$LOG_FILE"
+    fi
+    echo "==============================================================="
+    echo "Please fix the code above to pass the preflight gate."
+}
+
+# JSON parsing and manifest validation belong entirely to the Python helper.
+# The shell entrypoint only blocks or permits pytest based on helper success,
+# and consumes the newline-delimited --ignore arguments emitted by that helper.
+run_contract_compliance_test() {
+    echo "[$(date '+%H:%M:%S')] Running Contract Compliance Test..."
+
+    python3 "$IGNORE_HELPER_PATH" --manifest "$IGNORE_MANIFEST_PATH" --repo-root "$PROJECT_DIR" > "$PYTEST_IGNORE_OUTPUT_FILE" 2>> "$LOG_FILE"
+    local helper_exit_code=$?
+    if [ $helper_exit_code -ne 0 ]; then
+        return $helper_exit_code
+    fi
+
+    PYTEST_IGNORE_ARGS=()
+    if [ -s "$PYTEST_IGNORE_OUTPUT_FILE" ]; then
+        mapfile -t PYTEST_IGNORE_ARGS < "$PYTEST_IGNORE_OUTPUT_FILE"
+    fi
+
+    return 0
+}
+
+trap cleanup_temp_files EXIT
 
 echo "[$(date '+%H:%M:%S')] Starting Smart Preflight Checks..."
 
@@ -18,51 +62,23 @@ find . -name "*.py" -not -path "*/\.*" -not -path "*/__pycache__/*" -not -path "
 EXIT_CODE=$?
 
 if [ $EXIT_CODE -ne 0 ]; then
-    echo "❌ PREFLIGHT FAILED (Exit Code: $EXIT_CODE)!"
-    echo "=== ERROR DETAILS (Extracting relevant logs to save tokens) ==="
-    if grep -iE -A 10 -B 2 "error:|exception|failed|unresolved|expecting|traceback|❌" "$LOG_FILE" | head -n 50; then
-        :
-    else
-        tail -n 50 "$LOG_FILE"
-    fi
-    echo "==============================================================="
-    echo "Please fix the code above to pass the preflight gate."
+    print_failure_details "$EXIT_CODE"
     exit $EXIT_CODE
 fi
 
 # --- Contract Compliance Test ---
-echo "[$(date '+%H:%M:%S')] Running Contract Compliance Test..."
-PYTEST_IGNORE_OUTPUT=$(python3 "$IGNORE_HELPER_PATH" --manifest "$IGNORE_MANIFEST_PATH" --repo-root "$PROJECT_DIR" 2>> "$LOG_FILE")
+run_contract_compliance_test
 EXIT_CODE=$?
 if [ $EXIT_CODE -ne 0 ]; then
-    echo "❌ PREFLIGHT FAILED (Exit Code: $EXIT_CODE)!"
-    echo "=== ERROR DETAILS (Extracting relevant logs to save tokens) ==="
-    if grep -iE -A 10 -B 2 "error:|exception|failed|unresolved|expecting|traceback|❌" "$LOG_FILE" | head -n 50; then
-        :
-    else
-        tail -n 50 "$LOG_FILE"
-    fi
-    echo "==============================================================="
-    echo "Please fix the code above to pass the preflight gate."
+    print_failure_details "$EXIT_CODE"
     exit $EXIT_CODE
 fi
-PYTEST_IGNORE_ARGS=()
-if [ -n "$PYTEST_IGNORE_OUTPUT" ]; then
-    mapfile -t PYTEST_IGNORE_ARGS <<< "$PYTEST_IGNORE_OUTPUT"
-fi
+
 pytest "${PYTEST_IGNORE_ARGS[@]}" >> "$LOG_FILE" 2>&1
 EXIT_CODE=$?
 
 if [ $EXIT_CODE -ne 0 ]; then
-    echo "❌ PREFLIGHT FAILED (Exit Code: $EXIT_CODE)!"
-    echo "=== ERROR DETAILS (Extracting relevant logs to save tokens) ==="
-    if grep -iE -A 10 -B 2 "error:|exception|failed|unresolved|expecting|traceback|❌" "$LOG_FILE" | head -n 50; then
-        :
-    else
-        tail -n 50 "$LOG_FILE"
-    fi
-    echo "==============================================================="
-    echo "Please fix the code above to pass the preflight gate."
+    print_failure_details "$EXIT_CODE"
     exit $EXIT_CODE
 fi
 
