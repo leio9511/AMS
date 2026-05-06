@@ -1,0 +1,10 @@
+-r requirements.txt
+pytest
+pyarrow>=13.0.0
+jqdatasdk
+tushare
+akshare
+paramiko
+httpx
+fastapi
+uvicorn

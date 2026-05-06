@@ -1,1 +1,3 @@
+pandas
+numpy
 pandera>=0.20.0
