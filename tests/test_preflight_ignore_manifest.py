@@ -5,7 +5,7 @@ import subprocess
 import textwrap
 from pathlib import Path
 
-from scripts.preflight_ignore_manifest import build_pytest_ignore_args, load_manifest
+from scripts.preflight_ignore_manifest import build_pytest_ignore_args, load_manifest, main
 
 EXPECTED_PYTEST_IGNORE_ENTRIES = [
     "tests/test_data_source.py",
@@ -51,6 +51,22 @@ def test_helper_builds_ordered_pytest_ignore_args_from_seed_manifest():
     assert build_pytest_ignore_args(manifest, repo_root) == [
         f"--ignore={entry}" for entry in EXPECTED_PYTEST_IGNORE_ENTRIES
     ]
+
+
+
+def test_helper_cli_emits_ordered_pytest_ignore_args_from_seed_manifest(capsys):
+    repo_root = Path(__file__).resolve().parents[1]
+
+    exit_code = main(
+        ["--manifest", str(repo_root / "ignore_tests.json"), "--repo-root", str(repo_root)]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert captured.out.splitlines() == [
+        f"--ignore={entry}" for entry in EXPECTED_PYTEST_IGNORE_ENTRIES
+    ]
+    assert captured.err == ""
 
 
 

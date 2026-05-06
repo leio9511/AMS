@@ -35,6 +35,8 @@ def _validate_pytest_entry(entry: str, repo_root: Path, seen: set[str]) -> None:
 
     if any(token in entry for token in ("*", "?", "[", "]")):
         raise ValueError(f"Glob pytest ignore entry is invalid: {entry}")
+    if "::" in entry:
+        raise ValueError(f"Non-file pytest selector is invalid: {entry}")
 
     path = PurePosixPath(entry)
     if path.is_absolute():
