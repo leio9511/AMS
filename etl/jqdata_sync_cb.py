@@ -1,7 +1,6 @@
 import os
 import sys
 import jqdatasdk
-from ams.utils.provider_config import get_provider_artifact_paths
 from etl.cb_etl_runner import (
     run_etl,
     SUPPORTABILITY_REGRESSION_ERROR,
@@ -21,9 +20,8 @@ from etl.cb_etl_pipeline import (
 )
 
 # Legacy constants for compatibility with tests
-_JQDATA_PATHS = get_provider_artifact_paths("jqdata")
-DATA_PATH = _JQDATA_PATHS["dataset_path"]
-METRICS_PATH = _JQDATA_PATHS["metrics_path"]
+DATA_PATH = "/root/projects/AMS/data/cb_history_factors_jqdata.csv"
+METRICS_PATH = "/root/projects/AMS/data/cb_history_factors_jqdata.metrics.json"
 LEGACY_UNDERLYING_SOURCE_FATAL = (
     "[FATAL] Invalid underlying-ticker source contract: get_security_info(ticker).parent "
     "is not valid for AMS convertible bonds."

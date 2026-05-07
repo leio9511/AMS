@@ -24,11 +24,7 @@ from etl.cb_etl_pipeline import (
     _build_delist_mapping,
     _build_empty_canonical_cb_frame,
 )
-from ams.utils.provider_config import (
-    get_provider_artifact_paths,
-    load_provider_config,
-    resolve_provider_name,
-)
+from ams.utils.provider_config import load_provider_config
 
 logger = logging.getLogger(__name__)
 
@@ -125,8 +121,9 @@ def _promote_exclusion_only_metrics(tmp_metrics_path: str, metrics_path: str) ->
 def run_etl(start_date, end_date, source_name, promote=False, jqdata_client=None, dataset_path=None, metrics_path=None, 
             _underlying_mapping_func=None, _delist_mapping_func=None):
     config = load_provider_config()
-    selected_provider = resolve_provider_name(source_name, config=config)
-    provider_config = get_provider_artifact_paths(selected_provider, config=config)
+    provider_config = config["providers"].get(source_name)
+    if not provider_config:
+        raise ValueError(f"No configuration for provider: {source_name}")
     
     if dataset_path is None:
         dataset_path = provider_config["dataset_path"]
@@ -137,10 +134,10 @@ def run_etl(start_date, end_date, source_name, promote=False, jqdata_client=None
     u_map_func = _underlying_mapping_func or _build_underlying_mapping
     d_map_func = _delist_mapping_func or _build_delist_mapping
 
-    provider = get_provider(selected_provider, jqdata_client=jqdata_client)
+    provider = get_provider(source_name, jqdata_client=jqdata_client)
     pipeline = CBETLPipeline(start_date, end_date, provider=provider)
     
-    print(f"Running ETL for {selected_provider} from {start_date} to {end_date}...")
+    print(f"Running ETL for {source_name} from {start_date} to {end_date}...")
     
     if not pipeline.run_stage_a_source_acquisition():
         if promote:
@@ -205,11 +202,11 @@ def run_etl(start_date, end_date, source_name, promote=False, jqdata_client=None
             exclusion_only_window = False
 
         premium_rate_metrics = {
-            "provenance": selected_provider,
+            "provenance": source_name,
             "start_date": start_date,
             "end_date": end_date,
             "generated_at": datetime.datetime.now().isoformat(),
-            "source_lineage": "jqdata_sync_cb" if selected_provider == "jqdata" else f"cb_etl_runner_{selected_provider}",
+            "source_lineage": "jqdata_sync_cb" if source_name == "jqdata" else f"cb_etl_runner_{source_name}",
             "premium_rate_source_row_count": pipeline.results["source_coverage"].get("premium_source_row_count", 0),
             "premium_rate_joined_row_count": pipeline.results["premium_join_summary"].get("premium_joined_row_count", 0),
             "premium_rate_join_coverage_ratio": 1.0 - pipeline.results["premium_join_summary"].get("missing_premium_ratio", 0.0) if not df_supportable.empty else 0.0,
@@ -244,7 +241,7 @@ def run_etl(start_date, end_date, source_name, promote=False, jqdata_client=None
                 
             os.replace(tmp_path, dataset_path)
             os.replace(tmp_metrics_path, metrics_path)
-            print(f"[PromoteRunner] Successfully promoted {selected_provider} dataset to {dataset_path}")
+            print(f"[PromoteRunner] Successfully promoted {source_name} dataset to {dataset_path}")
         except Exception as e:
             if dataset_existed and os.path.exists(bak_path):
                 os.replace(bak_path, dataset_path)
@@ -264,8 +261,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     config = load_provider_config()
-    source = resolve_provider_name(args.data_source, config=config)
-    if args.data_source == "auto":
+    source = args.data_source
+    if source == "auto":
+        source = config.get("default_provider", "jqdata")
         print(f"Using default provider: {source}")
         
     is_promote = args.promote or not args.audit
