@@ -17,6 +17,42 @@ def _write_fake_pytest(fake_pytest: Path) -> None:
             """\
             #!/bin/sh
             : > "$PYTEST_ARGS_FILE"
+            if [ -n "${PYTEST_BEHAVIOR:-}" ]; then
+                case "$PYTEST_BEHAVIOR" in
+                    fail-with-summary)
+                        for arg in "$@"; do
+                            printf '%s\\n' "$arg" >> "$PYTEST_ARGS_FILE"
+                        done
+                        cat <<'EOF'
+============================= test session starts ==============================
+collected 2 items
+
+tests/test_alpha.py F                                                    [ 50%]
+tests/test_beta.py .                                                     [100%]
+
+=================================== FAILURES ===================================
+______________________________ test_alpha_failure ______________________________
+
+    def test_alpha_failure():
+>       assert False
+E       assert False
+
+tests/test_alpha.py:3: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_alpha.py::test_alpha_failure - AssertionError: assert False
+FAILED tests/test_gamma.py - AssertionError: synthetic file failure
+========================= 2 failed, 1 passed in 0.12s ==========================
+EOF
+                        exit 1
+                        ;;
+                    success)
+                        ;;
+                    *)
+                        echo "unknown PYTEST_BEHAVIOR: $PYTEST_BEHAVIOR" >&2
+                        exit 97
+                        ;;
+                esac
+            fi
             for arg in "$@"; do
                 printf '%s\\n' "$arg" >> "$PYTEST_ARGS_FILE"
             done
@@ -29,7 +65,14 @@ def _write_fake_pytest(fake_pytest: Path) -> None:
 
 
 def _run_preflight_with_manifest(
-    tmp_path: Path, *, manifest_text: str | None
+    tmp_path: Path,
+    *,
+    manifest_text: str | None,
+    args: list[str] | None = None,
+    include_helper: bool = True,
+    include_manifest: bool = True,
+    python_source: str = "x = 1\n",
+    pytest_behavior: str = "success",
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     repo_root = Path(__file__).resolve().parents[1]
     temp_repo = tmp_path / "repo"
@@ -44,14 +87,17 @@ def _run_preflight_with_manifest(
         (repo_root / "preflight.sh").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
-    (scripts_dir / "preflight_ignore_manifest.py").write_text(
-        (repo_root / "scripts" / "preflight_ignore_manifest.py").read_text(
-            encoding="utf-8"
-        ),
-        encoding="utf-8",
-    )
+    (temp_repo / "sample_module.py").write_text(python_source, encoding="utf-8")
 
-    if manifest_text is not None:
+    if include_helper:
+        (scripts_dir / "preflight_ignore_manifest.py").write_text(
+            (repo_root / "scripts" / "preflight_ignore_manifest.py").read_text(
+                encoding="utf-8"
+            ),
+            encoding="utf-8",
+        )
+
+    if include_manifest and manifest_text is not None:
         (temp_repo / "ignore_tests.json").write_text(manifest_text, encoding="utf-8")
 
     fake_pytest = fake_bin_dir / "pytest"
@@ -60,9 +106,11 @@ def _run_preflight_with_manifest(
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin_dir}{os.pathsep}{env['PATH']}"
     env["PYTEST_ARGS_FILE"] = str(args_capture_path)
+    env["PYTEST_BEHAVIOR"] = pytest_behavior
 
+    command = ["bash", "preflight.sh", *(args or [])]
     result = subprocess.run(
-        ["bash", "preflight.sh"],
+        command,
         cwd=temp_repo,
         env=env,
         capture_output=True,
@@ -76,6 +124,7 @@ def test_preflight_fails_when_ignore_manifest_is_missing(tmp_path):
     result, args_capture_path = _run_preflight_with_manifest(
         tmp_path,
         manifest_text=None,
+        include_manifest=False,
     )
 
     assert result.returncode != 0
@@ -136,6 +185,7 @@ def test_preflight_does_not_invoke_pytest_when_manifest_validation_fails(
     result, args_capture_path = _run_preflight_with_manifest(
         tmp_path,
         manifest_text=manifest_text,
+        include_manifest=manifest_text is not None,
     )
 
     assert result.returncode != 0
@@ -153,3 +203,61 @@ def test_preflight_runs_full_pytest_surface_for_canonical_empty_manifest(tmp_pat
     assert args_capture_path.exists()
     assert args_capture_path.read_text(encoding="utf-8") == ""
     assert "✅ PREFLIGHT SUCCESS" in result.stdout
+
+
+
+def test_preflight_rejects_unknown_mode_flags_and_fails_closed(tmp_path):
+    result, args_capture_path = _run_preflight_with_manifest(
+        tmp_path,
+        manifest_text=CANONICAL_EMPTY_MANIFEST,
+        args=["--some-unknown-flag"],
+    )
+
+    assert result.returncode != 0
+    assert not args_capture_path.exists()
+    assert "PREFLIGHT FAILED" in result.stdout
+    assert "Unknown preflight mode flag: --some-unknown-flag" in result.stdout
+
+
+
+def test_preflight_report_all_emits_summary_block_when_pytest_fails(tmp_path):
+    result, args_capture_path = _run_preflight_with_manifest(
+        tmp_path,
+        manifest_text=CANONICAL_EMPTY_MANIFEST,
+        args=["--report-all"],
+        pytest_behavior="fail-with-summary",
+    )
+
+    assert result.returncode != 0
+    assert args_capture_path.exists()
+    stdout = result.stdout
+    assert "=== REPORT-ALL SUMMARY ===" in stdout
+    assert "MODE: report-all" in stdout
+    assert "PYTEST RESULT:" in stdout
+    assert "FAILED TESTS:" in stdout
+    assert "SHORT SUMMARY INFO:" in stdout
+    assert "=== END REPORT-ALL SUMMARY ===" in stdout
+    assert "tests/test_alpha.py::test_alpha_failure" in stdout
+    assert "tests/test_gamma.py" in stdout
+    assert (
+        "FAILED tests/test_alpha.py::test_alpha_failure - AssertionError: assert False"
+        in stdout
+    )
+
+
+
+def test_preflight_report_all_still_hard_fails_before_pytest_on_prerequisite_error(
+    tmp_path,
+):
+    result, args_capture_path = _run_preflight_with_manifest(
+        tmp_path,
+        manifest_text=CANONICAL_EMPTY_MANIFEST,
+        args=["--report-all"],
+        python_source="def broken(:\n    pass\n",
+    )
+
+    assert result.returncode != 0
+    assert not args_capture_path.exists()
+    assert "PREFLIGHT FAILED" in result.stdout
+    assert "REPORT-ALL SUMMARY" not in result.stdout
+    assert "SyntaxError" in result.stdout or "invalid syntax" in result.stdout

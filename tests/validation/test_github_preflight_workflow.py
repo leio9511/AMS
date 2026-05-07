@@ -6,6 +6,7 @@ import re
 WORKFLOW_PATH = Path(".github/workflows/preflight.yml")
 WORKFLOW_DIR = WORKFLOW_PATH.parent
 THIS_TEST_FILE = Path(__file__)
+EXPECTED_GATE_COMMAND = "bash preflight.sh --report-all"
 
 
 def _workflow_text() -> str:
@@ -54,13 +55,22 @@ def test_preflight_workflow_runs_exact_repository_gate_command():
     text = _workflow_text()
     run_lines = re.findall(r"(?m)^[ \t]+run:\s+([^\n]+)\s*$", text)
 
-    assert "bash preflight.sh" in run_lines, "Workflow must run the exact repository gate command"
-    assert re.search(r"(?m)^[ \t]+run:\s+bash preflight\.sh\s*$", text), (
-        "Workflow must invoke the exact command 'bash preflight.sh'"
+    assert EXPECTED_GATE_COMMAND in run_lines, "Workflow must run the exact repository gate command"
+    assert re.search(
+        r"(?m)^[ \t]+run:\s+bash preflight\.sh --report-all\s*$",
+        text,
+    ), "Workflow must invoke the exact command 'bash preflight.sh --report-all'"
+    assert run_lines.count(EXPECTED_GATE_COMMAND) == 1, (
+        "Workflow must define the repository gate command exactly once, "
+        f"found run lines: {run_lines}"
     )
     assert not any("pytest" in line for line in run_lines), (
         "Workflow must not replace preflight.sh with a decomposed pytest command chain"
     )
+    assert not any(
+        line.startswith("bash preflight.sh") and line != EXPECTED_GATE_COMMAND
+        for line in run_lines
+    ), "Workflow must not invoke any other preflight.sh command variant"
 
 
 

@@ -12,6 +12,7 @@ IGNORE_MANIFEST_PATH="$PROJECT_DIR/ignore_tests.json"
 IGNORE_HELPER_PATH="$PROJECT_DIR/scripts/preflight_ignore_manifest.py"
 PYTEST_IGNORE_OUTPUT_FILE=$(mktemp)
 PYTEST_IGNORE_ARGS=()
+MODE="fail-fast"
 
 cleanup_temp_files() {
     rm -f "$PYTEST_IGNORE_OUTPUT_FILE"
@@ -29,6 +30,63 @@ print_failure_details() {
     fi
     echo "==============================================================="
     echo "Please fix the code above to pass the preflight gate."
+}
+
+parse_args() {
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --report-all)
+                MODE="report-all"
+                ;;
+            *)
+                echo "Unknown preflight mode flag: $1" >> "$LOG_FILE"
+                return 2
+                ;;
+        esac
+        shift
+    done
+}
+
+extract_pytest_summary_lines() {
+    awk '
+        /^=+ short test summary info =+$/ { in_summary=1; next }
+        in_summary && /^=+/ { exit }
+        in_summary && /^(FAILED|ERROR) / { print }
+    ' "$LOG_FILE"
+}
+
+print_report_all_summary() {
+    local exit_code="$1"
+    local -a summary_lines=()
+
+    mapfile -t summary_lines < <(extract_pytest_summary_lines)
+    if [ ${#summary_lines[@]} -eq 0 ]; then
+        mapfile -t summary_lines < <(grep -E '^(FAILED|ERROR) ' "$LOG_FILE" || true)
+    fi
+
+    echo "=== REPORT-ALL SUMMARY ==="
+    echo "MODE: report-all"
+    echo "PYTEST RESULT: failed (exit code: $exit_code)"
+    echo "FAILED TESTS:"
+    if [ ${#summary_lines[@]} -eq 0 ]; then
+        echo "(no failed test entries captured)"
+    else
+        local line
+        local entry
+        for line in "${summary_lines[@]}"; do
+            entry="${line#FAILED }"
+            entry="${entry#ERROR }"
+            entry="${entry%% - *}"
+            echo "$entry"
+        done
+    fi
+    echo "SHORT SUMMARY INFO:"
+    if [ ${#summary_lines[@]} -eq 0 ]; then
+        echo "(no short summary info captured)"
+    else
+        printf '%s\n' "${summary_lines[@]}"
+    fi
+    echo "=== END REPORT-ALL SUMMARY ==="
 }
 
 # JSON parsing and manifest validation belong entirely to the Python helper.
@@ -52,6 +110,14 @@ run_contract_compliance_test() {
 }
 
 trap cleanup_temp_files EXIT
+: > "$LOG_FILE"
+
+parse_args "$@"
+EXIT_CODE=$?
+if [ $EXIT_CODE -ne 0 ]; then
+    print_failure_details "$EXIT_CODE"
+    exit $EXIT_CODE
+fi
 
 echo "[$(date '+%H:%M:%S')] Starting Smart Preflight Checks..."
 
@@ -79,6 +145,9 @@ EXIT_CODE=$?
 
 if [ $EXIT_CODE -ne 0 ]; then
     print_failure_details "$EXIT_CODE"
+    if [ "$MODE" = "report-all" ]; then
+        print_report_all_summary "$EXIT_CODE"
+    fi
     exit $EXIT_CODE
 fi
 
