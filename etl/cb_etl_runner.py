@@ -48,6 +48,10 @@ def get_provider(source_name, jqdata_client=None):
     else:
         raise ValueError(f"Unknown data source: {source_name}")
 
+def _resolve_report_dir() -> str:
+    return os.environ.get("AMS_REPORTS_DIR", "/root/projects/AMS/reports")
+
+
 def _write_metrics(metrics_path: str, metrics: dict) -> None:
     os.makedirs(os.path.dirname(metrics_path), exist_ok=True)
     with open(metrics_path, "w", encoding="utf-8") as f:
@@ -162,7 +166,7 @@ def run_etl(start_date, end_date, source_name, promote=False, jqdata_client=None
     if not promote:
         # Audit mode
         report_filename = f"cb_etl_audit_{start_date}_{end_date}.json"
-        report_dir = "/root/projects/AMS/reports"
+        report_dir = _resolve_report_dir()
         os.makedirs(report_dir, exist_ok=True)
         report_path = os.path.join(report_dir, report_filename)
         try:
