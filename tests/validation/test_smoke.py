@@ -33,9 +33,9 @@ BACKTEST_ARGS = [
 ]
 
 
-def _run_cli(data_path: str) -> subprocess.CompletedProcess[str]:
+def _run_cli(data_path: str, *, env: dict | None = None) -> subprocess.CompletedProcess[str]:
     command = [sys.executable, "main_runner.py", *BACKTEST_ARGS, "--data-path", data_path]
-    return subprocess.run(command, capture_output=True, text=True, cwd=REPO_ROOT)
+    return subprocess.run(command, capture_output=True, text=True, cwd=REPO_ROOT, env=env)
 
 
 def _load_json(result: subprocess.CompletedProcess[str]) -> dict:
@@ -46,7 +46,7 @@ def _load_json(result: subprocess.CompletedProcess[str]) -> dict:
 
 
 def test_cli_smoke_json_output(isolated_paths):
-    result = _run_cli(isolated_paths["data"])
+    result = _run_cli(isolated_paths["data"], env=isolated_paths["env"])
     assert result.returncode == 0, result.stderr
 
     output = _load_json(result)

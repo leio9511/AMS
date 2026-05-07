@@ -33,9 +33,9 @@ BACKTEST_ARGS = [
 ]
 
 
-def run_cli(extra_args, *, cwd: Path = REPO_ROOT):
+def run_cli(extra_args, *, cwd: Path = REPO_ROOT, env: dict | None = None):
     command = [sys.executable, "main_runner.py", *BACKTEST_ARGS, *extra_args]
-    return subprocess.run(command, capture_output=True, text=True, cwd=cwd)
+    return subprocess.run(command, capture_output=True, text=True, cwd=cwd, env=env)
 
 
 def parse_json_output(result: subprocess.CompletedProcess[str]) -> dict:
@@ -47,7 +47,7 @@ def parse_json_output(result: subprocess.CompletedProcess[str]) -> dict:
 
 @pytest.mark.usefixtures("isolated_paths")
 def test_default_path_non_empty(isolated_paths):
-    result = run_cli([])
+    result = run_cli([], env=isolated_paths["env"])
     assert result.returncode == 0, result.stderr
 
     output = parse_json_output(result)
@@ -57,7 +57,7 @@ def test_default_path_non_empty(isolated_paths):
 
 @pytest.mark.usefixtures("isolated_paths")
 def test_canonical_path_non_empty(isolated_paths):
-    result = run_cli(["--data-path", isolated_paths["tushare_data"]])
+    result = run_cli(["--data-path", isolated_paths["tushare_data"]], env=isolated_paths["env"])
     assert result.returncode == 0, result.stderr
 
     output = parse_json_output(result)
@@ -67,11 +67,11 @@ def test_canonical_path_non_empty(isolated_paths):
 
 @pytest.mark.usefixtures("isolated_paths")
 def test_no_path_branching(isolated_paths):
-    default_result = run_cli([])
+    default_result = run_cli([], env=isolated_paths["env"])
     assert default_result.returncode == 0, default_result.stderr
     default_output = parse_json_output(default_result)
 
-    override_result = run_cli(["--data-path", isolated_paths["tushare_data"]])
+    override_result = run_cli(["--data-path", isolated_paths["tushare_data"]], env=isolated_paths["env"])
     assert override_result.returncode == 0, override_result.stderr
     override_output = parse_json_output(override_result)
 

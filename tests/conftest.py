@@ -44,6 +44,8 @@ def isolated_paths(tmp_path):
 
     shutil.copyfile(source_fixture, provider_data_path)
     shutil.copyfile(source_fixture, tushare_data_path)
+    provider_metrics_path.write_text("{}\n", encoding="utf-8")
+    tushare_metrics_path.write_text("{}\n", encoding="utf-8")
 
     relative_data_dir = data_dir.relative_to(REPO_ROOT)
     config_payload = {
@@ -61,13 +63,21 @@ def isolated_paths(tmp_path):
     }
     config_path.write_text(json.dumps(config_payload, indent=2), encoding="utf-8")
 
-    with patch.dict(os.environ, {"AMS_CONFIG_PATH": str(config_path), "AMS_REPORTS_DIR": str(reports_dir)}, clear=False):
+    isolated_env = {
+        "AMS_CONFIG_PATH": str(config_path),
+        "AMS_REPORTS_DIR": str(reports_dir),
+    }
+
+    with patch.dict(os.environ, isolated_env, clear=False):
         try:
             yield {
                 "data": str(provider_data_path),
+                "default_data": str(provider_data_path),
                 "metrics": str(provider_metrics_path),
+                "default_metrics": str(provider_metrics_path),
                 "reports": str(reports_dir),
                 "config": str(config_path),
+                "env": isolated_env.copy(),
                 "source_fixture": str(source_fixture),
                 "tushare_data": str(tushare_data_path),
                 "tushare_metrics": str(tushare_metrics_path),

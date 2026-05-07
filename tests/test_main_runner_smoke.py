@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -45,15 +46,16 @@ def _mutable_fixture_path(tmp_path: Path) -> Path:
     return mutable_path
 
 
-def _run_cli(extra_args=None):
+def _run_cli(extra_args=None, *, env: dict | None = None):
     command = [sys.executable, "main_runner.py", *BACKTEST_ARGS]
     if extra_args:
         command.extend(extra_args)
-    return subprocess.run(command, capture_output=True, text=True, cwd=REPO_ROOT)
+    return subprocess.run(command, capture_output=True, text=True, cwd=REPO_ROOT, env=env)
 
 
-def test_real_cli_execution_smoke(tmp_path):
-    result = _run_cli(["--data-path", str(_mutable_fixture_path(tmp_path))])
+def test_real_cli_execution_smoke(tmp_path, isolated_paths):
+    explicit_data_path = _mutable_fixture_path(tmp_path)
+    result = _run_cli(["--data-path", str(explicit_data_path)], env=isolated_paths["env"])
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
     try:
@@ -74,8 +76,9 @@ def test_canonical_data_path_usage():
     assert "/root/.openclaw/workspace/data/cb_history_factors.csv" not in result.stdout
 
 
-def test_json_format_integrity(tmp_path):
-    result = _run_cli(["--data-path", str(_mutable_fixture_path(tmp_path))])
+def test_json_format_integrity(tmp_path, isolated_paths):
+    explicit_data_path = _mutable_fixture_path(tmp_path)
+    result = _run_cli(["--data-path", str(explicit_data_path)], env=isolated_paths["env"])
     assert result.returncode == 0
 
     output = json.loads(result.stdout)
