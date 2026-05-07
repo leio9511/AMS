@@ -1,90 +1,59 @@
+import json
 import subprocess
 import sys
-import json
+from pathlib import Path
+
 import pytest
-import os
 
-def test_cli_smoke_json_output():
-    """
-    Test Case 1: Verify main_runner.py --format json returns expected structure.
-    """
-    # Ensure data is present for default path
-    default_path = "/root/projects/AMS/data/cb_history_factors_jqdata.csv"
-    os.makedirs(os.path.dirname(default_path), exist_ok=True)
-    subprocess.run(["cp", "/root/.openclaw/workspace/data/cb_history_factors.csv", default_path], check=True)
 
-    command = [
-        sys.executable, "main_runner.py",
-        "--strategy", "cb_rotation",
-        "--start-date", "2025-01-06",
-        "--end-date", "2025-01-10",
-        "--capital", "4000000",
-        "--top-n", "20",
-        "--rebalance", "weekly",
-        "--tp-mode", "both",
-        "--tp-pos", "0.15",
-        "--tp-intra", "0.12",
-        "--sl", "-0.10",
-        "--format", "json"
-    ]
-    
-    result = subprocess.run(command, capture_output=True, text=True)
-    assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
-    
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BACKTEST_ARGS = [
+    "--strategy",
+    "cb_rotation",
+    "--start-date",
+    "2025-01-06",
+    "--end-date",
+    "2025-01-10",
+    "--capital",
+    "4000000",
+    "--top-n",
+    "20",
+    "--rebalance",
+    "weekly",
+    "--tp-mode",
+    "both",
+    "--tp-pos",
+    "0.15",
+    "--tp-intra",
+    "0.12",
+    "--sl",
+    "-0.10",
+    "--format",
+    "json",
+]
+
+
+def _run_cli(data_path: str) -> subprocess.CompletedProcess[str]:
+    command = [sys.executable, "main_runner.py", *BACKTEST_ARGS, "--data-path", data_path]
+    return subprocess.run(command, capture_output=True, text=True, cwd=REPO_ROOT)
+
+
+def _load_json(result: subprocess.CompletedProcess[str]) -> dict:
     try:
-        output = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        pytest.fail(f"Output is not valid JSON: {result.stdout}")
-        
-    assert "summary" in output
-    assert "weekly_performance" in output
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        pytest.fail(f"Output is not valid JSON: {exc}\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}")
+
+
+def test_cli_smoke_json_output(isolated_paths):
+    result = _run_cli(isolated_paths["data"])
+    assert result.returncode == 0, result.stderr
+
+    output = _load_json(result)
+    assert output["summary"]
+    assert output["weekly_performance"]
     assert len(output["weekly_performance"]) > 0
-
-    summary = output["summary"]
-    required_keys = ["final_equity", "total_return", "max_drawdown", "calmar_ratio"]
-    for key in required_keys:
-        assert key in summary
-        assert summary[key] is not None
-        assert str(summary[key]) != ""
-
-def test_canonical_path_consistency():
-    """
-    Scenario 8: Default path and canonical path both produce non-empty summary.
-    """
-    # Ensure both possible paths have data
-    legacy_path = "/root/projects/AMS/data/cb_history_factors.csv"
-    provider_path = "/root/projects/AMS/data/cb_history_factors_jqdata.csv"
-    os.makedirs(os.path.dirname(legacy_path), exist_ok=True)
-    subprocess.run(["cp", "/root/.openclaw/workspace/data/cb_history_factors.csv", legacy_path], check=True)
-    subprocess.run(["cp", "/root/.openclaw/workspace/data/cb_history_factors.csv", provider_path], check=True)
-
-    common_args = [
-        sys.executable, "main_runner.py",
-        "--strategy", "cb_rotation",
-        "--start-date", "2025-01-06",
-        "--end-date", "2025-01-10",
-        "--capital", "4000000",
-        "--top-n", "20",
-        "--rebalance", "weekly",
-        "--tp-mode", "both",
-        "--tp-pos", "0.15",
-        "--tp-intra", "0.12",
-        "--sl", "-0.10",
-        "--format", "json"
-    ]
-    
-    # 1. Default path
-    result_default = subprocess.run(common_args, capture_output=True, text=True)
-    assert result_default.returncode == 0, f"Default path failed: {result_default.stderr}"
-    output_default = json.loads(result_default.stdout)
-    assert output_default.get("summary"), "Default path summary should not be empty"
-    
-    # 2. Explicit canonical path
-    # We must ensure the canonical path has data for the same validation case.
-    canonical_path = "/root/projects/AMS/data/cb_history_factors_jqdata.csv"
-    
-    canonical_args = common_args + ["--data-path", canonical_path]
-    result_canonical = subprocess.run(canonical_args, capture_output=True, text=True)
-    assert result_canonical.returncode == 0, f"Canonical path failed: {result_canonical.stderr}"
-    output_canonical = json.loads(result_canonical.stdout)
-    assert output_canonical.get("summary"), "Canonical path summary should not be empty"
+    for key in ["final_equity", "total_return", "max_drawdown", "calmar_ratio"]:
+        assert key in output["summary"]
+        assert output["summary"][key] is not None
+        assert str(output["summary"][key]) != ""

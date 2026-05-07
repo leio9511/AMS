@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -143,7 +144,7 @@ def _normalize_and_validate_config(config: Mapping[str, Any]) -> dict[str, Any]:
 
 def load_provider_config() -> dict[str, Any]:
     config = _default_provider_config()
-    config_path = Path(DEFAULT_CONFIG_PATH)
+    config_path = Path(os.environ.get("AMS_CONFIG_PATH", DEFAULT_CONFIG_PATH))
 
     if config_path.exists():
         override_config = _load_raw_config(config_path)
