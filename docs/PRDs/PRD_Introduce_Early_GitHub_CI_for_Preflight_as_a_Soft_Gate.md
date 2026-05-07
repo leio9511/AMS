@@ -99,8 +99,9 @@ Context_Workdir: /home/openclaw/projects/AMS
    - 本 PRD 的 correctness 必须分为：
      - 本地 workflow contract/static validation
      - 本地语义级验证
-     - 真实 GitHub witness 验证
+     - 真实 GitHub witness 验证（仅作为 SDLC 完成后的低频人工验收指引，不属于本次 SDLC 自动执行闭环）
    - 不得把 live GitHub run 作为每轮 coder loop 的唯一主验证手段。
+   - 本次 SDLC 的完成标准不依赖真实 GitHub witness 已被自动采集或自动落库；该部分仅作为后续人工验收/外部 QA 参考指引存在。
 
 9. **必须把 Phase 2 的“有信息量失败”定义清楚**
    - Phase 2 允许 truthful failure；
@@ -150,7 +151,8 @@ Context_Workdir: /home/openclaw/projects/AMS
 
 4. **大部分 correctness 必须本地可重复验证**
    - workflow contract 的主验证层必须是 repo 内本地自动化测试；
-   - GitHub run 是低频 witness，不是高频主测试。
+   - GitHub run 是低频 manual witness，而不是高频主测试；
+   - 该 witness 层在本 PRD 中仅提供给 SDLC 完成后的人工验收 / 外部 QA 参考，不属于 planner / coder / reviewer / UAT 的自动闭环交付范围。
 
 5. **CI 不得分叉出第二套 gate**
    - CI 必须运行 `bash preflight.sh`；
@@ -293,8 +295,8 @@ AMS 的分层 requirements baseline 已经存在，并且 issue #2 记录了 cle
 - bootstrap 未改变 `preflight.sh` 的统一入口语义；
 - workflow 没有变成第二套独立 gate。
 
-#### Layer C — External GitHub Witness
-这是低频真实见证层。
+#### Layer C — External GitHub Witness (Post-SDLC Manual Verification Only)
+这是低频真实见证层，但**不属于本次 SDLC 自动执行闭环**。
 
 验证内容包括：
 
@@ -304,9 +306,10 @@ AMS 的分层 requirements baseline 已经存在，并且 issue #2 记录了 cle
 
 约束：
 
-- 这一层是 witness，不是每轮 coder-loop 的唯一 gate；
+- 这一层是 manual witness，不是每轮 coder-loop 的唯一 gate；
 - 不得把整个 PRD 的 correctness 仅定义成“live GitHub 必须每次都跑”；
-- 这层允许较慢、具外部依赖，但必须低频使用。
+- 这层允许较慢、具外部依赖，并且明确依赖外部权限/环境（例如发布到 GitHub 的能力）；
+- 因此这层**只作为 SDLC 完成后的人工验收 / 外部 QA 指引**，不应被 planner 拆成自动执行 slice，不应成为 coder 的闭环 DoD，也不应成为 UAT 的自动阻断项。
 
 ## 4. Acceptance Criteria (BDD 黑盒验收标准)
 - **Scenario 1: Preflight workflow file exists in the repository**
@@ -342,15 +345,15 @@ AMS 的分层 requirements baseline 已经存在，并且 issue #2 记录了 cle
   - **When** local automated tests are executed
   - **Then** the workflow contract and execution semantics can be verified without requiring a live GitHub Actions run
 
-- **Scenario 7: Real GitHub witness produces a visible workflow run**
-  - **Given** the workflow has been pushed to GitHub
-  - **When** a qualifying push or pull request event occurs
-  - **Then** GitHub Actions creates a visible `Preflight` workflow run
-  - **And** the run reaches a visible terminal result that can be inspected by humans
+- **Scenario 7: External GitHub witness is handled outside SDLC as manual verification**
+  - **Given** the repository-local workflow contract, dependency contract, and local execution semantics are complete
+  - **When** SDLC implementation is handed off for external/manual validation
+  - **Then** a maintainer or external QA operator may perform a low-frequency GitHub verification by pushing/opening a qualifying branch or pull request
+  - **And** that verification is treated as post-SDLC manual acceptance rather than planner/coder/UAT scope
 
 - **Scenario 8: Truthful CI red is acceptable in Phase 2 when it is informative**
   - **Given** a repository state where AMS still has remaining preflight debt on a clean runner
-  - **When** the GitHub workflow runs
+  - **When** the GitHub workflow is later exercised during manual external witness verification
   - **Then** the workflow may fail
   - **And** that failure is treated as a valid observability signal rather than a Phase 2 design failure
   - **And** the failure should not primarily be caused by an undefined preflight dependency contract
@@ -394,20 +397,22 @@ AMS 的分层 requirements baseline 已经存在，并且 issue #2 记录了 cle
 - workflow 没有偷偷变成另一套独立 gate；
 - dependency bootstrap 没有越权演化成“在 CI 里偷偷修仓库问题”。
 
-#### C. External Witness Verification
+#### C. External Witness Verification (Post-SDLC Manual Acceptance Only)
 低频执行真实 GitHub witness：
 
 - push / PR 触发真实 workflow run；
 - GitHub UI 可见 run；
 - run 结果可观察。
 
-这一层只做 witness，不做高频主验证。
+这一层只做 manual witness，不做高频主验证，也**不属于本次 SDLC 自动执行闭环**。
+它应被视为 SDLC 完成之后，供 maintainer / external QA reference 的手动验收方案。
 
 ### Mocking / Dependency Policy
 - workflow contract tests 不应依赖 live GitHub API；
-- 对 GitHub 本体的真实依赖只保留在 witness 层；
+- 对 GitHub 本体的真实依赖只保留在 manual witness 层；
 - 如需解析 workflow 文件，应优先做静态/结构级断言，而非 live execution；
 - 本 PRD 不鼓励通过大量 mocking 伪装 GitHub runner 已经“相当于跑过 CI”；主价值仍然是 contract correctness + 真实 witness 分层。
+- planner / coder / reviewer / UAT 不得把 external witness 作为自动闭环交付条件，也不得为此发明额外 slice、procedure 文档或 blocker artifact。
 
 ### Quality Goal
 本 PRD 的质量目标不是“让 AMS preflight 立刻 true green”，而是：
@@ -419,6 +424,28 @@ AMS 的分层 requirements baseline 已经存在，并且 issue #2 记录了 cle
 - 与 preflight 最小依赖 contract 直接相关的依赖文件（新增或修改）
 - 为 workflow contract / CI semantics 服务的最小测试文件（新增或修改）
 - 如必要，用于最小 runner bootstrap 的 supporting 文件（新增或修改）
+
+## 6.1 Post-SDLC Manual Verification Instruction (Not in SDLC Scope)
+以下内容**不是本次 SDLC 自动执行闭环的一部分**，仅作为 SDLC 完成后供 maintainer / external QA 参考的手动验收方案：
+
+1. 将包含 `.github/workflows/preflight.yml` 的实现分支 push 到 GitHub，或创建/更新相应 pull request。
+2. 在 GitHub Actions UI 或使用一次性 `gh` / GitHub API 查询，确认 `Preflight` workflow 产生真实 run。
+3. 观察该 run 的终态（`success` / `failure` / 其他 GitHub 可见终态）。
+4. 若需要留存外部验收记录，可在人工验收阶段单独记录：
+   - workflow name: `Preflight`
+   - workflow path: `.github/workflows/preflight.yml`
+   - trigger event: `push` or `pull_request`
+   - head SHA
+   - run URL or database id
+   - terminal conclusion
+   - capture timestamp/date
+5. 该人工验收层若发现问题，应作为后续 issue / hotfix 输入，而不是要求本次 planner / coder / reviewer / UAT 自动闭环处理。
+
+明确约束：
+- planner 不得为该人工验收层自动生成 slice；
+- coder 不得把该层当作当前 PR 的自动 DoD；
+- reviewer 不得因缺少真实 GitHub witness 而要求在无外部发布权限的 coder loop 中伪造 placeholder；
+- UAT 不得把该层作为本次 SDLC 自动阻断项。
 
 ---
 
