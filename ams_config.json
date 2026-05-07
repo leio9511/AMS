@@ -1,13 +1,13 @@
 {
-    "default_provider": "jqdata",
-    "providers": {
-        "jqdata": {
-            "dataset_path": "/root/projects/AMS/data/cb_history_factors_jqdata.csv",
-            "metrics_path": "/root/projects/AMS/data/cb_history_factors_jqdata.metrics.json"
-        },
-        "tushare": {
-            "dataset_path": "/root/projects/AMS/data/cb_history_factors_tushare.csv",
-            "metrics_path": "/root/projects/AMS/data/cb_history_factors_tushare.metrics.json"
-        }
+  "default_provider": "jqdata",
+  "providers": {
+    "jqdata": {
+      "dataset_path": "data/cb_history_factors_jqdata.csv",
+      "metrics_path": "data/cb_history_factors_jqdata.metrics.json"
+    },
+    "tushare": {
+      "dataset_path": "data/cb_history_factors_tushare.csv",
+      "metrics_path": "data/cb_history_factors_tushare.metrics.json"
     }
+  }
 }

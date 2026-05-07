@@ -8,6 +8,7 @@ from ams.core.history_datafeed import HistoryDataFeed
 from ams.core.sim_broker import SimBroker
 from ams.runners.backtest_runner import BacktestRunner
 from ams.models.config import TakeProfitConfig, TakeProfitMode
+from ams.utils.provider_config import get_provider_artifact_paths, resolve_provider_name
 
 # Ensure cb_rotation is registered
 from ams.core.cb_rotation_strategy import CBRotationStrategy
@@ -39,18 +40,8 @@ def main():
     # Data Path selection logic
     data_path = args.data_path
     if not data_path:
-        from ams.utils.provider_config import load_provider_config
-        config = load_provider_config()
-        source = args.data_source
-        if source == "auto":
-            source = config.get("default_provider", "jqdata")
-        
-        provider_config = config["providers"].get(source)
-        if provider_config:
-            data_path = provider_config["dataset_path"]
-        else:
-            # Fallback to legacy default if possible, or error
-            data_path = "/root/projects/AMS/data/cb_history_factors.csv"
+        selected_provider = resolve_provider_name(args.data_source)
+        data_path = get_provider_artifact_paths(selected_provider)["dataset_path"]
     
     if not data_path:
          raise ValueError("Could not determine data path. Please provide --data-path or check --data-source.")
