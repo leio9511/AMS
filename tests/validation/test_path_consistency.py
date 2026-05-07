@@ -57,7 +57,7 @@ def test_default_path_non_empty(isolated_paths):
 
 @pytest.mark.usefixtures("isolated_paths")
 def test_canonical_path_non_empty(isolated_paths):
-    result = run_cli(["--data-path", isolated_paths["data"]])
+    result = run_cli(["--data-path", isolated_paths["tushare_data"]])
     assert result.returncode == 0, result.stderr
 
     output = parse_json_output(result)
@@ -71,7 +71,7 @@ def test_no_path_branching(isolated_paths):
     assert default_result.returncode == 0, default_result.stderr
     default_output = parse_json_output(default_result)
 
-    override_result = run_cli(["--data-path", isolated_paths["data"]])
+    override_result = run_cli(["--data-path", isolated_paths["tushare_data"]])
     assert override_result.returncode == 0, override_result.stderr
     override_output = parse_json_output(override_result)
 
