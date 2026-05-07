@@ -2,14 +2,16 @@ import subprocess
 import sys
 import json
 import os
+from pathlib import Path
 import pytest
+
 
 def test_real_cli_execution_smoke():
     """
-    Execute the actual main_runner.py script with subprocess. 
+    Execute the actual main_runner.py script with subprocess.
     Verify it finishes without error and produces expected JSON structure.
     """
-    fixture_path = "/root/projects/AMS/tests/fixtures/cb_history_factors.csv"
+    fixture_path = Path(__file__).resolve().parent / "fixtures" / "cb_history_factors.csv"
     
     command = [
         sys.executable, "main_runner.py",
@@ -47,13 +49,12 @@ def test_real_cli_execution_smoke():
 
 def test_canonical_data_path_usage():
     """
-    Verify that when no data path is specified, it defaults to the production canonical path.
-    We don't need to RUN it (as it might fail if file doesn't exist), 
-    just check the help or use a mock if possible, but the requirement says 
-    'Verify that when no data path is specified, it defaults to the production canonical path.'
+    Verify help text describes contract-based provider/config resolution rather than a root-only default path.
     """
     result = subprocess.run([sys.executable, "main_runner.py", "--help"], capture_output=True, text=True)
-    assert "/root/projects/AMS/data/cb_history_factors_jqdata.csv" in result.stdout
+    assert "provider contract precedence" in result.stdout
+    assert "configured default provider's project-local dataset path" in result.stdout
+    assert "/root/projects/AMS/data/cb_history_factors_jqdata.csv" not in result.stdout
     assert "/root/.openclaw/workspace/data/cb_history_factors.csv" not in result.stdout
 
 def test_json_format_integrity():
@@ -61,7 +62,7 @@ def test_json_format_integrity():
     Verify the JSON output matches the schema required by existing reports 
     (Decimal values converted to strings, etc.).
     """
-    fixture_path = "/root/projects/AMS/tests/fixtures/cb_history_factors.csv"
+    fixture_path = Path(__file__).resolve().parent / "fixtures" / "cb_history_factors.csv"
     
     command = [
         sys.executable, "main_runner.py",

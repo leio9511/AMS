@@ -4,6 +4,7 @@ import json
 import sys
 import pandas as pd
 from decimal import Decimal
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 from ams.core.factory import StrategyFactory
 from ams.utils import reporting
@@ -11,6 +12,76 @@ from ams.core.cb_rotation_strategy import CBRotationStrategy
 from ams.core.history_datafeed import HistoryDataFeed
 from ams.models.config import TakeProfitConfig, TakeProfitMode
 import main_runner
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+def test_main_runner_uses_project_local_default_from_provider_config():
+    test_args = ["main_runner.py", "--strategy", "cb_rotation", "--start-date", "2025-01-01", 
+                 "--end-date", "2025-01-31", "--capital", "4000000", "--top-n", "20", 
+                 "--rebalance", "daily", "--tp-mode", "position", "--tp-pos", "0.20", 
+                 "--sl", "-0.08"]
+
+    provider_config = {
+        "default_provider": "jqdata",
+        "providers": {
+            "jqdata": {"dataset_path": "/tmp/project-local-jqdata.csv", "metrics_path": "/tmp/project-local-jqdata.metrics.json"},
+            "tushare": {"dataset_path": "/tmp/project-local-tushare.csv", "metrics_path": "/tmp/project-local-tushare.metrics.json"},
+        },
+    }
+
+    with patch("sys.argv", test_args), \
+         patch("main_runner.load_provider_config", return_value=provider_config), \
+         patch("main_runner.HistoryDataFeed") as mock_data_feed, \
+         patch("main_runner.SimBroker"), \
+         patch("main_runner.StrategyFactory.create_strategy"), \
+         patch("main_runner.BacktestRunner"), \
+         patch("main_runner.reporting.generate_report_data"):
+        main_runner.main()
+
+        mock_data_feed.assert_called_once()
+        call_args = mock_data_feed.call_args
+        assert call_args.kwargs['file_path'] == "/tmp/project-local-jqdata.csv"
+
+
+def test_main_runner_unknown_provider_fails_fast():
+    test_args = ["main_runner.py", "--strategy", "cb_rotation", "--start-date", "2025-01-01", 
+                 "--end-date", "2025-01-31", "--capital", "4000000", "--top-n", "20", 
+                 "--rebalance", "daily", "--tp-mode", "position", "--tp-pos", "0.20", 
+                 "--sl", "-0.08", "--data-source", "not-a-provider"]
+
+    provider_config = {
+        "default_provider": "jqdata",
+        "providers": {
+            "jqdata": {"dataset_path": "/tmp/project-local-jqdata.csv", "metrics_path": "/tmp/project-local-jqdata.metrics.json"},
+        },
+    }
+
+    with patch("sys.argv", test_args), \
+         patch("main_runner.load_provider_config", return_value=provider_config):
+        with pytest.raises(ValueError, match="Unknown provider: not-a-provider"):
+            main_runner.main()
+
+
+def test_invalid_explicit_data_path_fails_fast(tmp_path):
+    missing_path = tmp_path / "missing.csv"
+    test_args = ["main_runner.py", "--strategy", "cb_rotation", "--start-date", "2025-01-01", 
+                 "--end-date", "2025-01-31", "--capital", "4000000", "--top-n", "20", 
+                 "--rebalance", "daily", "--tp-mode", "position", "--tp-pos", "0.20", 
+                 "--sl", "-0.08", "--data-path", str(missing_path)]
+
+    with patch("sys.argv", test_args):
+        with pytest.raises(ValueError, match=f"Explicit data path does not exist: {missing_path}"):
+            main_runner.main()
+
+
+def test_cli_help_does_not_advertise_root_only_default_paths():
+    result = subprocess.run([sys.executable, "main_runner.py", "--help"], capture_output=True, text=True)
+    assert result.returncode == 0
+    assert "provider contract precedence" in result.stdout
+    assert "configured default provider's project-local dataset path" in result.stdout
+    assert "/root/projects/AMS/data/cb_history_factors_jqdata.csv" not in result.stdout
+    assert "/root/.openclaw/workspace/data/cb_history_factors.csv" not in result.stdout
+
 
 def test_cli_help_output():
     result = subprocess.run([sys.executable, "main_runner.py", "--help"], capture_output=True, text=True)
@@ -27,22 +98,13 @@ def test_cli_help_output():
     assert "--sl" in result.stdout
     assert "--format" in result.stdout
 
-def test_main_runner_default_data_path():
-    result = subprocess.run([sys.executable, "main_runner.py", "--help"], capture_output=True, text=True)
-    expected_default = "cb_history_factors_jqdata.csv"
-    legacy_default = "/root/.openclaw/workspace/data/cb_history_factors.csv"
-    assert expected_default in result.stdout
-    assert legacy_default not in result.stdout
-
 def test_phase2_blocker_statement_in_docs():
     statement = "ISSUE-1142 is a blocking issue for AMS Phase 2. AMS must not enter Live QMT Integration until /root/projects/AMS/data/cb_history_factors.csv is the unique canonical CB research/backtest dataset and the semantic quality gates defined in this PRD are enforced."
     
-    with open("/root/projects/AMS/docs/ROADMAP.md", "r", encoding="utf-8") as f:
-        roadmap_content = f.read()
+    roadmap_content = (REPO_ROOT / "docs" / "ROADMAP.md").read_text(encoding="utf-8")
     assert statement in roadmap_content
 
-    with open("/root/projects/AMS/docs/architecture/ARCHITECTURE.md", "r", encoding="utf-8") as f:
-        architecture_content = f.read()
+    architecture_content = (REPO_ROOT / "docs" / "architecture" / "ARCHITECTURE.md").read_text(encoding="utf-8")
     assert statement in architecture_content
 
 def test_main_runner_argument_default():
@@ -50,8 +112,17 @@ def test_main_runner_argument_default():
                  "--end-date", "2025-01-31", "--capital", "4000000", "--top-n", "20", 
                  "--rebalance", "daily", "--tp-mode", "position", "--tp-pos", "0.20", 
                  "--sl", "-0.08"]
+
+    provider_config = {
+        "default_provider": "jqdata",
+        "providers": {
+            "jqdata": {"dataset_path": "/tmp/project-local-jqdata.csv", "metrics_path": "/tmp/project-local-jqdata.metrics.json"},
+            "tushare": {"dataset_path": "/tmp/project-local-tushare.csv", "metrics_path": "/tmp/project-local-tushare.metrics.json"},
+        },
+    }
     
     with patch("sys.argv", test_args), \
+         patch("main_runner.load_provider_config", return_value=provider_config), \
          patch("main_runner.HistoryDataFeed") as mock_data_feed, \
          patch("main_runner.SimBroker"), \
          patch("main_runner.StrategyFactory.create_strategy"), \
@@ -61,7 +132,7 @@ def test_main_runner_argument_default():
         
         mock_data_feed.assert_called_once()
         call_args = mock_data_feed.call_args
-        assert call_args.kwargs['file_path'] == "/root/projects/AMS/data/cb_history_factors_jqdata.csv"
+        assert call_args.kwargs['file_path'] == "/tmp/project-local-jqdata.csv"
 def test_cli_tp_mode_validation():
     test_args = ["main_runner.py", "--strategy", "cb_rotation", "--start-date", "2025-01-01", 
                  "--end-date", "2025-01-31", "--capital", "4000000", "--top-n", "20", 
@@ -166,8 +237,7 @@ def test_tp_config_injection():
         assert tp_config.intra_threshold == Decimal('0.08')
 
 def test_skill_md_content():
-    with open("/root/projects/AMS/SKILL.md", "r") as f:
-        content = f.read()
+    content = (REPO_ROOT / "SKILL.md").read_text(encoding="utf-8")
     
     expected_block = "5. **Strategy Backtester**:\n   `python3 main_runner.py --strategy <ID> --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD> --capital <FLOAT> --top-n <INT> --rebalance <daily|weekly> --tp-mode <both|position|intraday> --tp-pos <FLOAT> --tp-intra <FLOAT> --sl <FLOAT> [--data-source auto|jqdata|tushare] [--format json]`\n   Use this for rigorous strategy validation. Use `--format json` for bit-accurate results."
     

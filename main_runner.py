@@ -2,18 +2,41 @@ import argparse
 import sys
 import logging
 from decimal import Decimal
+from pathlib import Path
 from ams.core.factory import StrategyFactory
 from ams.utils import reporting
 from ams.core.history_datafeed import HistoryDataFeed
 from ams.core.sim_broker import SimBroker
 from ams.runners.backtest_runner import BacktestRunner
 from ams.models.config import TakeProfitConfig, TakeProfitMode
+from ams.utils.provider_config import (
+    get_provider_artifact_paths,
+    load_provider_config,
+    resolve_provider_name,
+)
 
 # Ensure cb_rotation is registered
 from ams.core.cb_rotation_strategy import CBRotationStrategy
 StrategyFactory.register_strategy('cb_rotation')(CBRotationStrategy)
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_backtest_data_path(*, explicit_data_path: str | None, requested_source: str) -> str:
+    if explicit_data_path:
+        candidate = Path(explicit_data_path).expanduser()
+        if not candidate.exists():
+            raise ValueError(f"Explicit data path does not exist: {candidate}")
+        return str(candidate)
+
+    config = load_provider_config()
+    provider_name = resolve_provider_name(requested_source, config=config)
+    provider_paths = get_provider_artifact_paths(provider_name, config=config)
+    data_path = provider_paths.get("dataset_path")
+    if not data_path:
+        raise ValueError(f"Provider '{provider_name}' does not define a dataset_path")
+    return data_path
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -30,30 +53,16 @@ def main():
     parser.add_argument('--tp-pos', type=float, help="Threshold for cost-basis take-profit (e.g., 0.20).")
     parser.add_argument('--tp-intra', type=float, help="Threshold for intraday momentum take-profit (e.g., 0.08).")
     parser.add_argument('--sl', required=True, type=float, help="Threshold for intraday stop-loss (e.g., -0.08).")
-    parser.add_argument('--data-source', default="auto", choices=["auto", "jqdata", "tushare"], help="Data source provider for automatic path selection. CLI explicit parameter overrides AMS local provider default configuration.")
-    parser.add_argument('--data-path', help="Explicit CSV path (default: /root/projects/AMS/data/cb_history_factors_jqdata.csv).")
+    parser.add_argument('--data-source', default="auto", help="Provider name for contract-based dataset resolution. Use 'auto' to consume the AMS configured default provider.")
+    parser.add_argument('--data-path', help="Explicit CSV path. When omitted, AMS resolves backtest data via provider contract precedence: explicit provider selection or the configured default provider's project-local dataset path.")
     parser.add_argument('--format', choices=['text', 'json'], default='text', help="Output format ('text' or 'json'). Default: 'text'.")
 
     args = parser.parse_args()
 
-    # Data Path selection logic
-    data_path = args.data_path
-    if not data_path:
-        from ams.utils.provider_config import load_provider_config
-        config = load_provider_config()
-        source = args.data_source
-        if source == "auto":
-            source = config.get("default_provider", "jqdata")
-        
-        provider_config = config["providers"].get(source)
-        if provider_config:
-            data_path = provider_config["dataset_path"]
-        else:
-            # Fallback to legacy default if possible, or error
-            data_path = "/root/projects/AMS/data/cb_history_factors.csv"
-    
-    if not data_path:
-         raise ValueError("Could not determine data path. Please provide --data-path or check --data-source.")
+    data_path = resolve_backtest_data_path(
+        explicit_data_path=args.data_path,
+        requested_source=args.data_source,
+    )
 
     # Parameter Validation
     if args.tp_mode == 'both':

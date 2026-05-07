@@ -1,9 +1,11 @@
 import os
 import pandas as pd
 from ams.core.base import BaseDataFeed
+from ams.utils.provider_config import get_provider_artifact_paths
+
 
 class HistoryDataFeed(BaseDataFeed):
-    def __init__(self, file_path="data/cb_history_factors.csv", data=None):
+    def __init__(self, file_path=None, data=None):
         if data is not None and isinstance(data, pd.DataFrame):
             self.data = data.copy()
             self.file_path = None
@@ -11,7 +13,8 @@ class HistoryDataFeed(BaseDataFeed):
             self.data = file_path.copy()
             self.file_path = None
         else:
-            self.file_path = file_path
+            resolved_file_path = file_path or get_provider_artifact_paths()["dataset_path"]
+            self.file_path = resolved_file_path
             if not os.path.exists(self.file_path):
                 self.data = pd.DataFrame(columns=["date", "ticker"])
             else:

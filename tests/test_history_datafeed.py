@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import pytest
+from unittest.mock import patch
 from ams.core.history_datafeed import HistoryDataFeed
 
 @pytest.fixture
@@ -13,6 +14,17 @@ def mock_csv(tmp_path):
     file_path = tmp_path / "mock_cb_data.csv"
     df.to_csv(file_path, index=False)
     return str(file_path)
+
+def test_history_datafeed_default_path_uses_project_local_contract():
+    expected_path = "/tmp/project-local-default.csv"
+    
+    with patch("ams.core.history_datafeed.get_provider_artifact_paths", return_value={"dataset_path": expected_path}):
+        feed = HistoryDataFeed()
+    
+    assert feed.file_path == expected_path
+    assert feed.data.empty
+    assert list(feed.data.columns) == ["date", "ticker"]
+
 
 def test_history_datafeed_initialization(mock_csv):
     # Successfully loads a mock CSV file into memory without error
