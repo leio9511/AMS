@@ -7,8 +7,6 @@ from unittest.mock import patch
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
 
 @pytest.fixture(autouse=True)
 def mock_dataset_semantic_validator():
@@ -30,7 +28,7 @@ def mock_dataset_paths():
 @pytest.fixture
 def isolated_paths(tmp_path):
     source_fixture = Path(__file__).resolve().parent / "fixtures" / "cb_history_factors.csv"
-    project_stage_root = REPO_ROOT / ".tmp_path_contract" / tmp_path.name
+    project_stage_root = tmp_path / "path-contract"
     data_dir = project_stage_root / "data"
     reports_dir = project_stage_root / "reports"
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -47,17 +45,16 @@ def isolated_paths(tmp_path):
     provider_metrics_path.write_text("{}\n", encoding="utf-8")
     tushare_metrics_path.write_text("{}\n", encoding="utf-8")
 
-    relative_data_dir = data_dir.relative_to(REPO_ROOT)
     config_payload = {
         "default_provider": "jqdata",
         "providers": {
             "jqdata": {
-                "dataset_path": str(relative_data_dir / "cb_history_factors_jqdata.csv"),
-                "metrics_path": str(relative_data_dir / "cb_history_factors_jqdata.metrics.json"),
+                "dataset_path": str(provider_data_path),
+                "metrics_path": str(provider_metrics_path),
             },
             "tushare": {
-                "dataset_path": str(relative_data_dir / "cb_history_factors_tushare.csv"),
-                "metrics_path": str(relative_data_dir / "cb_history_factors_tushare.metrics.json"),
+                "dataset_path": str(tushare_data_path),
+                "metrics_path": str(tushare_metrics_path),
             },
         },
     }
@@ -69,18 +66,15 @@ def isolated_paths(tmp_path):
     }
 
     with patch.dict(os.environ, isolated_env, clear=False):
-        try:
-            yield {
-                "data": str(provider_data_path),
-                "default_data": str(provider_data_path),
-                "metrics": str(provider_metrics_path),
-                "default_metrics": str(provider_metrics_path),
-                "reports": str(reports_dir),
-                "config": str(config_path),
-                "env": isolated_env.copy(),
-                "source_fixture": str(source_fixture),
-                "tushare_data": str(tushare_data_path),
-                "tushare_metrics": str(tushare_metrics_path),
-            }
-        finally:
-            shutil.rmtree(project_stage_root, ignore_errors=True)
+        yield {
+            "data": str(provider_data_path),
+            "default_data": str(provider_data_path),
+            "metrics": str(provider_metrics_path),
+            "default_metrics": str(provider_metrics_path),
+            "reports": str(reports_dir),
+            "config": str(config_path),
+            "env": isolated_env.copy(),
+            "source_fixture": str(source_fixture),
+            "tushare_data": str(tushare_data_path),
+            "tushare_metrics": str(tushare_metrics_path),
+        }

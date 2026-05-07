@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pandas as pd
@@ -215,3 +216,19 @@ def test_audit_runner_writes_nov_2025_live_witness_to_deterministic_report_path(
         "premium_source_row_count": 1,
         "premium_joined_row_count": 1,
     }
+
+
+def test_audit_runner_defaults_reports_to_project_local_dir_without_env_override(mock_env, mock_jqdata, mock_validators, tmp_path):
+    start_date = "2025-04-01"
+    end_date = "2025-04-02"
+    project_root = tmp_path / "ams-project"
+    reports_dir = project_root / "reports"
+    project_root.mkdir(parents=True, exist_ok=True)
+
+    with patch("etl.cb_etl_runner.resolve_project_path", return_value=str(reports_dir)):
+        report_path = audit_cb_data(start_date, end_date)
+
+    expected_report_path = reports_dir / f"cb_etl_audit_{start_date}_{end_date}.json"
+    assert Path(report_path) == expected_report_path
+    assert expected_report_path.exists()
+    assert "/root/projects/AMS/reports" not in report_path

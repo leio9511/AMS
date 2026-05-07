@@ -6,6 +6,7 @@ import datetime
 import pandas as pd
 import jqdatasdk
 import logging
+from pathlib import Path
 
 from etl.cb_provider_base import DataProviderError
 from etl.jqdata_provider import JQDataProvider
@@ -24,7 +25,7 @@ from etl.cb_etl_pipeline import (
     _build_delist_mapping,
     _build_empty_canonical_cb_frame,
 )
-from ams.utils.provider_config import load_provider_config
+from ams.utils.provider_config import load_provider_config, resolve_project_path
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,10 @@ def get_provider(source_name, jqdata_client=None):
         raise ValueError(f"Unknown data source: {source_name}")
 
 def _resolve_report_dir() -> str:
-    return os.environ.get("AMS_REPORTS_DIR", "/root/projects/AMS/reports")
+    configured_report_dir = os.environ.get("AMS_REPORTS_DIR")
+    if configured_report_dir:
+        return configured_report_dir
+    return resolve_project_path("reports")
 
 
 def _write_metrics(metrics_path: str, metrics: dict) -> None:
