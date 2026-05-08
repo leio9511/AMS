@@ -104,7 +104,7 @@ AMS defines three classes of paths to avoid host-layout assumptions:
 - **Mutable research/backtest data**: Explicitly resolved via CLI > ENV > AMS-owned config > project-local default (deployment-sensitive but configuration-controlled).
 - **Runtime outputs/state**: Writable in non-root environments and do not require the OpenClaw workspace (deployment-relative allowed).
 
-Production backtests and formal validation should respect these path contracts rather than relying on absolute host paths. 
+Production backtests and formal validation should respect these path contracts rather than relying on absolute host paths.
 
 *Note: The concrete migration of legacy ETL outputs and runtime output paths to this new contract system is explicitly deferred to Phase 1B/1C.*
 
