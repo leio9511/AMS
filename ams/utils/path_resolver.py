@@ -1,5 +1,14 @@
 import os
 from pathlib import Path
+from dataclasses import dataclass
+
+@dataclass
+class ResolutionResult:
+    path: Path
+    source: str
+    
+    def __fspath__(self):
+        return str(self.path)
 
 class HostLayoutCouplingError(ValueError):
     """Raised when a path incorrectly couples with host-specific environments."""
@@ -49,7 +58,7 @@ def _resolve_path_with_precedence(
     cli_override: str | Path | None = None,
     env_var: str | None = None,
     config_override: str | Path | None = None,
-) -> Path:
+) -> ResolutionResult:
     candidates = []
     if cli_override is not None:
         candidates.append(("CLI", cli_override))
@@ -69,8 +78,8 @@ def _resolve_path_with_precedence(
         validate_no_host_coupling(val_str)
         path_obj = Path(val_str)
         if path_obj.is_absolute():
-            return path_obj
-        return (get_repo_root() / path_obj).resolve()
+            return ResolutionResult(path=path_obj, source=source)
+        return ResolutionResult(path=(get_repo_root() / path_obj).resolve(), source=source)
         
     # Default fallback
     val_str = str(default_relative_path).strip()
@@ -78,14 +87,14 @@ def _resolve_path_with_precedence(
         raise ValueError("Invalid default path: empty string")
     validate_no_host_coupling(val_str)
     
-    return (get_repo_root() / Path(val_str)).resolve()
+    return ResolutionResult(path=(get_repo_root() / Path(val_str)).resolve(), source="DEFAULT")
 
 def resolve_mutable_data_path(
     default_relative_path: str | Path,
     cli_override: str | Path | None = None,
     env_var: str | None = None,
     config_override: str | Path | None = None,
-) -> Path:
+) -> ResolutionResult:
     """
     Resolves mutable research/backtest data path following precedence:
     CLI > ENV > AMS-owned config > project-local default
@@ -99,7 +108,7 @@ def resolve_runtime_output_path(
     cli_override: str | Path | None = None,
     env_var: str | None = None,
     config_override: str | Path | None = None,
-) -> Path:
+) -> ResolutionResult:
     """
     Resolves runtime outputs/state path following precedence:
     CLI > ENV > AMS-owned config > project-local default

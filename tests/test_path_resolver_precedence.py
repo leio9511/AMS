@@ -16,7 +16,8 @@ def test_precedence_cli_overrides_all(monkeypatch):
         env_var="AMS_DATA_DIR",
         config_override="/config/path"
     )
-    assert str(res) == os.path.abspath("/cli/path")
+    assert str(res.path) == os.path.abspath("/cli/path")
+    assert res.source == "CLI"
 
 def test_precedence_env_overrides_config(monkeypatch):
     monkeypatch.setenv("AMS_DATA_DIR", "/env/path")
@@ -26,7 +27,8 @@ def test_precedence_env_overrides_config(monkeypatch):
         env_var="AMS_DATA_DIR",
         config_override="/config/path"
     )
-    assert str(res) == os.path.abspath("/env/path")
+    assert str(res.path) == os.path.abspath("/env/path")
+    assert res.source == "ENV"
 
 def test_precedence_project_local_default(monkeypatch):
     monkeypatch.delenv("AMS_DATA_DIR", raising=False)
@@ -36,7 +38,8 @@ def test_precedence_project_local_default(monkeypatch):
         env_var="AMS_DATA_DIR",
         config_override=None
     )
-    assert res == (get_repo_root() / "default/data").resolve()
+    assert res.path == (get_repo_root() / "default/data").resolve()
+    assert res.source == "DEFAULT"
 
 def test_fail_fast_on_invalid_cli_path(monkeypatch):
     monkeypatch.setenv("AMS_DATA_DIR", "/env/path")
@@ -54,7 +57,8 @@ def test_explicit_absolute_override_accepted(monkeypatch):
         default_relative_path="default/data",
         env_var="AMS_DATA_DIR"
     )
-    assert str(res) == os.path.abspath("/absolute/env/path")
+    assert str(res.path) == os.path.abspath("/absolute/env/path")
+    assert res.source == "ENV"
 
 def test_runtime_output_writable_in_non_root(monkeypatch):
     # Verify that the resolved runtime output paths do not depend on `.openclaw/workspace` or `/root`
@@ -72,4 +76,5 @@ def test_runtime_output_writable_in_non_root(monkeypatch):
 
     # Valid relative default
     res = resolve_runtime_output_path("valid/out")
-    assert res == (get_repo_root() / "valid/out").resolve()
+    assert res.path == (get_repo_root() / "valid/out").resolve()
+    assert res.source == "DEFAULT"

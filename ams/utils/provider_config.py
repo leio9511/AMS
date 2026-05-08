@@ -2,30 +2,24 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Mapping
+from ams.utils.path_resolver import get_repo_root as _get_repo_root, resolve_mutable_data_path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG_PATH = REPO_ROOT / "ams_config.json"
+DEFAULT_CONFIG_PATH = _get_repo_root() / "ams_config.json"
 DEFAULT_PROVIDER = "jqdata"
 _PROVIDER_PATH_KEYS = ("dataset_path", "metrics_path")
 
 
 def get_repo_root() -> Path:
-    return REPO_ROOT
+    return _get_repo_root()
 
 
 def resolve_project_path(*parts: str) -> str:
-    return str(REPO_ROOT.joinpath(*parts))
+    return str(_get_repo_root().joinpath(*parts))
 
 
 def normalize_project_local_path(path_value: str) -> str:
-    normalized_value = str(path_value).strip()
-    if not normalized_value:
-        raise ValueError("Provider path values must not be empty")
-
-    candidate = Path(normalized_value)
-    if candidate.is_absolute():
-        return str(candidate)
-    return resolve_project_path(*candidate.parts)
+    res = resolve_mutable_data_path(default_relative_path=path_value)
+    return str(res.path)
 
 
 def _default_provider_config() -> dict[str, Any]:
