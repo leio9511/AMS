@@ -34,15 +34,12 @@ def resolve_repo_asset(relative_path: str | Path) -> Path:
     """
     path_obj = Path(relative_path)
     
-    if path_obj.is_absolute():
-        repo_root = get_repo_root()
-        try:
-            path_obj.relative_to(repo_root)
-        except ValueError:
-            raise ValueError(f"Absolute path {path_obj} is outside the repository root {repo_root}")
-        resolved = path_obj.resolve()
-    else:
-        resolved = (get_repo_root() / path_obj).resolve()
+    validate_no_host_coupling(path_obj)
+    
+    repo_root = get_repo_root()
+    resolved = (repo_root / path_obj).resolve()
         
-    validate_no_host_coupling(resolved)
+    if not resolved.is_relative_to(repo_root):
+        raise ValueError(f"Path {path_obj} resolves outside the repository root {repo_root}")
+        
     return resolved
