@@ -8,8 +8,9 @@ from ams.core.cb_rotation_strategy import CBRotationStrategy
 from ams.runners.backtest_runner import BacktestRunner
 from ams.models.config import TakeProfitConfig, TakeProfitMode
 from ams.core.order import OrderStatus, OrderType
+from ams.utils.path_resolver import resolve_repo_asset
 
-FIXTURE_PATH = os.path.join(os.path.dirname(__file__), "fixtures", "fixture_priority_conflicts.csv")
+FIXTURE_PATH = resolve_repo_asset("tests/fixtures/fixture_priority_conflicts.csv")
 
 def setup_runner(rebalance='daily', tp_pos=0.05, sl=-0.05):
     tp_config = TakeProfitConfig(mode=TakeProfitMode.POSITION, pos_threshold=Decimal(str(tp_pos)), intra_threshold=Decimal(str(tp_pos)))

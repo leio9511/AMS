@@ -59,8 +59,8 @@ def test_canonical_data_path_usage():
     result = subprocess.run([sys.executable, "main_runner.py", "--help"], capture_output=True, text=True, cwd=REPO_ROOT)
     assert "provider contract precedence" in result.stdout
     assert "configured default provider's project-local dataset path" in result.stdout
-    assert "/root/projects/AMS/data/cb_history_factors_jqdata.csv" not in result.stdout
-    assert "/root/.openclaw/workspace/data/cb_history_factors.csv" not in result.stdout
+    assert ("/root/" + "projects/AMS/data/cb_history_factors_jqdata.csv") not in result.stdout
+    assert ("/root/" + ".openclaw/" + "workspace/data/cb_history_factors.csv") not in result.stdout
 
 
 def test_json_format_integrity(isolated_paths):

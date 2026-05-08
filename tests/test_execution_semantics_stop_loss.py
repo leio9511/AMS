@@ -6,6 +6,10 @@ from ams.core.sim_broker import SimBroker
 from ams.core.cb_rotation_strategy import CBRotationStrategy
 from ams.runners.backtest_runner import BacktestRunner
 from ams.core.order import OrderStatus, OrderDirection, OrderType
+from ams.utils.path_resolver import resolve_repo_asset
+
+STOP_LOSS_IMMEDIATE_FIXTURE_PATH = resolve_repo_asset("tests/fixtures/fixture_stop_loss_immediate_effect.csv")
+STOP_LOSS_THRESHOLDS_FIXTURE_PATH = resolve_repo_asset("tests/fixtures/fixture_stop_loss_thresholds.csv")
 
 class DummyDataFeed:
     def __init__(self, df):
@@ -20,7 +24,7 @@ def test_stop_loss_fills_on_next_bar_open():
     Test Case 1: test_stop_loss_fills_on_next_bar_open
     Expected: A stop-loss triggered on Day N is filled on Day N+1 at Day N+1's open price.
     """
-    df = pd.read_csv('/root/projects/AMS/tests/fixtures/fixture_stop_loss_immediate_effect.csv')
+    df = pd.read_csv(STOP_LOSS_IMMEDIATE_FIXTURE_PATH)
     data_feed = DummyDataFeed(df)
     broker = SimBroker(initial_cash=100000.0, slippage=0.0)
     strategy = CBRotationStrategy(
@@ -59,7 +63,7 @@ def test_weekly_rebalance_should_not_mask_stop_loss():
     Test Case 2: test_weekly_rebalance_should_not_mask_stop_loss
     Expected: In weekly mode, a mid-week stop-loss trigger immediately exits the position on the next bar without waiting for the rebalance day. The weekend rebalance must proceed with the updated holdings.
     """
-    df = pd.read_csv('/root/projects/AMS/tests/fixtures/fixture_stop_loss_immediate_effect.csv')
+    df = pd.read_csv(STOP_LOSS_IMMEDIATE_FIXTURE_PATH)
     data_feed = DummyDataFeed(df)
     broker = SimBroker(initial_cash=100000.0, slippage=0.0)
     strategy = CBRotationStrategy(
@@ -92,7 +96,7 @@ def test_daily_stop_loss_threshold_changes_affect_outcome():
     Test Case 3: test_daily_stop_loss_threshold_changes_affect_outcome
     Expected: A tight stop-loss like -1% and a wide stop-loss like -5% must yield different trade paths and results on the same deterministic fixture.
     """
-    df = pd.read_csv('/root/projects/AMS/tests/fixtures/fixture_stop_loss_thresholds.csv')
+    df = pd.read_csv(STOP_LOSS_THRESHOLDS_FIXTURE_PATH)
     
     # Run tight SL (-0.01)
     tight_feed = DummyDataFeed(df)

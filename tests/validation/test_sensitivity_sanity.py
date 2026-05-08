@@ -3,22 +3,22 @@ import sys
 import json
 import pytest
 import os
-from pathlib import Path
 
 import site
 
-# Dynamic absolute paths as per Phase 1A Vocabulary
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-GOLDEN_CASES_FILE = PROJECT_ROOT / "tests/golden/baselines/golden_cases.json"
-GOLDEN_DATA_PATH = PROJECT_ROOT / "tests/golden/data/cb_history_factors_golden_2025_2026.csv"
+from ams.utils.path_resolver import get_repo_root, resolve_repo_asset
+
+# Resolve golden fixtures as repo-owned stable assets independent of cwd.
+PROJECT_ROOT = get_repo_root()
+GOLDEN_CASES_FILE = resolve_repo_asset("tests/golden/baselines/golden_cases.json")
+GOLDEN_DATA_PATH = resolve_repo_asset("tests/golden/data/cb_history_factors_golden_2025_2026.csv")
 
 def load_base_config():
     if not GOLDEN_CASES_FILE.exists():
         pytest.skip(f"Golden cases file not found: {GOLDEN_CASES_FILE}")
-    with open(GOLDEN_CASES_FILE, 'r') as f:
-        data = json.load(f)
-        # Use CASE_WEEKLY_BEST as the standard sensitivity baseline
-        return data.get("CASE_WEEKLY_BEST")
+    data = json.loads(GOLDEN_CASES_FILE.read_text(encoding="utf-8"))
+    # Use CASE_WEEKLY_BEST as the standard sensitivity baseline
+    return data.get("CASE_WEEKLY_BEST")
 
 def run_backtest(params):
     command = [

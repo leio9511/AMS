@@ -6,6 +6,9 @@ from ams.core.sim_broker import SimBroker
 from ams.core.cb_rotation_strategy import CBRotationStrategy
 from ams.runners.backtest_runner import BacktestRunner
 from ams.core.order import OrderStatus, OrderDirection, OrderType
+from ams.utils.path_resolver import resolve_repo_asset
+
+STOP_LOSS_IMMEDIATE_FIXTURE_PATH = resolve_repo_asset("tests/fixtures/fixture_stop_loss_immediate_effect.csv")
 
 class DummyDataFeed:
     def __init__(self, df):
@@ -16,7 +19,7 @@ class DummyDataFeed:
         return self.df[self.df['date'] == pd.to_datetime(date)]
 
 def test_stop_loss_overrides_take_profit():
-    df = pd.read_csv('/root/projects/AMS/tests/fixtures/fixture_stop_loss_immediate_effect.csv')
+    df = pd.read_csv(STOP_LOSS_IMMEDIATE_FIXTURE_PATH)
     data_feed = DummyDataFeed(df)
     broker = SimBroker(initial_cash=100000.0, slippage=0.0)
     strategy = CBRotationStrategy(

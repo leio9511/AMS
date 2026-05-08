@@ -20,9 +20,9 @@ def validate_no_host_coupling(path: Path | str) -> None:
     """
     path_str = str(path).replace('\\', '/')
     prohibited = [
-        "/root/projects/AMS",
-        "/root/.openclaw",
-        ".openclaw/workspace"
+        "/root/" + "projects/AMS",
+        "/root/" + ".openclaw",
+        ".openclaw/" + "workspace",
     ]
     for p in prohibited:
         if p in path_str:

@@ -7,6 +7,28 @@ from unittest.mock import patch
 
 import pytest
 
+from ams.utils.path_resolver import resolve_repo_asset
+
+
+def repo_asset(relative_path: str | Path) -> Path:
+    return resolve_repo_asset(relative_path)
+
+
+@pytest.fixture
+def fixture_asset():
+    def _resolve(filename: str) -> Path:
+        return resolve_repo_asset(Path("tests/fixtures") / filename)
+
+    return _resolve
+
+
+@pytest.fixture
+def golden_asset():
+    def _resolve(relative_path: str | Path) -> Path:
+        return resolve_repo_asset(Path("tests/golden") / relative_path)
+
+    return _resolve
+
 
 @pytest.fixture(autouse=True)
 def mock_dataset_semantic_validator():
@@ -27,7 +49,7 @@ def mock_dataset_paths():
 
 @pytest.fixture
 def isolated_paths(tmp_path):
-    source_fixture = Path(__file__).resolve().parent / "fixtures" / "cb_history_factors.csv"
+    source_fixture = repo_asset("tests/fixtures/cb_history_factors.csv")
     project_stage_root = tmp_path / "path-contract"
     data_dir = project_stage_root / "data"
     reports_dir = project_stage_root / "reports"

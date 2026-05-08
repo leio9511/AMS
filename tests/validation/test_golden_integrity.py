@@ -1,76 +1,73 @@
-import os
 import json
 import hashlib
-import pytest
-from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from ams.utils.path_resolver import resolve_repo_asset
 
-def test_golden_snapshot_integrity():
-    """Verify SHA256, size, and row count of the created snapshot match the metadata."""
-    metadata_path = REPO_ROOT / "tests/golden/data/metadata.json"
-    snapshot_path = REPO_ROOT / "tests/golden/data/cb_history_factors_golden_2025_2026.csv"
-    
+
+FORBIDDEN_HOST_LAYOUT_TEXT = [
+    "/root/" + "projects/AMS",
+    "/root/" + ".openclaw",
+    ".openclaw/" + "workspace",
+]
+
+
+def test_golden_snapshot_integrity_uses_repo_asset_contract():
+    """Verify SHA256, size, and row count using repo-owned asset resolution."""
+    metadata_path = resolve_repo_asset("tests/golden/data/metadata.json")
+    snapshot_path = resolve_repo_asset("tests/golden/data/cb_history_factors_golden_2025_2026.csv")
+
     assert metadata_path.exists(), "Metadata file missing"
     assert snapshot_path.exists(), "Snapshot file missing"
-    
-    with open(metadata_path, 'r') as f:
-        metadata = json.load(f)
-    
-    # Verify file size
-    actual_size = os.path.getsize(snapshot_path)
-    assert actual_size == metadata['file_size_bytes'], f"Size mismatch: expected {metadata['file_size_bytes']}, got {actual_size}"
-    
-    # Verify SHA256
+
+    metadata_text = metadata_path.read_text(encoding="utf-8")
+    for pattern in FORBIDDEN_HOST_LAYOUT_TEXT:
+        assert pattern not in metadata_text
+
+    metadata = json.loads(metadata_text)
+
+    actual_size = snapshot_path.stat().st_size
+    assert actual_size == metadata["file_size_bytes"], f"Size mismatch: expected {metadata['file_size_bytes']}, got {actual_size}"
+
     sha256_hash = hashlib.sha256()
-    with open(snapshot_path, "rb") as f:
+    with snapshot_path.open("rb") as f:
         for byte_block in iter(lambda: f.read(4096), b""):
             sha256_hash.update(byte_block)
     actual_sha256 = sha256_hash.hexdigest()
-    assert actual_sha256 == metadata['sha256'], f"SHA256 mismatch: expected {metadata['sha256']}, got {actual_sha256}"
-    
-    # Verify row count
-    with open(snapshot_path, 'r') as f:
+    assert actual_sha256 == metadata["sha256"], f"SHA256 mismatch: expected {metadata['sha256']}, got {actual_sha256}"
+
+    with snapshot_path.open("r", encoding="utf-8") as f:
         actual_row_count = sum(1 for _ in f)
-    assert actual_row_count == metadata['row_count'], f"Row count mismatch: expected {metadata['row_count']}, got {actual_row_count}"
+    assert actual_row_count == metadata["row_count"], f"Row count mismatch: expected {metadata['row_count']}, got {actual_row_count}"
+
 
 def test_baseline_artifacts_loadable():
     """Verify golden_cases.json is valid JSON and contains all required keys."""
-    baseline_path = REPO_ROOT / "tests/golden/baselines/golden_cases.json"
+    baseline_path = resolve_repo_asset("tests/golden/baselines/golden_cases.json")
     assert baseline_path.exists(), "Baseline file missing"
-    
-    with open(baseline_path, 'r') as f:
-        baselines = json.load(f)
-    
+
+    baselines = json.loads(baseline_path.read_text(encoding="utf-8"))
+
     required_cases = ["CASE_WEEKLY_BEST", "CASE_WEEKLY_CONSERVATIVE", "CASE_DAILY_COMPARATOR"]
     for case_name in required_cases:
         assert case_name in baselines, f"Case {case_name} missing from baselines"
         case_data = baselines[case_name]
-        
-        # Verify essential keys in each case
+
         assert "strategy" in case_data
         assert "summary" in case_data
         assert "checkpoints" in case_data
-        
-        # Verify summary keys
+
         summary = case_data["summary"]
         required_summary_keys = ["total_return", "max_drawdown", "calmar_ratio", "final_equity"]
         for key in required_summary_keys:
             assert key in summary, f"Summary key {key} missing in {case_name}"
 
+
 def test_directory_discipline():
-    """Verify no files are created in unauthorized root paths."""
-    # This is a bit tricky to test from within the test suite, 
-    # but we can check if any files were created in the project root that shouldn't be there.
-    # For now, we'll just check that the files we expected to create are in the right places.
+    """Verify golden artifacts remain in authorized repo-owned golden directories."""
     allowed_dirs = [
-        REPO_ROOT / "tests/golden/data/",
-        REPO_ROOT / "tests/golden/baselines/"
+        resolve_repo_asset("tests/golden/data"),
+        resolve_repo_asset("tests/golden/baselines"),
     ]
-    
-    for d in allowed_dirs:
-        assert d.is_dir(), f"Directory {d} should exist"
-    
-    # We could also check that no random files were created in REPO_ROOT 
-    # during this process, but that's hard to verify without a baseline of the root dir.
-    pass
+
+    for directory in allowed_dirs:
+        assert directory.is_dir(), f"Directory {directory} should exist"

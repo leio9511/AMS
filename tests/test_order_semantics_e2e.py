@@ -7,12 +7,19 @@ from ams.runners.backtest_runner import BacktestRunner
 from ams.core.cb_rotation_strategy import CBRotationStrategy
 from ams.models.config import TakeProfitConfig, TakeProfitMode
 from ams.core.order import Order, OrderDirection, OrderType, OrderStatus
+from ams.utils.path_resolver import resolve_repo_asset
 import main_runner
 from unittest.mock import patch
 
+TP_TRIGGER_FIXTURE_PATH = resolve_repo_asset("tests/fixtures/fixture_tp_trigger.csv")
+TP_NO_TRIGGER_FIXTURE_PATH = resolve_repo_asset("tests/fixtures/fixture_tp_no_trigger.csv")
+WEEKLY_TP_REBALANCE_FIXTURE_PATH = resolve_repo_asset("tests/fixtures/fixture_weekly_tp_rebalance.csv")
+TP_SENSITIVITY_FIXTURE_PATH = resolve_repo_asset("tests/fixtures/fixture_tp_sensitivity.csv")
+
+
 def test_tp_limit_order_triggers_on_next_bar_high():
     # Scenario: TP LIMIT SELL submitted on Day 1 is FILLED on Day 2 if Day 2 High >= Limit Price
-    data_path = "/root/projects/AMS/tests/fixtures/fixture_tp_trigger.csv"
+    data_path = TP_TRIGGER_FIXTURE_PATH
     data_feed = HistoryDataFeed(file_path=data_path)
     
     broker = SimBroker(initial_cash=100000.0, slippage=0.0) 
@@ -58,10 +65,11 @@ def test_tp_limit_order_triggers_on_next_bar_high():
     assert found_tp_order, "TP order for 105.0 should have been created on Day 1"
     assert "TEST01" not in broker.holdings, "TEST01 should have been sold by TP"
 
+
 def test_tp_limit_order_expires_only_after_valid_match_window():
     # Scenario: TP LIMIT SELL submitted on Day 1 remains PENDING during Day 2 matching if price is not hit, 
     # and is CANCELED only AFTER Day 2 matching window closes
-    data_path = "/root/projects/AMS/tests/fixtures/fixture_tp_no_trigger.csv"
+    data_path = TP_NO_TRIGGER_FIXTURE_PATH
     data_feed = HistoryDataFeed(file_path=data_path)
     
     broker = SimBroker(initial_cash=100000.0, slippage=0.0)
@@ -102,6 +110,7 @@ def test_tp_limit_order_expires_only_after_valid_match_window():
     assert found_tp_order_day1, "TP order for 105.0 should have been created on Day 1"
     assert "TEST01" in broker.holdings, "TEST01 should still be held as TP didn't trigger"
 
+
 def test_tp_mode_both_validation():
     # Scenario: main_runner.py exits with error if tp-mode=both but tp-pos or tp-intra is missing
     test_args = ["main_runner.py", "--strategy", "cb_rotation", "--start-date", "2026-01-01", 
@@ -113,9 +122,10 @@ def test_tp_mode_both_validation():
             main_runner.main()
         assert "ERROR: --tp-mode 'both' requires both --tp-pos and --tp-intra to be set." in str(exc.value)
 
+
 def test_tp_order_deduplication():
     # Scenario: Strategy should not submit duplicate TP orders if one is already PENDING
-    data_path = "/root/projects/AMS/tests/fixtures/fixture_tp_trigger.csv"
+    data_path = TP_TRIGGER_FIXTURE_PATH
     data_feed = HistoryDataFeed(file_path=data_path)
     broker = SimBroker(initial_cash=100000.0, slippage=0.0)
     
@@ -159,9 +169,10 @@ def test_tp_order_deduplication():
     pending_tp = [o for o in broker.order_book if o.direction == OrderDirection.SELL and o.status == OrderStatus.PENDING]
     assert len(pending_tp) <= 1, f"Should have at most 1 pending TP order, found {len(pending_tp)}"
 
+
 def test_tp_order_deduplication_same_bar():
     # Scenario: Multiple calls to strategy in same bar should not duplicate TP orders
-    data_path = "/root/projects/AMS/tests/fixtures/fixture_tp_trigger.csv"
+    data_path = TP_TRIGGER_FIXTURE_PATH
     data_feed = HistoryDataFeed(file_path=data_path)
     broker = SimBroker(initial_cash=100000.0, slippage=0.0)
     
@@ -198,9 +209,10 @@ def test_tp_order_deduplication_same_bar():
     tp_orders = [o for o in broker.order_book if o.direction == OrderDirection.SELL and o.order_type == OrderType.LIMIT]
     assert len(tp_orders) == 1, f"Should have only 1 TP order, found {len(tp_orders)}"
 
+
 def test_weekly_rebalance_does_not_mask_midweek_take_profit():
     # Scenario: TP triggers on Tuesday, Friday rebalance sees 0 position and handles it gracefully.
-    data_path = "/root/projects/AMS/tests/fixtures/fixture_weekly_tp_rebalance.csv"
+    data_path = WEEKLY_TP_REBALANCE_FIXTURE_PATH
     data_feed = HistoryDataFeed(file_path=data_path)
     broker = SimBroker(initial_cash=100000.0, slippage=0.0)
     
@@ -232,9 +244,10 @@ def test_weekly_rebalance_does_not_mask_midweek_take_profit():
     friday_sells = [o for o in sell_orders_test01 if o.effective_date == "2026-01-09"]
     assert len(friday_sells) == 0, "Should not submit a redundant sell order on Friday rebalance if already sold via TP"
 
+
 def test_tp_and_rebalance_do_not_double_sell_position():
     # Scenario: If a TP order is pending, rebalance should not submit a second sell order for the same shares
-    data_path = "/root/projects/AMS/tests/fixtures/fixture_tp_trigger.csv"
+    data_path = TP_TRIGGER_FIXTURE_PATH
     data_feed = HistoryDataFeed(file_path=data_path)
     broker = SimBroker(initial_cash=100000.0, slippage=0.0)
     
@@ -280,11 +293,12 @@ def test_tp_and_rebalance_do_not_double_sell_position():
     market_sells = [o for o in all_sells if o.order_type == OrderType.MARKET]
     assert len(market_sells) == 0, "Should not submit a Market Sell for rebalance if a TP Sell is already pending for all shares"
 
+
 def test_daily_tp_threshold_changes_affect_outcome():
     # Scenario: 5% TP vs 20% TP yields different results on the same fixture
     # Based on fixture_design_principle: Dedicated deterministic E2E fixture datasets must be small, 
     # versioned, reproducible, and precise enough to support exact assertions for order lifecycle, holdings, cash, and equity.
-    data_path = "/root/projects/AMS/tests/fixtures/fixture_tp_sensitivity.csv"
+    data_path = TP_SENSITIVITY_FIXTURE_PATH
     
     # Run with 5% TP
     data_feed_low = HistoryDataFeed(file_path=data_path)
@@ -326,9 +340,10 @@ def test_daily_tp_threshold_changes_affect_outcome():
     # Note: Using final equity from runner equity curve
     assert broker_low.total_equity != broker_high.total_equity, "Final equity should be different due to different TP thresholds"
 
+
 def test_weekly_tp_threshold_changes_affect_outcome():
     # Scenario: Weekly rebalance with different TP thresholds
-    data_path = "/root/projects/AMS/tests/fixtures/fixture_tp_sensitivity.csv"
+    data_path = TP_SENSITIVITY_FIXTURE_PATH
     
     # Run with 5% TP
     data_feed_low = HistoryDataFeed(file_path=data_path)
@@ -361,14 +376,14 @@ def test_weekly_tp_threshold_changes_affect_outcome():
     
     assert broker_low.total_equity != broker_high.total_equity
 
+
 def test_final_integrity_check():
     # Final E2E validation ensuring all order-semantics tests pass and preflight is green.
     # This test acts as a marker for completeness.
     # Verify that we can at least instantiate the components without failure.
-    data_path = "/root/projects/AMS/tests/fixtures/fixture_tp_sensitivity.csv"
+    data_path = TP_SENSITIVITY_FIXTURE_PATH
     data_feed = HistoryDataFeed(file_path=data_path)
     broker = SimBroker()
     strategy = CBRotationStrategy()
     runner = BacktestRunner(data_feed, broker, strategy)
     assert runner is not None
-

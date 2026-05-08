@@ -6,6 +6,9 @@ from ams.core.cb_rotation_strategy import CBRotationStrategy
 from ams.runners.backtest_runner import BacktestRunner
 from ams.core.order import OrderStatus, OrderType, OrderDirection
 from ams.core.base import BaseDataFeed
+from ams.utils.path_resolver import resolve_repo_asset
+
+REBALANCE_FIXTURE_PATH = resolve_repo_asset("tests/fixtures/fixture_rebalance_next_bar.csv")
 
 class DummyDataFeed(BaseDataFeed):
     def __init__(self, data_path):
@@ -16,7 +19,7 @@ class DummyDataFeed(BaseDataFeed):
         return self.df[self.df['date'] == pd.to_datetime(date)]
 
 def test_rebalance_market_order_fills_on_next_bar_open():
-    feed = DummyDataFeed("tests/fixtures/fixture_rebalance_next_bar.csv")
+    feed = DummyDataFeed(REBALANCE_FIXTURE_PATH)
     broker = SimBroker(initial_cash=100000, slippage=0.0)
     strategy = CBRotationStrategy(top_n=1, weight_per_position=1.0, rebalance_period='daily', take_profit_threshold=None, stop_loss_threshold=-0.5)
     
@@ -83,7 +86,7 @@ def test_rebalance_market_order_fills_on_next_bar_open():
     assert broker.holdings.get('T1', 0) == 10000
 
 def test_rebalance_orders_cannot_fill_on_same_bar():
-    feed = DummyDataFeed("tests/fixtures/fixture_rebalance_next_bar.csv")
+    feed = DummyDataFeed(REBALANCE_FIXTURE_PATH)
     broker = SimBroker(initial_cash=100000, slippage=0.0)
     strategy = CBRotationStrategy(top_n=1, weight_per_position=1.0, rebalance_period='daily', take_profit_threshold=None, stop_loss_threshold=-0.5)
     
