@@ -1,12 +1,34 @@
 import json
 import os
+import re
 from pathlib import Path
-from typing import Any, Mapping
-from ams.utils.path_resolver import get_repo_root as _get_repo_root, resolve_mutable_data_path
+from typing import Any, Callable, Mapping
+
+from ams.utils.path_resolver import (
+    ResolutionResult,
+    get_repo_root as _get_repo_root,
+    resolve_mutable_data_path,
+    resolve_runtime_output_path,
+    validate_no_host_coupling,
+)
 
 DEFAULT_CONFIG_PATH = _get_repo_root() / "ams_config.json"
 DEFAULT_PROVIDER = "jqdata"
 _PROVIDER_PATH_KEYS = ("dataset_path", "metrics_path")
+_DEFAULT_PROVIDER_ARTIFACTS = {
+    "jqdata": {
+        "dataset_path": "data/cb_history_factors_jqdata.csv",
+        "metrics_path": "data/cb_history_factors_jqdata.metrics.json",
+    },
+    "tushare": {
+        "dataset_path": "data/cb_history_factors_tushare.csv",
+        "metrics_path": "data/cb_history_factors_tushare.metrics.json",
+    },
+}
+_PROVIDER_PATH_RESOLVERS: dict[str, Callable[..., ResolutionResult]] = {
+    "dataset_path": resolve_mutable_data_path,
+    "metrics_path": resolve_runtime_output_path,
+}
 
 
 def get_repo_root() -> Path:
@@ -26,14 +48,8 @@ def _default_provider_config() -> dict[str, Any]:
     return {
         "default_provider": DEFAULT_PROVIDER,
         "providers": {
-            "jqdata": {
-                "dataset_path": resolve_project_path("data", "cb_history_factors_jqdata.csv"),
-                "metrics_path": resolve_project_path("data", "cb_history_factors_jqdata.metrics.json"),
-            },
-            "tushare": {
-                "dataset_path": resolve_project_path("data", "cb_history_factors_tushare.csv"),
-                "metrics_path": resolve_project_path("data", "cb_history_factors_tushare.metrics.json"),
-            },
+            provider_name: dict(provider_artifacts)
+            for provider_name, provider_artifacts in _DEFAULT_PROVIDER_ARTIFACTS.items()
         },
     }
 
@@ -101,7 +117,42 @@ def _merge_provider_configs(base_config: dict[str, Any], override_config: Mappin
     return merged
 
 
-def _normalize_and_validate_config(config: Mapping[str, Any]) -> dict[str, Any]:
+def _normalize_env_fragment(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]+", "_", value.strip()).strip("_").upper()
+
+
+def _provider_artifact_env_var(provider_name: str, key: str) -> str:
+    return f"AMS_{_normalize_env_fragment(provider_name)}_{key.upper()}"
+
+
+def _default_artifact_path(provider_name: str, key: str, configured_value: str) -> str:
+    return _DEFAULT_PROVIDER_ARTIFACTS.get(provider_name, {}).get(key, configured_value)
+
+
+def _resolve_provider_artifact(
+    provider_name: str,
+    key: str,
+    configured_value: str,
+    *,
+    override_provider_names: set[str],
+) -> str:
+    validate_no_host_coupling(configured_value)
+    resolver = _PROVIDER_PATH_RESOLVERS[key]
+    config_override = configured_value if provider_name in override_provider_names else None
+    result = resolver(
+        default_relative_path=_default_artifact_path(provider_name, key, configured_value),
+        env_var=_provider_artifact_env_var(provider_name, key),
+        config_override=config_override,
+    )
+    return str(result.path)
+
+
+def _normalize_and_validate_config(
+    config: Mapping[str, Any],
+    *,
+    override_provider_names: set[str] | None = None,
+) -> dict[str, Any]:
+    override_provider_names = override_provider_names or set()
     default_provider = config.get("default_provider", DEFAULT_PROVIDER)
     if not isinstance(default_provider, str) or not default_provider.strip():
         raise ValueError("default_provider must be a non-empty string")
@@ -118,14 +169,20 @@ def _normalize_and_validate_config(config: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(provider_config, dict):
             raise ValueError(f"Provider '{provider_name}' must be a JSON object")
 
+        normalized_provider_name = provider_name.strip()
         normalized_provider: dict[str, str] = {}
         for key in _PROVIDER_PATH_KEYS:
             value = provider_config.get(key)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"Provider '{provider_name}' is missing required key '{key}'")
-            normalized_provider[key] = normalize_project_local_path(value)
+            normalized_provider[key] = _resolve_provider_artifact(
+                normalized_provider_name,
+                key,
+                value,
+                override_provider_names=override_provider_names,
+            )
 
-        normalized_providers[provider_name.strip()] = normalized_provider
+        normalized_providers[normalized_provider_name] = normalized_provider
 
     if default_provider not in normalized_providers:
         raise ValueError(f"Unknown default provider: {default_provider}")
@@ -139,13 +196,22 @@ def _normalize_and_validate_config(config: Mapping[str, Any]) -> dict[str, Any]:
 def load_provider_config() -> dict[str, Any]:
     config = _default_provider_config()
     config_path = Path(os.environ.get("AMS_CONFIG_PATH", DEFAULT_CONFIG_PATH))
+    override_provider_names: set[str] = set()
 
     if config_path.exists():
         override_config = _load_raw_config(config_path)
         _validate_raw_override_config(override_config, config_path=config_path)
         config = _merge_provider_configs(config, override_config)
+        override_provider_names = {
+            provider_name.strip()
+            for provider_name in override_config["providers"]
+            if isinstance(provider_name, str)
+        }
 
-    return _normalize_and_validate_config(config)
+    return _normalize_and_validate_config(
+        config,
+        override_provider_names=override_provider_names,
+    )
 
 
 def resolve_provider_name(provider_name: str | None = None, *, config: Mapping[str, Any] | None = None) -> str:
