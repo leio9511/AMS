@@ -16,8 +16,7 @@ Phase 1.5: Backtest Reliability Hardening
 - Event-Driven core architecture is in place
 - `HistoryDataFeed`, `CBRotationStrategy`, `SimBroker`, `BacktestRunner` are available
 - CB double-low strategy can run with the correct code and data paths
-- Historical CB dataset is standardized at:
-  - `/root/projects/AMS/data/cb_history_factors.csv`
+- Historical CB dataset is managed as explicit, configuration-controlled mutable research data.
 
 ## Current Blockers
 - `main_runner.py` unified CLI path is not truly executable yet
@@ -39,7 +38,7 @@ Phase 1.5: Backtest Reliability Hardening
 
 3. CB Source-Contract Hardening
    - Keep `underlying_ticker`, `premium_rate`, and `is_redeemed` on explicit documented source contracts
-   - Preserve the integrated ETL metrics artifact at `/root/projects/AMS/data/cb_history_factors.metrics.json`
+   - Preserve the integrated ETL metrics artifact (resolved via the mutable research data precedence contract)
    - Use regression guards to block fallback to `get_security_info(ticker).parent` and `finance.CCB_CALL`
    - Treat this as prerequisite upstream input quality for ISSUE-1142 dataset governance
 
@@ -50,7 +49,7 @@ Before entering Phase 2, AMS must satisfy:
 - Smoke test passes in CI/preflight
 - `cb_rotation` has its first golden regression baseline
 - Validation framework requirements are documented and tracked
-- ISSUE-1142 is a blocking issue for AMS Phase 2. AMS must not enter Live QMT Integration until /root/projects/AMS/data/cb_history_factors.csv is the unique canonical CB research/backtest dataset and the semantic quality gates defined in this PRD are enforced.
+- ISSUE-1142 is a blocking issue for AMS Phase 2. AMS must not enter Live QMT Integration until the historical CB dataset is strictly managed as explicit, configuration-controlled mutable research data, and the semantic quality gates defined in this PRD are enforced without declaring a root-only machine path as the canonical contract.
 
 ## Next Actions
 - Fix `main_runner.py` real CLI path
@@ -58,9 +57,10 @@ Before entering Phase 2, AMS must satisfy:
 - Drive ISSUE-1172
 - Re-evaluate readiness for Phase 2
 
-## Canonical Paths
-- Code root: `/root/projects/AMS`
-- Historical CB dataset: `/root/projects/AMS/data/cb_history_factors.csv`
+## Path Contracts (Phase 1A Vocabulary)
+- **Repo-owned stable assets**: Must use repo-relative paths (deployment-independent).
+- **Mutable research/backtest data**: Explicit and configuration-controlled (resolved via CLI > ENV > AMS-owned config > project-local default).
+- **Runtime outputs/state**: Deployment-relative, overrideable, and do not require OpenClaw workspace.
 
 ## Linked Issues / PRDs
 - ISSUE-1167: Standardized Unified Backtest Entrypoint

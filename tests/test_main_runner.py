@@ -99,7 +99,7 @@ def test_cli_help_output():
     assert "--format" in result.stdout
 
 def test_phase2_blocker_statement_in_docs():
-    statement = "ISSUE-1142 is a blocking issue for AMS Phase 2. AMS must not enter Live QMT Integration until /root/projects/AMS/data/cb_history_factors.csv is the unique canonical CB research/backtest dataset and the semantic quality gates defined in this PRD are enforced."
+    statement = "ISSUE-1142 is a blocking issue for AMS Phase 2. AMS must not enter Live QMT Integration until the historical CB dataset is strictly managed as explicit, configuration-controlled mutable research data, and the semantic quality gates defined in this PRD are enforced without declaring a root-only machine path as the canonical contract."
     
     roadmap_content = (REPO_ROOT / "docs" / "ROADMAP.md").read_text(encoding="utf-8")
     assert statement in roadmap_content

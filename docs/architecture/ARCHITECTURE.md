@@ -51,7 +51,7 @@ For the convertible-bond research dataset, AMS now treats upstream source contra
 - `premium_rate` must be joined through the canonical normalized key `bond_code_raw + bond_exchange_code + date` against `bond.CONBOND_DAILY_CONVERT`.
 - `is_redeemed` must derive from `bond.CONBOND_BASIC_INFO.delist_Date`, not `finance.CCB_CALL`.
 - In this first deterministic redemption contract, `maturity_date`, `last_cash_date`, and `convert_end_date` are fallback informational fields only. They are explicitly documented for future lifecycle observability, but they do not override the rule that `delist_Date` is the only decision field and `delist_Date = null` keeps `is_redeemed = False`.
-- The ETL metrics artifact at `/root/projects/AMS/data/cb_history_factors.metrics.json` is the observability surface for source-contract health, and currently must expose:
+- The ETL metrics artifact (resolved via the mutable research data precedence contract) is the observability surface for source-contract health, and currently must expose:
   - `premium_rate_source_row_count`
   - `premium_rate_joined_row_count`
   - `premium_rate_join_coverage_ratio`
@@ -98,12 +98,13 @@ AMS is not validated by static code correctness alone. A backtesting system can 
    - Walk-forward / out-of-sample validation for strategy robustness.
    - Purpose: reduce overfitting and verify that an edge survives beyond a single historical regime.
 
-### 5.2 Canonical Paths
-The canonical AMS runtime paths are:
-- Code root: `/root/projects/AMS`
-- Historical CB dataset: `/root/projects/AMS/data/cb_history_factors.csv`
+### 5.2 Path Contracts and Deployment Relations
+AMS defines three classes of paths to avoid host-layout assumptions:
+- **Repo-owned stable assets**: Use repo-relative semantics (deployment-independent).
+- **Mutable research/backtest data**: Explicitly resolved via CLI > ENV > AMS-owned config > project-local default (deployment-sensitive but configuration-controlled).
+- **Runtime outputs/state**: Writable in non-root environments and do not require the OpenClaw workspace (deployment-relative allowed).
 
-Production backtests and formal validation should use these canonical paths unless a fixture-based test explicitly overrides them.
+Production backtests and formal validation should respect these path contracts rather than relying on absolute host paths.
 
 ### 5.3 Release Gate Before Live QMT
 Before entering Phase 2 (Live QMT Integration), AMS must satisfy:
@@ -111,4 +112,4 @@ Before entering Phase 2 (Live QMT Integration), AMS must satisfy:
 - A real smoke test passes.
 - At least one strategy (`cb_rotation`) has a golden regression baseline.
 - Validation framework requirements are documented and enforced in preflight/CI.
-- ISSUE-1142 is a blocking issue for AMS Phase 2. AMS must not enter Live QMT Integration until /root/projects/AMS/data/cb_history_factors.csv is the unique canonical CB research/backtest dataset and the semantic quality gates defined in this PRD are enforced.
+- ISSUE-1142 is a blocking issue for AMS Phase 2. AMS must not enter Live QMT Integration until the historical CB dataset is strictly managed as explicit, configuration-controlled mutable research data, and the semantic quality gates defined in this PRD are enforced without declaring a root-only machine path as the canonical contract.
