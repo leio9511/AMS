@@ -1,6 +1,17 @@
+import json
+from pathlib import Path
+
 import pandera as pa
 import pandas as pd
 import numpy as np
+
+try:
+    from ams.utils.path_resolver import resolve_mutable_data_path
+except ModuleNotFoundError:
+    import sys
+
+    sys.path.append(str(Path(__file__).resolve().parents[2]))
+    from ams.utils.path_resolver import resolve_mutable_data_path
 
 cb_schema = pa.DataFrameSchema(
     {
@@ -133,8 +144,18 @@ class DatasetSemanticValidator:
     until those callers are migrated.
     """
 
-    def __init__(self, baseline_path="/root/projects/AMS/data/cb_history_factors.metrics.json"):
-        self.baseline_path = baseline_path
+    DEFAULT_BASELINE_RELATIVE_PATH = "data/cb_history_factors.metrics.json"
+
+    def __init__(self, baseline_path=None):
+        if baseline_path is None:
+            self.baseline_path = resolve_mutable_data_path(
+                default_relative_path=self.DEFAULT_BASELINE_RELATIVE_PATH
+            ).path
+        else:
+            self.baseline_path = resolve_mutable_data_path(
+                default_relative_path=self.DEFAULT_BASELINE_RELATIVE_PATH,
+                cli_override=baseline_path,
+            ).path
         self.thresholds = {
             "row_count_min": 50000,
             "underlying_ticker_nonnull_ratio_min": 0.99,
@@ -147,9 +168,6 @@ class DatasetSemanticValidator:
         }
 
     def validate_dataframe(self, df: pd.DataFrame) -> bool:
-        import json
-        import os
-
         row_count = len(df)
         if row_count < self.thresholds["row_count_min"]:
             raise DataSemanticViolation("[DataSemanticViolation] row_count below minimum threshold.")
@@ -182,9 +200,10 @@ class DatasetSemanticValidator:
         if (df["premium_rate"] == 0.0).all() or (~df["is_st"]).all() or (~df["is_redeemed"]).all():
             raise DataSemanticViolation("[DataSemanticViolation] candidate dataset collapsed into default-value world.")
 
-        if os.path.exists(self.baseline_path):
+        baseline_path = Path(self.baseline_path)
+        if baseline_path.exists():
             try:
-                with open(self.baseline_path, "r") as f:
+                with baseline_path.open("r") as f:
                     baseline = json.load(f)
                 
                 baseline_row_count = baseline.get("row_count", 0)

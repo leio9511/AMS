@@ -67,6 +67,22 @@ def _contract_valid_pipeline() -> CBETLPipeline:
     return pipeline
 
 
+def test_stage_f_still_does_not_invoke_legacy_semantic_validator_after_path_cutover():
+    pipeline = _contract_valid_pipeline()
+
+    with patch("ams.validators.cb_data_validator.DatasetSemanticValidator") as legacy_validator:
+        assert pipeline.run_stage_f_validator() is True
+
+    legacy_validator.assert_not_called()
+    report = pipeline.get_final_report()
+    assert report["validator_summary"]["status"] == "PASS"
+    assert report["validator_summary"]["failure_type"] == "NONE"
+    assert report["validator_summary"]["core_validator_status"] == "PASS"
+    assert report["validator_summary"]["enrichment_validator_status"] == "PASS"
+    assert "row_count" not in report["validator_summary"]["message"]
+    assert report["root_blockers"] == []
+
+
 def test_stage_f_does_not_run_legacy_dataset_thresholds_for_small_audit_window():
     pipeline = _contract_valid_pipeline()
 

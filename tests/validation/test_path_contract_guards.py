@@ -3,6 +3,19 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+def test_validator_source_has_no_root_bound_default_literals():
+    validator_path = REPO_ROOT / "ams" / "validators" / "cb_data_validator.py"
+    content = validator_path.read_text(encoding="utf-8")
+    forbidden_patterns = [
+        "/root/" + "projects/AMS",
+        "/root/" + ".openclaw",
+        ".openclaw/" + "workspace"
+    ]
+
+    for pattern in forbidden_patterns:
+        assert pattern not in content, f"Forbidden host-layout assumption '{pattern}' found in {validator_path.relative_to(REPO_ROOT)}"
+
+
 def test_backtest_path_surface_rejects_root_projects_and_openclaw_workspace_contracts():
     # Obfuscate to prevent self-matching when scanning this file
     forbidden_patterns = [

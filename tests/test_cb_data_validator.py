@@ -1,7 +1,9 @@
+from pathlib import Path
 import os
 import pandas as pd
 import pytest
 from ams.validators.cb_data_validator import CBDataValidator, normalize_core_validator_frame
+from ams.utils.path_resolver import HostLayoutCouplingError, get_repo_root
 
 def test_validator_with_perfect_dataframe():
     df = pd.DataFrame({
@@ -241,6 +243,44 @@ def test_cli_invalid_csv(tmp_path):
 
 from ams.validators.cb_data_validator import DatasetSemanticValidator, DataSemanticViolation, DataDriftViolation
 import json
+
+@pytest.mark.legacy_dataset_semantic
+def test_dataset_semantic_validator_default_baseline_uses_project_local_contract_path():
+    validator = DatasetSemanticValidator()
+
+    assert Path(validator.baseline_path) == get_repo_root() / "data" / "cb_history_factors.metrics.json"
+    assert not str(validator.baseline_path).startswith(("/root/" + "projects/AMS"))
+
+
+@pytest.mark.legacy_dataset_semantic
+def test_dataset_semantic_validator_accepts_explicit_temp_baseline_path(tmp_path):
+    baseline_file = tmp_path / "baseline.json"
+    baseline_data = {
+        "row_count": 100000,
+        "premium_rate_nonzero_ratio": 0.98,
+        "is_st_true_count": 2,
+        "is_redeemed_true_count": 2
+    }
+    baseline_file.write_text(json.dumps(baseline_data))
+
+    df = pd.DataFrame({
+        "underlying_ticker": ["000001"] * 50000,
+        "premium_rate": [0.1] * 49000 + [0.0] * 1000,
+        "is_st": [True] * 2 + [False] * 49998,
+        "is_redeemed": [True] * 2 + [False] * 49998
+    })
+
+    validator = DatasetSemanticValidator(baseline_path=str(baseline_file))
+    assert Path(validator.baseline_path) == baseline_file.resolve()
+    with pytest.raises(DataDriftViolation):
+        validator.validate_dataframe(df)
+
+
+@pytest.mark.legacy_dataset_semantic
+def test_dataset_semantic_validator_rejects_root_bound_baseline_path():
+    with pytest.raises(HostLayoutCouplingError):
+        DatasetSemanticValidator(baseline_path="/root/" + "projects/AMS/data/cb_history_factors.metrics.json")
+
 
 @pytest.mark.legacy_dataset_semantic
 def test_semantic_validation_success(tmp_path):
