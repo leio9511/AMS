@@ -18,7 +18,7 @@ def test_jqdata_auth_failure():
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
 @patch("etl.jqdata_sync_cb.jqdatasdk")
 @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
-def test_jqdata_successful_sync(mock_semantic_validator, mock_jqdatasdk):
+def test_jqdata_successful_sync_uses_contract_resolved_dataset_path(mock_semantic_validator, mock_jqdatasdk):
     mock_semantic_validator.return_value.validate_dataframe.return_value = True
     mock_jqdatasdk.auth.return_value = None
 
@@ -53,6 +53,7 @@ def test_jqdata_successful_sync(mock_semantic_validator, mock_jqdatasdk):
 
     sync_cb_data()
 
+    assert "/root/" + "projects/AMS" not in etl.jqdata_sync_cb.DATA_PATH
     assert os.path.exists(etl.jqdata_sync_cb.DATA_PATH)
     df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
     expected_cols = {

@@ -25,7 +25,8 @@ from etl.cb_etl_pipeline import (
     _build_delist_mapping,
     _build_empty_canonical_cb_frame,
 )
-from ams.utils.provider_config import load_provider_config, resolve_project_path
+from ams.utils.provider_config import load_provider_config
+from ams.utils.path_resolver import resolve_mutable_data_path, resolve_runtime_output_path
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +50,41 @@ def get_provider(source_name, jqdata_client=None):
     else:
         raise ValueError(f"Unknown data source: {source_name}")
 
+def resolve_project_path(*parts: str) -> str:
+    return str(
+        resolve_runtime_output_path(
+            default_relative_path=str(Path(*parts)),
+        ).path
+    )
+
+
 def _resolve_report_dir() -> str:
-    configured_report_dir = os.environ.get("AMS_REPORTS_DIR")
-    if configured_report_dir:
-        return configured_report_dir
+    if os.environ.get("AMS_REPORTS_DIR") is not None:
+        return str(
+            resolve_runtime_output_path(
+                default_relative_path="reports",
+                env_var="AMS_REPORTS_DIR",
+            ).path
+        )
     return resolve_project_path("reports")
+
+
+def _resolve_dataset_path_override(dataset_path: str) -> str:
+    return str(
+        resolve_mutable_data_path(
+            default_relative_path="data/cb_history_factors_jqdata.csv",
+            cli_override=dataset_path,
+        ).path
+    )
+
+
+def _resolve_metrics_path_override(metrics_path: str) -> str:
+    return str(
+        resolve_runtime_output_path(
+            default_relative_path="data/cb_history_factors_jqdata.metrics.json",
+            cli_override=metrics_path,
+        ).path
+    )
 
 
 def _write_metrics(metrics_path: str, metrics: dict) -> None:
@@ -135,8 +166,12 @@ def run_etl(start_date, end_date, source_name, promote=False, jqdata_client=None
     
     if dataset_path is None:
         dataset_path = provider_config["dataset_path"]
+    else:
+        dataset_path = _resolve_dataset_path_override(dataset_path)
     if metrics_path is None:
         metrics_path = provider_config["metrics_path"]
+    else:
+        metrics_path = _resolve_metrics_path_override(metrics_path)
     
     # Use provided helpers or default to pipeline ones
     u_map_func = _underlying_mapping_func or _build_underlying_mapping

@@ -37,6 +37,23 @@ def test_backtest_path_surface_rejects_root_projects_and_openclaw_workspace_cont
             for pattern in forbidden_patterns:
                 assert pattern not in content, f"Forbidden host-layout assumption '{pattern}' found in {file_path.relative_to(REPO_ROOT)}"
 
+def test_etl_source_has_no_root_bound_default_literals():
+    forbidden_patterns = [
+        "/root/" + "projects/AMS",
+        "/root/" + ".openclaw",
+        ".openclaw/" + "workspace"
+    ]
+    files_to_check = [
+        REPO_ROOT / "etl" / "jqdata_sync_cb.py",
+        REPO_ROOT / "etl" / "cb_etl_runner.py",
+    ]
+
+    for file_path in files_to_check:
+        content = file_path.read_text(encoding="utf-8")
+        for pattern in forbidden_patterns:
+            assert pattern not in content, f"Forbidden host-layout assumption '{pattern}' found in {file_path.relative_to(REPO_ROOT)}"
+
+
 def test_architecture_docs_describe_mutable_data_as_configuration_controlled():
     architecture_path = REPO_ROOT / "docs" / "architecture" / "ARCHITECTURE.md"
     assert architecture_path.exists(), "ARCHITECTURE.md not found"

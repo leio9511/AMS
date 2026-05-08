@@ -251,6 +251,24 @@ class TestTriggerDailyETL:
         assert result["daily_sync_output"] == "Sync completed"
         assert any("finance_batch_etl.py failed" in err for err in result["errors"])
 
+    def test_trigger_daily_etl_preserves_provider_path_contract(self):
+        """Daily SSH trigger must not reconstruct host-coupled ETL artifact defaults."""
+        import importlib
+        import etl.trigger_daily_etl as tde_module
+        importlib.reload(tde_module)
+
+        forbidden_patterns = [
+            "/root/" + "projects/AMS",
+            "/root/" + ".openclaw",
+            ".openclaw/" + "workspace",
+        ]
+        command_surface = "\n".join([tde_module.DAILY_SYNC_CMD, tde_module.FINANCE_ETL_CMD])
+
+        for pattern in forbidden_patterns:
+            assert pattern not in command_surface
+        assert "cb_history_factors_jqdata.csv" not in command_surface
+        assert "cb_history_factors_jqdata.metrics.json" not in command_surface
+
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
