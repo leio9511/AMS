@@ -1,6 +1,7 @@
 import etl.jqdata_sync_cb
 import json
 import os
+from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
@@ -18,7 +19,25 @@ def test_jqdata_auth_failure():
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
 @patch("etl.jqdata_sync_cb.jqdatasdk")
 @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
-def test_jqdata_successful_sync_uses_contract_resolved_dataset_path(mock_semantic_validator, mock_jqdatasdk):
+def test_jqdata_successful_sync_uses_contract_resolved_dataset_path(mock_semantic_validator, mock_jqdatasdk, tmp_path, monkeypatch):
+    dataset_path = tmp_path / "contract" / "cb_history_factors_jqdata.csv"
+    metrics_path = tmp_path / "contract" / "cb_history_factors_jqdata.metrics.json"
+    config_path = tmp_path / "ams_config.json"
+    config_payload = {
+        "default_provider": "jqdata",
+        "providers": {
+            "jqdata": {
+                "dataset_path": str(dataset_path),
+                "metrics_path": str(metrics_path),
+            }
+        },
+    }
+    config_path.write_text(json.dumps(config_payload), encoding="utf-8")
+    monkeypatch.setenv("AMS_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(etl.jqdata_sync_cb, "DATA_PATH", etl.jqdata_sync_cb._DEFAULT_DATA_PATH)
+    monkeypatch.setattr(etl.jqdata_sync_cb, "METRICS_PATH", etl.jqdata_sync_cb._DEFAULT_METRICS_PATH)
+    monkeypatch.chdir(tmp_path)
+
     mock_semantic_validator.return_value.validate_dataframe.return_value = True
     mock_jqdatasdk.auth.return_value = None
 
@@ -54,8 +73,9 @@ def test_jqdata_successful_sync_uses_contract_resolved_dataset_path(mock_semanti
     sync_cb_data()
 
     assert "/root/" + "projects/AMS" not in etl.jqdata_sync_cb.DATA_PATH
-    assert os.path.exists(etl.jqdata_sync_cb.DATA_PATH)
-    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+    assert not Path(etl.jqdata_sync_cb.DATA_PATH).exists()
+    assert dataset_path.exists()
+    df = pd.read_csv(dataset_path)
     expected_cols = {
         "ticker",
         "date",

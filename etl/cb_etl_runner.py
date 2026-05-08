@@ -269,7 +269,17 @@ def run_etl(start_date, end_date, source_name, promote=False, jqdata_client=None
 
         # Atomic promotion logic
         tmp_path = dataset_path + ".tmp"
-        df_supportable_final.to_csv(tmp_path, index=False)
+        dataset_dir = os.path.dirname(dataset_path)
+        if dataset_dir:
+            os.makedirs(dataset_dir, exist_ok=True)
+        try:
+            df_supportable_final.to_csv(tmp_path, index=False)
+        except Exception:
+            if os.path.exists(tmp_metrics_path):
+                os.remove(tmp_metrics_path)
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise
 
         bak_path = dataset_path + ".bak"
         metrics_bak_path = metrics_path + ".bak"
