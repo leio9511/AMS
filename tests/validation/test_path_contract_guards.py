@@ -15,6 +15,7 @@ HIGH_VALUE_CONTRACT_SURFACES = [
     REPO_ROOT / "ams" / "utils",
     REPO_ROOT / "ams" / "validators",
     REPO_ROOT / "etl",
+    REPO_ROOT / "tests" / "conftest.py",
     REPO_ROOT / "tests" / "validation",
     REPO_ROOT / "tests" / "golden" / "data" / "metadata.json",
     REPO_ROOT / "tests" / "test_execution_semantics_priority.py",

@@ -22,7 +22,7 @@ def load_base_config():
 
 def run_backtest(params):
     command = [
-        sys.executable, "main_runner.py",
+        sys.executable, str(PROJECT_ROOT / "main_runner.py"),
         "--strategy", params["strategy"],
         "--start-date", params["start_date"],
         "--end-date", params["end_date"],
@@ -39,7 +39,7 @@ def run_backtest(params):
     env = os.environ.copy()
     user_site = site.getusersitepackages()
     env["PYTHONPATH"] = f"{PROJECT_ROOT}:{user_site}"
-    result = subprocess.run(command, capture_output=True, text=True, env=env)
+    result = subprocess.run(command, capture_output=True, text=True, cwd=PROJECT_ROOT, env=env)
     if result.returncode != 0:
         print(f"Backtest failed with return code {result.returncode}")
         print(f"STDOUT: {result.stdout}")
