@@ -1,6 +1,7 @@
 import pytest
 import subprocess
 import json
+import os
 import sys
 import pandas as pd
 from decimal import Decimal
@@ -11,6 +12,7 @@ from ams.utils import reporting
 from ams.core.cb_rotation_strategy import CBRotationStrategy
 from ams.core.history_datafeed import HistoryDataFeed
 from ams.models.config import TakeProfitConfig, TakeProfitMode
+from ams.utils.path_resolver import HostLayoutCouplingError
 import main_runner
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -70,8 +72,92 @@ def test_invalid_explicit_data_path_fails_fast(tmp_path):
                  "--sl", "-0.08", "--data-path", str(missing_path)]
 
     with patch("sys.argv", test_args):
-        with pytest.raises(ValueError, match=f"Explicit data path does not exist: {missing_path}"):
+        with pytest.raises(ValueError, match=f"Explicit data path does not exist: {missing_path.resolve()}"):
             main_runner.main()
+
+
+def test_explicit_data_path_is_resolved_as_cli_mutable_data_override(tmp_path):
+    data_path = tmp_path / "explicit.csv"
+    resolved_path = tmp_path / "resolved" / "explicit.csv"
+    missing_path = tmp_path / "missing.csv"
+    resolved_missing_path = tmp_path / "resolved" / "missing.csv"
+    test_args = ["main_runner.py", "--strategy", "cb_rotation", "--start-date", "2025-01-01",
+                 "--end-date", "2025-01-31", "--capital", "4000000", "--top-n", "20",
+                 "--rebalance", "daily", "--tp-mode", "position", "--tp-pos", "0.20",
+                 "--sl", "-0.08", "--data-path", str(data_path)]
+
+    def fake_resolve_mutable_data_path(*, default_relative_path, cli_override, **kwargs):
+        assert default_relative_path == "data/cb_history_factors_jqdata.csv"
+        assert cli_override == str(data_path)
+        assert "env_var" not in kwargs or kwargs["env_var"] is None
+        assert "config_override" not in kwargs or kwargs["config_override"] is None
+        return MagicMock(path=resolved_path)
+
+    with patch("sys.argv", test_args), \
+         patch("main_runner.resolve_mutable_data_path", side_effect=fake_resolve_mutable_data_path) as mock_resolver, \
+         patch("pathlib.Path.exists", return_value=True), \
+         patch("main_runner.HistoryDataFeed") as mock_data_feed, \
+         patch("main_runner.SimBroker"), \
+         patch("main_runner.StrategyFactory.create_strategy"), \
+         patch("main_runner.BacktestRunner"), \
+         patch("main_runner.reporting.generate_report_data"):
+        main_runner.main()
+
+    mock_resolver.assert_called_once()
+    mock_data_feed.assert_called_once()
+    assert mock_data_feed.call_args.kwargs["file_path"] == str(resolved_path)
+
+    with patch("main_runner.resolve_mutable_data_path", return_value=MagicMock(path=resolved_missing_path)), \
+         patch("pathlib.Path.exists", return_value=False):
+        with pytest.raises(ValueError, match=f"Explicit data path does not exist: {resolved_missing_path}"):
+            main_runner.resolve_backtest_data_path(
+                explicit_data_path=str(missing_path),
+                requested_source="auto",
+            )
+
+
+def test_explicit_data_path_rejects_host_layout_coupling():
+    prohibited_paths = [
+        "/root/projects/AMS/data/cb_history_factors_jqdata.csv",
+        "/root/.openclaw/workspace/data/cb_history_factors.csv",
+        "some/.openclaw/workspace/data/cb_history_factors.csv",
+    ]
+
+    for prohibited_path in prohibited_paths:
+        with patch("main_runner.HistoryDataFeed") as mock_data_feed:
+            with pytest.raises(HostLayoutCouplingError, match="Path contains prohibited host layout coupling"):
+                main_runner.resolve_backtest_data_path(
+                    explicit_data_path=prohibited_path,
+                    requested_source="auto",
+                )
+            mock_data_feed.assert_not_called()
+
+
+def test_provider_default_data_path_is_not_re_resolved_by_cwd(tmp_path, monkeypatch):
+    provider_dataset_path = tmp_path / "fixture-provider.csv"
+    provider_config = {
+        "default_provider": "jqdata",
+        "providers": {
+            "jqdata": {
+                "dataset_path": str(provider_dataset_path),
+                "metrics_path": str(tmp_path / "fixture-provider.metrics.json"),
+            },
+        },
+    }
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("main_runner.load_provider_config", return_value=provider_config), \
+         patch("main_runner.resolve_mutable_data_path") as mock_resolver, \
+         patch("main_runner.HistoryDataFeed") as mock_data_feed:
+        resolved = main_runner.resolve_backtest_data_path(
+            explicit_data_path=None,
+            requested_source="auto",
+        )
+
+    assert resolved == str(provider_dataset_path)
+    mock_resolver.assert_not_called()
+    mock_data_feed.assert_not_called()
 
 
 def test_cli_help_does_not_advertise_root_only_default_paths():

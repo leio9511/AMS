@@ -76,9 +76,9 @@ def _resolve_path_with_precedence(
         if not val_str:
             raise ValueError(f"Invalid path provided via {source}: empty string")
         validate_no_host_coupling(val_str)
-        path_obj = Path(val_str)
+        path_obj = Path(val_str).expanduser()
         if path_obj.is_absolute():
-            return ResolutionResult(path=path_obj, source=source)
+            return ResolutionResult(path=path_obj.resolve(), source=source)
         return ResolutionResult(path=(get_repo_root() / path_obj).resolve(), source=source)
         
     # Default fallback

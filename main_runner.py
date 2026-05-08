@@ -2,13 +2,13 @@ import argparse
 import sys
 import logging
 from decimal import Decimal
-from pathlib import Path
 from ams.core.factory import StrategyFactory
 from ams.utils import reporting
 from ams.core.history_datafeed import HistoryDataFeed
 from ams.core.sim_broker import SimBroker
 from ams.runners.backtest_runner import BacktestRunner
 from ams.models.config import TakeProfitConfig, TakeProfitMode
+from ams.utils.path_resolver import resolve_mutable_data_path
 from ams.utils.provider_config import (
     get_provider_artifact_paths,
     load_provider_config,
@@ -24,10 +24,13 @@ logger = logging.getLogger(__name__)
 
 def resolve_backtest_data_path(*, explicit_data_path: str | None, requested_source: str) -> str:
     if explicit_data_path:
-        candidate = Path(explicit_data_path).expanduser()
-        if not candidate.exists():
-            raise ValueError(f"Explicit data path does not exist: {candidate}")
-        return str(candidate)
+        resolved = resolve_mutable_data_path(
+            default_relative_path="data/cb_history_factors_jqdata.csv",
+            cli_override=explicit_data_path,
+        ).path
+        if not resolved.exists():
+            raise ValueError(f"Explicit data path does not exist: {resolved}")
+        return str(resolved)
 
     config = load_provider_config()
     provider_name = resolve_provider_name(requested_source, config=config)

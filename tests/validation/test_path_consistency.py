@@ -34,7 +34,7 @@ BACKTEST_ARGS = [
 
 
 def run_cli(extra_args, *, cwd: Path = REPO_ROOT, env: dict | None = None):
-    command = [sys.executable, "main_runner.py", *BACKTEST_ARGS, *extra_args]
+    command = [sys.executable, str(REPO_ROOT / "main_runner.py"), *BACKTEST_ARGS, *extra_args]
     return subprocess.run(command, capture_output=True, text=True, cwd=cwd, env=env)
 
 
@@ -66,15 +66,16 @@ def test_canonical_path_non_empty(isolated_paths):
 
 
 @pytest.mark.usefixtures("isolated_paths")
-def test_no_path_branching(isolated_paths):
-    default_result = run_cli([], env=isolated_paths["env"])
-    assert default_result.returncode == 0, default_result.stderr
-    default_output = parse_json_output(default_result)
+def test_main_runtime_contract_outputs_are_cwd_independent(isolated_paths, tmp_path):
+    repo_cwd_result = run_cli([], cwd=REPO_ROOT, env=isolated_paths["env"])
+    assert repo_cwd_result.returncode == 0, repo_cwd_result.stderr
+    repo_cwd_output = parse_json_output(repo_cwd_result)
 
-    override_result = run_cli(["--data-path", isolated_paths["tushare_data"]], env=isolated_paths["env"])
-    assert override_result.returncode == 0, override_result.stderr
-    override_output = parse_json_output(override_result)
+    temp_cwd_result = run_cli([], cwd=tmp_path, env=isolated_paths["env"])
+    assert temp_cwd_result.returncode == 0, temp_cwd_result.stderr
+    temp_cwd_output = parse_json_output(temp_cwd_result)
 
-    assert default_output["summary"]
-    assert override_output["summary"]
-    assert set(default_output["summary"]) == set(override_output["summary"])
+    assert set(repo_cwd_output) == set(temp_cwd_output)
+    assert set(repo_cwd_output["summary"]) == set(temp_cwd_output["summary"])
+    assert set(repo_cwd_output["weekly_performance"][0]) == set(temp_cwd_output["weekly_performance"][0])
+    assert repo_cwd_output == temp_cwd_output
