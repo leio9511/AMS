@@ -3,14 +3,17 @@ import sys
 import json
 import pytest
 import os
+from pathlib import Path
 
-# Absolute paths as per Mandatory File I/O Policy
-PROJECT_ROOT = "/root/projects/AMS"
-GOLDEN_CASES_FILE = os.path.join(PROJECT_ROOT, "tests/golden/baselines/golden_cases.json")
-GOLDEN_DATA_PATH = os.path.join(PROJECT_ROOT, "tests/golden/data/cb_history_factors_golden_2025_2026.csv")
+import site
+
+# Dynamic absolute paths as per Phase 1A Vocabulary
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+GOLDEN_CASES_FILE = PROJECT_ROOT / "tests/golden/baselines/golden_cases.json"
+GOLDEN_DATA_PATH = PROJECT_ROOT / "tests/golden/data/cb_history_factors_golden_2025_2026.csv"
 
 def load_base_config():
-    if not os.path.exists(GOLDEN_CASES_FILE):
+    if not GOLDEN_CASES_FILE.exists():
         pytest.skip(f"Golden cases file not found: {GOLDEN_CASES_FILE}")
     with open(GOLDEN_CASES_FILE, 'r') as f:
         data = json.load(f)
@@ -30,10 +33,13 @@ def run_backtest(params):
         "--tp-pos", str(params["tp_pos"]),
         "--tp-intra", str(params["tp_intra"]),
         "--sl", str(params["sl"]),
-        "--data-path", GOLDEN_DATA_PATH,
+        "--data-path", str(GOLDEN_DATA_PATH),
         "--format", "json"
     ]
-    result = subprocess.run(command, capture_output=True, text=True)
+    env = os.environ.copy()
+    user_site = site.getusersitepackages()
+    env["PYTHONPATH"] = f"{PROJECT_ROOT}:{user_site}"
+    result = subprocess.run(command, capture_output=True, text=True, env=env)
     if result.returncode != 0:
         print(f"Backtest failed with return code {result.returncode}")
         print(f"STDOUT: {result.stdout}")

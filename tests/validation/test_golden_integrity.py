@@ -2,14 +2,17 @@ import os
 import json
 import hashlib
 import pytest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def test_golden_snapshot_integrity():
     """Verify SHA256, size, and row count of the created snapshot match the metadata."""
-    metadata_path = "/root/projects/AMS/tests/golden/data/metadata.json"
-    snapshot_path = "/root/projects/AMS/tests/golden/data/cb_history_factors_golden_2025_2026.csv"
+    metadata_path = REPO_ROOT / "tests/golden/data/metadata.json"
+    snapshot_path = REPO_ROOT / "tests/golden/data/cb_history_factors_golden_2025_2026.csv"
     
-    assert os.path.exists(metadata_path), "Metadata file missing"
-    assert os.path.exists(snapshot_path), "Snapshot file missing"
+    assert metadata_path.exists(), "Metadata file missing"
+    assert snapshot_path.exists(), "Snapshot file missing"
     
     with open(metadata_path, 'r') as f:
         metadata = json.load(f)
@@ -33,8 +36,8 @@ def test_golden_snapshot_integrity():
 
 def test_baseline_artifacts_loadable():
     """Verify golden_cases.json is valid JSON and contains all required keys."""
-    baseline_path = "/root/projects/AMS/tests/golden/baselines/golden_cases.json"
-    assert os.path.exists(baseline_path), "Baseline file missing"
+    baseline_path = REPO_ROOT / "tests/golden/baselines/golden_cases.json"
+    assert baseline_path.exists(), "Baseline file missing"
     
     with open(baseline_path, 'r') as f:
         baselines = json.load(f)
@@ -61,13 +64,13 @@ def test_directory_discipline():
     # but we can check if any files were created in the project root that shouldn't be there.
     # For now, we'll just check that the files we expected to create are in the right places.
     allowed_dirs = [
-        "/root/projects/AMS/tests/golden/data/",
-        "/root/projects/AMS/tests/golden/baselines/"
+        REPO_ROOT / "tests/golden/data/",
+        REPO_ROOT / "tests/golden/baselines/"
     ]
     
     for d in allowed_dirs:
-        assert os.path.isdir(d), f"Directory {d} should exist"
+        assert d.is_dir(), f"Directory {d} should exist"
     
-    # We could also check that no random files were created in /root/projects/AMS/ 
+    # We could also check that no random files were created in REPO_ROOT 
     # during this process, but that's hard to verify without a baseline of the root dir.
     pass

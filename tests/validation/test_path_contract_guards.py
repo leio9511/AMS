@@ -4,16 +4,19 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def test_backtest_path_surface_rejects_root_projects_and_openclaw_workspace_contracts():
+    # Obfuscate to prevent self-matching when scanning this file
     forbidden_patterns = [
-        "/root/projects/AMS",
-        "/root/.openclaw",
-        ".openclaw/workspace"
+        "/root/" + "projects/AMS",
+        "/root/" + ".openclaw",
+        ".openclaw/" + "workspace"
     ]
     
     files_to_check = [
         REPO_ROOT / "docs" / "ROADMAP.md",
         REPO_ROOT / "docs" / "architecture" / "ARCHITECTURE.md"
     ]
+    # Add all validation test files
+    files_to_check.extend(list((REPO_ROOT / "tests" / "validation").glob("*.py")))
     
     for file_path in files_to_check:
         if file_path.exists():
@@ -42,5 +45,5 @@ def test_roadmap_docs_keep_phase2_gate_without_host_layout_canon():
     assert "ISSUE-1142 is a blocking issue for AMS Phase 2." in content
     
     # Verify it doesn't use the old layout canon
-    assert "/root/projects/AMS/data/cb_history_factors.csv" not in content
+    assert ("/root/" + "projects/AMS/data/cb_history_factors.csv") not in content
     assert "without declaring a root-only machine path as the canonical contract" in content

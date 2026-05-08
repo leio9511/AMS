@@ -3,12 +3,16 @@ import sys
 import json
 import pytest
 import os
+from pathlib import Path
 
-GOLDEN_CASES_FILE = "/root/projects/AMS/tests/golden/baselines/golden_cases.json"
-GOLDEN_DATA_PATH = "/root/projects/AMS/tests/golden/data/cb_history_factors_golden_2025_2026.csv"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+GOLDEN_CASES_FILE = REPO_ROOT / "tests/golden/baselines/golden_cases.json"
+GOLDEN_DATA_PATH = REPO_ROOT / "tests/golden/data/cb_history_factors_golden_2025_2026.csv"
+
+import site
 
 def load_golden_cases():
-    if not os.path.exists(GOLDEN_CASES_FILE):
+    if not GOLDEN_CASES_FILE.exists():
         return {}
     with open(GOLDEN_CASES_FILE, 'r') as f:
         return json.load(f)
@@ -31,11 +35,14 @@ def test_golden_cases(case_name, case_data):
         "--tp-pos", str(case_data["tp_pos"]),
         "--tp-intra", str(case_data["tp_intra"]),
         "--sl", str(case_data["sl"]),
-        "--data-path", GOLDEN_DATA_PATH,
+        "--data-path", str(GOLDEN_DATA_PATH),
         "--format", "json"
     ]
     
-    result = subprocess.run(command, capture_output=True, text=True)
+    env = os.environ.copy()
+    user_site = site.getusersitepackages()
+    env["PYTHONPATH"] = f"{REPO_ROOT}:{user_site}"
+    result = subprocess.run(command, capture_output=True, text=True, env=env)
     assert result.returncode == 0, f"Command failed for {case_name}: {result.stderr}"
     
     try:
