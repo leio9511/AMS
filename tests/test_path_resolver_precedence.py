@@ -99,6 +99,29 @@ def test_fail_fast_on_invalid_cli_path(monkeypatch):
         )
 
 
+def test_tilde_expanded_host_layout_paths_are_rejected(monkeypatch):
+    monkeypatch.setenv("HOME", "/root")
+
+    with pytest.raises(HostLayoutCouplingError, match="/root/projects/AMS"):
+        resolve_mutable_data_path(
+            default_relative_path="default/data",
+            cli_override="~/projects/AMS/data.csv",
+        )
+
+    monkeypatch.setenv("AMS_DATA_DIR", "~/.openclaw/data.csv")
+    with pytest.raises(HostLayoutCouplingError, match="/root/.openclaw"):
+        resolve_mutable_data_path(
+            default_relative_path="default/data",
+            env_var="AMS_DATA_DIR",
+        )
+
+    with pytest.raises(HostLayoutCouplingError, match="/root/projects/AMS"):
+        resolve_mutable_data_path(
+            default_relative_path="default/data",
+            config_override="~/projects/AMS/config.csv",
+        )
+
+
 def test_explicit_absolute_override_accepted(monkeypatch):
     monkeypatch.setenv("AMS_DATA_DIR", "/absolute/env/path")
     res = resolve_mutable_data_path(

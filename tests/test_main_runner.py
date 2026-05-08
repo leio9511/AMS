@@ -116,6 +116,20 @@ def test_explicit_data_path_is_resolved_as_cli_mutable_data_override(tmp_path):
             )
 
 
+def test_explicit_data_path_rejects_empty_cli_override():
+    with patch("main_runner.resolve_mutable_data_path", wraps=main_runner.resolve_mutable_data_path) as mock_resolver:
+        with pytest.raises(ValueError, match="Invalid path provided via CLI: empty string"):
+            main_runner.resolve_backtest_data_path(
+                explicit_data_path="",
+                requested_source="auto",
+            )
+
+    mock_resolver.assert_called_once_with(
+        default_relative_path="data/cb_history_factors_jqdata.csv",
+        cli_override="",
+    )
+
+
 def test_explicit_data_path_rejects_host_layout_coupling():
     prohibited_paths = [
         "/root/projects/AMS/data/cb_history_factors_jqdata.csv",

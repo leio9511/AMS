@@ -1,5 +1,6 @@
 import json
 import os
+import site
 import subprocess
 import sys
 from pathlib import Path
@@ -8,7 +9,6 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-USER_SITE_PACKAGES = Path("/home/openclaw/.local") / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
 ROOT_PROJECTS_AMS = "/root/" + "projects/AMS"
 ROOT_OPENCLAW = "/root/" + ".openclaw"
 OPENCLAW_WORKSPACE = ".openclaw/" + "workspace"
@@ -43,15 +43,15 @@ def _run_cli(extra_args, *, cwd: Path, env: dict | None = None) -> subprocess.Co
     process_env = os.environ.copy()
     if env:
         process_env.update(env)
-    process_env["PYTHONPATH"] = os.pathsep.join(
-        path
-        for path in [
-            str(REPO_ROOT),
-            str(USER_SITE_PACKAGES),
-            process_env.get("PYTHONPATH", ""),
-        ]
-        if path
-    )
+    pythonpath_entries = [str(REPO_ROOT)]
+    for site_path in site.getsitepackages() + [site.getusersitepackages()]:
+        site_path_obj = Path(site_path)
+        if site_path_obj.exists():
+            pythonpath_entries.append(str(site_path_obj))
+    existing_pythonpath = process_env.get("PYTHONPATH")
+    if existing_pythonpath:
+        pythonpath_entries.append(existing_pythonpath)
+    process_env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
     return subprocess.run(command, capture_output=True, text=True, cwd=cwd, env=process_env)
 
 

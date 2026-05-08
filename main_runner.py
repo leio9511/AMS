@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 def resolve_backtest_data_path(*, explicit_data_path: str | None, requested_source: str) -> str:
-    if explicit_data_path:
+    if explicit_data_path is not None:
         resolved = resolve_mutable_data_path(
             default_relative_path="data/cb_history_factors_jqdata.csv",
             cli_override=explicit_data_path,

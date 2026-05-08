@@ -78,8 +78,11 @@ def _resolve_path_with_precedence(
         validate_no_host_coupling(val_str)
         path_obj = Path(val_str).expanduser()
         if path_obj.is_absolute():
-            return ResolutionResult(path=path_obj.resolve(), source=source)
-        return ResolutionResult(path=(get_repo_root() / path_obj).resolve(), source=source)
+            resolved_path = path_obj.resolve()
+        else:
+            resolved_path = (get_repo_root() / path_obj).resolve()
+        validate_no_host_coupling(resolved_path)
+        return ResolutionResult(path=resolved_path, source=source)
         
     # Default fallback
     val_str = str(default_relative_path).strip()
