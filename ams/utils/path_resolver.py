@@ -43,3 +43,67 @@ def resolve_repo_asset(relative_path: str | Path) -> Path:
         raise ValueError(f"Path {path_obj} resolves outside the repository root {repo_root}")
         
     return resolved
+
+def _resolve_path_with_precedence(
+    default_relative_path: str | Path,
+    cli_override: str | Path | None = None,
+    env_var: str | None = None,
+    config_override: str | Path | None = None,
+) -> Path:
+    candidates = []
+    if cli_override is not None:
+        candidates.append(("CLI", cli_override))
+    
+    if env_var is not None:
+        env_val = os.environ.get(env_var)
+        if env_val is not None:
+            candidates.append(("ENV", env_val))
+    
+    if config_override is not None:
+        candidates.append(("CONFIG", config_override))
+    
+    for source, val in candidates:
+        val_str = str(val).strip()
+        if not val_str:
+            raise ValueError(f"Invalid path provided via {source}: empty string")
+        validate_no_host_coupling(val_str)
+        path_obj = Path(val_str)
+        if path_obj.is_absolute():
+            return path_obj
+        return (get_repo_root() / path_obj).resolve()
+        
+    # Default fallback
+    val_str = str(default_relative_path).strip()
+    if not val_str:
+        raise ValueError("Invalid default path: empty string")
+    validate_no_host_coupling(val_str)
+    
+    return (get_repo_root() / Path(val_str)).resolve()
+
+def resolve_mutable_data_path(
+    default_relative_path: str | Path,
+    cli_override: str | Path | None = None,
+    env_var: str | None = None,
+    config_override: str | Path | None = None,
+) -> Path:
+    """
+    Resolves mutable research/backtest data path following precedence:
+    CLI > ENV > AMS-owned config > project-local default
+    """
+    return _resolve_path_with_precedence(
+        default_relative_path, cli_override, env_var, config_override
+    )
+
+def resolve_runtime_output_path(
+    default_relative_path: str | Path,
+    cli_override: str | Path | None = None,
+    env_var: str | None = None,
+    config_override: str | Path | None = None,
+) -> Path:
+    """
+    Resolves runtime outputs/state path following precedence:
+    CLI > ENV > AMS-owned config > project-local default
+    """
+    return _resolve_path_with_precedence(
+        default_relative_path, cli_override, env_var, config_override
+    )
