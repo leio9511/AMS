@@ -245,7 +245,7 @@ from ams.validators.cb_data_validator import DatasetSemanticValidator, DataSeman
 import json
 
 @pytest.mark.legacy_dataset_semantic
-def test_dataset_semantic_validator_default_baseline_uses_project_local_contract_path():
+def test_validator_uses_repo_relative_paths():
     validator = DatasetSemanticValidator()
 
     assert Path(validator.baseline_path) == get_repo_root() / "data" / "cb_history_factors.metrics.json"
@@ -253,7 +253,7 @@ def test_dataset_semantic_validator_default_baseline_uses_project_local_contract
 
 
 @pytest.mark.legacy_dataset_semantic
-def test_dataset_semantic_validator_accepts_explicit_temp_baseline_path(tmp_path):
+def test_validator_consumes_resolver_for_metrics(tmp_path):
     baseline_file = tmp_path / "baseline.json"
     baseline_data = {
         "row_count": 100000,
