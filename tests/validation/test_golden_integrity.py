@@ -71,3 +71,22 @@ def test_directory_discipline():
 
     for directory in allowed_dirs:
         assert directory.is_dir(), f"Directory {directory} should exist"
+
+
+def test_golden_metadata_does_not_bake_in_root_lineage():
+    """
+    Test Case 1: JSON payloads or report assertions shouldn't fail because 
+    the expected path output string lacks `/root/...`.
+    """
+    metadata_path = resolve_repo_asset("tests/golden/data/metadata.json")
+    metadata_text = metadata_path.read_text(encoding="utf-8")
+    metadata = json.loads(metadata_text)
+    
+    assert "source_lineage" in metadata
+    assert "Repo-owned golden snapshot" in metadata["source_lineage"]
+    
+    # Assert structural validation fields confirm contract correctness without absolute prefixes
+    for key, value in metadata.items():
+        if isinstance(value, str):
+            for pattern in FORBIDDEN_HOST_LAYOUT_TEXT:
+                assert pattern not in value, f"Host layout pattern found in {key}: {value}"

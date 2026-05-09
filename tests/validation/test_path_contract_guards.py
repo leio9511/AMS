@@ -94,3 +94,49 @@ def test_roadmap_docs_keep_phase2_gate_without_host_layout_canon():
     assert "ISSUE-1142 is a blocking issue for AMS Phase 2." in content
     assert ("/root/" + "projects/AMS/data/cb_history_factors.csv") not in content
     assert "without declaring a root-only machine path as the canonical contract" in content
+
+
+def test_path_consistency_validates_contract_not_host_layout(monkeypatch):
+    """
+    Test Case 2: Verify that resolve_mutable_data_path overrides trigger 
+    appropriately across boundaries without falling back to absolute default accidents.
+    """
+    from ams.utils.path_resolver import resolve_mutable_data_path
+    
+    # 1. Override via CLI is respected
+    res1 = resolve_mutable_data_path(
+        default_relative_path="data/test.csv",
+        cli_override="data/cli_test.csv"
+    )
+    assert res1.source == "CLI"
+    assert res1.path.name == "cli_test.csv"
+
+    # 2. Override via ENV is respected
+    monkeypatch.setenv("AMS_DATA_PATH", "data/env_test.csv")
+    res2 = resolve_mutable_data_path(
+        default_relative_path="data/test.csv",
+        env_var="AMS_DATA_PATH"
+    )
+    assert res2.source == "ENV"
+    assert res2.path.name == "env_test.csv"
+
+
+def test_validation_guards_trigger_on_layout_coupling_reintroduction():
+    """
+    Test Case 3: If a mocked function artificially tries to use a root-bound path,
+    the negative/anti-regression guards catch it immediately and turn the suite red.
+    """
+    from ams.utils.path_resolver import resolve_mutable_data_path, HostLayoutCouplingError
+    
+    forbidden1 = "/root/" + "projects/AMS/data/test.csv"
+    forbidden2 = "/root/" + ".openclaw/config.json"
+    forbidden3 = "/home/user/" + ".openclaw/" + "workspace/tmp"
+    
+    with pytest.raises(HostLayoutCouplingError, match="projects/AMS"):
+        resolve_mutable_data_path(default_relative_path=forbidden1)
+        
+    with pytest.raises(HostLayoutCouplingError, match=".openclaw"):
+        resolve_mutable_data_path(default_relative_path="data/test.csv", cli_override=forbidden2)
+        
+    with pytest.raises(HostLayoutCouplingError, match="workspace"):
+        resolve_mutable_data_path(default_relative_path="data/test.csv", config_override=forbidden3)
