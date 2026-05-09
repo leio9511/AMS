@@ -1,5 +1,5 @@
 #!/bin/bash
-cd /root/.openclaw/workspace/AMS/scripts
+cd "$(dirname "$0")"
 python3 weekly_audit.py
 
 TODAY=$(date +%Y%m%d)

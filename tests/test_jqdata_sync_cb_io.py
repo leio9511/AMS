@@ -4,12 +4,14 @@ import os
 import pandas as pd
 import pytest
 import shutil
+import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 # Prepend project root to imports if necessary, or assume installed in environment
 # Since it's a monorepo, we might need to adjust sys.path
 import sys
-sys.path.append("/root/projects/AMS")
+sys.path.insert(0, str(Path(__file__).parent.parent.resolve()))
 
 from etl.jqdata_sync_cb import sync_cb_data
 
@@ -252,3 +254,48 @@ def test_etl_path_contract_in_non_root_environment(mock_jqdata, monkeypatch):
         
         mock_replace.assert_any_call(f"{non_root_dataset}.tmp", non_root_dataset)
         mock_replace.assert_any_call(f"{non_root_metrics}.tmp", non_root_metrics)
+
+def test_fixtures_do_not_rely_on_root_absolute_paths(isolated_paths):
+    # Test Case 1: test_fixtures_do_not_rely_on_root_absolute_paths
+    # Expected: Assert that internal test path configurations are portable across environments.
+    prohibited = ["/root/", ".openclaw"]
+    
+    for key, path in isolated_paths.items():
+        if isinstance(path, str) and path.startswith("/"):
+            for p in prohibited:
+                assert p not in path, f"Path {path} for {key} contains prohibited structure {p}"
+
+def test_smoke_scripts_are_executable_outside_root(tmp_path):
+    # Test Case 2: test_smoke_scripts_are_executable_outside_root
+    # Expected: A subprocess test confirming the test runners and shell scripts don't crash when executed in a clean non-root directory layout.
+    
+    script_path = Path(__file__).parent.parent / "scripts" / "run_audit.sh"
+    report_script = Path(__file__).parent.parent / "test_report.py"
+    
+    env = os.environ.copy()
+    
+    # Run test_report.py
+    process = subprocess.run(
+        [sys.executable, str(report_script)],
+        cwd=str(tmp_path),
+        env=env,
+        capture_output=True,
+        text=True
+    )
+    
+    # Should not fail with absolute path issues
+    assert "ModuleNotFoundError" not in process.stderr
+    assert "/root/" not in process.stderr
+    assert "/root/" not in process.stdout
+    
+    # Run scripts/run_audit.sh (it might fail due to lack of telegram/python env, but shouldn't fail due to /root paths)
+    if script_path.exists() and os.access(script_path, os.X_OK):
+        process_sh = subprocess.run(
+            ["bash", str(script_path)],
+            cwd=str(tmp_path),
+            env=env,
+            capture_output=True,
+            text=True
+        )
+        assert "/root/" not in process_sh.stderr
+        assert "/root/" not in process_sh.stdout

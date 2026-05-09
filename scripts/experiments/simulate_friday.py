@@ -1,7 +1,8 @@
 import sys
 import logging
+from pathlib import Path
 
-sys.path.append('/root/.openclaw/workspace/projects/AMS')
+sys.path.append(str(Path(__file__).parent.parent.parent.resolve()))
 from engine.event_engine import EventEngine, Event, EVENT_TICK
 from strategies.etf_arb import ETFArbStrategy
 from strategies.convertible_bond import ConvertibleBondStrategy

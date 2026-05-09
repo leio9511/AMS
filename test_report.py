@@ -19,9 +19,11 @@ import json
 import subprocess
 from datetime import datetime
 from unittest.mock import patch, MagicMock
+from pathlib import Path
 
 # 添加 AMS 目录到路径
-sys.path.insert(0, '/root/.openclaw/workspace/AMS')
+sys.path.insert(0, str(Path(__file__).parent.resolve()))
+sys.path.insert(0, str(Path(__file__).parent.resolve() / 'legacy_scripts'))
 
 # 导入被测试模块
 import etf_tracker
@@ -221,7 +223,7 @@ def run_test():
         'validator_results': validator.results
     }
     
-    result_path = '/root/.openclaw/workspace/AMS/test_result.json'
+    result_path = str(Path(__file__).parent / 'test_result.json')
     with open(result_path, 'w', encoding='utf-8') as f:
         json.dump(test_result, f, ensure_ascii=False, indent=2)
     print(f"\n[SAVED] 测试结果已保存到: {result_path}")

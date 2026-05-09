@@ -1,5 +1,6 @@
 import sys
-sys.path.append("/root/.openclaw/workspace/projects/AMS")
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent.parent.resolve()))
 from scripts.qmt_client import QMTClient
 
 client = QMTClient()

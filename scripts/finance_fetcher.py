@@ -3,7 +3,10 @@ import pandas as pd
 import time
 import os
 
-CACHE_FILE = "/root/.openclaw/workspace/AMS/cache/finance_cache.csv"
+from pathlib import Path
+
+# Fix cache file path to be relative to the script location
+CACHE_FILE = str(Path(__file__).parent.parent / "cache" / "finance_cache.csv")
 
 def fetch_fundamental_data():
     """Fetches fundamental data (PE-TTM, Total Market Cap) for A-shares."""
