@@ -8,7 +8,7 @@ from ams.core.history_datafeed import HistoryDataFeed
 from ams.core.sim_broker import SimBroker
 from ams.runners.backtest_runner import BacktestRunner
 from ams.models.config import TakeProfitConfig, TakeProfitMode
-from ams.utils.path_resolver import resolve_mutable_data_path
+from ams.utils.path_resolver import resolve_mutable_data_path, resolve_runtime_output_path
 from ams.utils.provider_config import (
     load_provider_config,
     resolve_provider_dataset_path,
@@ -51,6 +51,7 @@ def main():
     parser.add_argument('--sl', required=True, type=float, help="Threshold for intraday stop-loss (e.g., -0.08).")
     parser.add_argument('--data-source', default="auto", help="Provider name for contract-based dataset resolution. Use 'auto' to consume the AMS configured default provider.")
     parser.add_argument('--data-path', help="Explicit CSV path. When omitted, AMS resolves backtest data via provider contract precedence: explicit provider selection or the configured default provider's project-local dataset path.")
+    parser.add_argument('--output-dir', help="Explicit directory path to save reports. When omitted, AMS resolves the runtime output path.")
     parser.add_argument('--format', choices=['text', 'json'], default='text', help="Output format ('text' or 'json'). Default: 'text'.")
 
     args = parser.parse_args()
@@ -97,10 +98,28 @@ def main():
     df_equity = runner.run(args.start_date, args.end_date)
     report_data = reporting.generate_report_data(df_equity, args.capital)
             
+    output_dir_path = resolve_runtime_output_path(
+        default_relative_path="reports",
+        cli_override=args.output_dir,
+    ).path
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+    
+    import datetime
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
     if args.format == 'json':
-        print(reporting.format_json(report_data))
+        output_content = reporting.format_json(report_data)
+        report_file = output_dir_path / f"report_{timestamp}.json"
     else:
-        print(reporting.format_text(report_data))
+        output_content = reporting.format_text(report_data)
+        report_file = output_dir_path / f"report_{timestamp}.txt"
+
+    print(output_content)
+    try:
+        report_file.write_text(output_content, encoding="utf-8")
+        logger.info(f"Report saved to {report_file}")
+    except Exception as e:
+        logger.error(f"Failed to write report to {report_file}: {e}")
 
 if __name__ == "__main__":
     try:
