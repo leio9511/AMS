@@ -121,6 +121,7 @@ def _run_preflight_with_manifest(
 
 
 def test_preflight_runs_full_pytest_surface_for_missing_manifest(tmp_path):
+    """PR-001_2_1 TDD Case 1: missing ignore_tests.json → exit 0, zero --ignore args."""
     result, args_capture_path = _run_preflight_with_manifest(
         tmp_path,
         manifest_text=None,
@@ -191,6 +192,7 @@ def test_preflight_does_not_invoke_pytest_when_manifest_validation_fails(
 
 
 def test_preflight_runs_full_pytest_surface_for_canonical_empty_manifest(tmp_path):
+    """PR-001_2_1 TDD Case 2: {"pytest": []} → exit 0, zero --ignore args."""
     result, args_capture_path = _run_preflight_with_manifest(
         tmp_path,
         manifest_text=CANONICAL_EMPTY_MANIFEST,
@@ -244,6 +246,7 @@ def test_preflight_report_all_emits_summary_block_when_pytest_fails(tmp_path):
 
 
 def test_preflight_runs_full_pytest_surface_for_manifest_missing_pytest_field(tmp_path):
+    """PR-001_2_1 TDD Case 3: {} → exit 0, zero --ignore args."""
     result, args_capture_path = _run_preflight_with_manifest(
         tmp_path,
         manifest_text=json.dumps({}) + "\n",
@@ -253,6 +256,28 @@ def test_preflight_runs_full_pytest_surface_for_manifest_missing_pytest_field(tm
     assert args_capture_path.exists()
     assert args_capture_path.read_text(encoding="utf-8") == ""
     assert "✅ PREFLIGHT SUCCESS" in result.stdout
+
+
+def test_preflight_logs_no_ignore_diagnostic_for_ignore_nothing_manifests(
+    tmp_path,
+):
+    """PR-001_2_1: diagnostic log line appears for all ignore-nothing states.
+
+    Uses a failing pytest behavior so the log file is preserved on exit.
+    """
+    result, args_capture_path = _run_preflight_with_manifest(
+        tmp_path,
+        manifest_text=CANONICAL_EMPTY_MANIFEST,
+        pytest_behavior="fail-with-summary",
+    )
+
+    log_path = tmp_path / "repo" / "build_preflight.log"
+    assert log_path.exists()
+    log_content = log_path.read_text(encoding="utf-8")
+    assert (
+        "Contract Compliance Test: no ignore entries — running full test surface (no --ignore args)"
+        in log_content
+    )
 
 
 def test_preflight_report_all_still_hard_fails_before_pytest_on_prerequisite_error(

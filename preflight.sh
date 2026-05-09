@@ -105,7 +105,7 @@ run_contract_compliance_test() {
     if [ -s "$PYTEST_IGNORE_OUTPUT_FILE" ]; then
         mapfile -t PYTEST_IGNORE_ARGS < "$PYTEST_IGNORE_OUTPUT_FILE"
     else
-        echo "[$(date '+%H:%M:%S')] Contract Compliance Test: empty ignore manifest — running full test surface (no --ignore args)" >> "$LOG_FILE"
+        echo "[$(date '+%H:%M:%S')] Contract Compliance Test: no ignore entries — running full test surface (no --ignore args)" >> "$LOG_FILE"
     fi
 
     return 0
