@@ -1,6 +1,7 @@
 import argparse
 import sys
 import logging
+import datetime
 from decimal import Decimal
 from ams.core.factory import StrategyFactory
 from ams.utils import reporting
@@ -104,7 +105,6 @@ def main():
     ).path
     output_dir_path.mkdir(parents=True, exist_ok=True)
     
-    import datetime
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if args.format == 'json':
