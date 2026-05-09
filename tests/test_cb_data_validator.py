@@ -277,7 +277,7 @@ def test_dataset_semantic_validator_accepts_explicit_temp_baseline_path(tmp_path
 
 
 @pytest.mark.legacy_dataset_semantic
-def test_dataset_semantic_validator_rejects_root_bound_baseline_path():
+def test_validator_rejects_root_bound_paths_in_smoke():
     with pytest.raises(HostLayoutCouplingError):
         DatasetSemanticValidator(baseline_path="/root/" + "projects/AMS/data/cb_history_factors.metrics.json")
 
