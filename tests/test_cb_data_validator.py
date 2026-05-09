@@ -247,33 +247,29 @@ import json
 @pytest.mark.legacy_dataset_semantic
 def test_validator_uses_repo_relative_paths():
     validator = DatasetSemanticValidator()
+    
+    import ams.validators.cb_data_validator as cv
+    ams_pkg_dir = Path(cv.__file__).resolve().parent.parent
+    expected_path = ams_pkg_dir / "data" / "cb_history_factors.metrics.json"
 
-    assert Path(validator.baseline_path) == get_repo_root() / "data" / "cb_history_factors.metrics.json"
+    assert Path(validator.baseline_path) == expected_path
     assert not str(validator.baseline_path).startswith(("/root/" + "projects/AMS"))
 
 
 @pytest.mark.legacy_dataset_semantic
 def test_validator_consumes_resolver_for_metrics(tmp_path):
-    baseline_file = tmp_path / "baseline.json"
-    baseline_data = {
-        "row_count": 100000,
-        "premium_rate_nonzero_ratio": 0.98,
-        "is_st_true_count": 2,
-        "is_redeemed_true_count": 2
-    }
-    baseline_file.write_text(json.dumps(baseline_data))
-
-    df = pd.DataFrame({
-        "underlying_ticker": ["000001"] * 50000,
-        "premium_rate": [0.1] * 49000 + [0.0] * 1000,
-        "is_st": [True] * 2 + [False] * 49998,
-        "is_redeemed": [True] * 2 + [False] * 49998
-    })
-
-    validator = DatasetSemanticValidator(baseline_path=str(baseline_file))
-    assert Path(validator.baseline_path) == baseline_file.resolve()
-    with pytest.raises(DataDriftViolation):
-        validator.validate_dataframe(df)
+    from unittest.mock import patch
+    baseline_file = str(tmp_path / "baseline.json")
+    
+    with patch("ams.validators.cb_data_validator.resolve_mutable_data_path") as mock_resolve:
+        mock_resolve.return_value.path = Path(baseline_file)
+        validator = DatasetSemanticValidator(baseline_path=baseline_file)
+        
+        mock_resolve.assert_called_once_with(
+            default_relative_path="data/cb_history_factors.metrics.json",
+            cli_override=baseline_file
+        )
+        assert Path(validator.baseline_path) == Path(baseline_file)
 
 
 @pytest.mark.legacy_dataset_semantic

@@ -148,14 +148,14 @@ class DatasetSemanticValidator:
 
     def __init__(self, baseline_path=None):
         if baseline_path is None:
-            self.baseline_path = resolve_mutable_data_path(
-                default_relative_path=self.DEFAULT_BASELINE_RELATIVE_PATH
-            ).path
+            # Baseline schemas are located relative to the ams package
+            ams_pkg_dir = Path(__file__).resolve().parent.parent
+            self.baseline_path = str(ams_pkg_dir / self.DEFAULT_BASELINE_RELATIVE_PATH)
         else:
-            self.baseline_path = resolve_mutable_data_path(
+            self.baseline_path = str(resolve_mutable_data_path(
                 default_relative_path=self.DEFAULT_BASELINE_RELATIVE_PATH,
                 cli_override=baseline_path,
-            ).path
+            ).path)
         self.thresholds = {
             "row_count_min": 50000,
             "underlying_ticker_nonnull_ratio_min": 0.99,
