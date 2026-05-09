@@ -230,3 +230,13 @@ def get_provider_artifact_paths(provider_name: str | None = None, *, config: Map
     active_config = config or load_provider_config()
     selected_provider = resolve_provider_name(provider_name, config=active_config)
     return dict(active_config["providers"][selected_provider])
+
+
+def resolve_provider_dataset_path(provider_name: str | None = None, *, config: Mapping[str, Any] | None = None) -> str:
+    active_config = config or load_provider_config()
+    resolved_name = resolve_provider_name(provider_name, config=active_config)
+    paths = get_provider_artifact_paths(resolved_name, config=active_config)
+    data_path = paths.get("dataset_path")
+    if not data_path:
+        raise ValueError(f"Provider '{resolved_name}' does not define a dataset_path")
+    return data_path

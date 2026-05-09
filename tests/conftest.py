@@ -87,7 +87,13 @@ def isolated_paths(tmp_path):
         "AMS_REPORTS_DIR": str(reports_dir),
     }
 
-    with patch.dict(os.environ, isolated_env, clear=False):
+    clean_env = os.environ.copy()
+    for k in list(clean_env.keys()):
+        if k.startswith("AMS_"):
+            del clean_env[k]
+    clean_env.update(isolated_env)
+
+    with patch.dict(os.environ, clean_env, clear=True):
         yield {
             "data": str(provider_data_path),
             "default_data": str(provider_data_path),
@@ -95,7 +101,7 @@ def isolated_paths(tmp_path):
             "default_metrics": str(provider_metrics_path),
             "reports": str(reports_dir),
             "config": str(config_path),
-            "env": isolated_env.copy(),
+            "env": clean_env.copy(),
             "source_fixture": str(source_fixture),
             "tushare_data": str(tushare_data_path),
             "tushare_metrics": str(tushare_metrics_path),

@@ -32,7 +32,7 @@ def test_main_runner_uses_project_local_default_from_provider_config():
     }
 
     with patch("sys.argv", test_args), \
-         patch("main_runner.load_provider_config", return_value=provider_config), \
+         patch("ams.utils.provider_config.load_provider_config", return_value=provider_config), \
          patch("main_runner.HistoryDataFeed") as mock_data_feed, \
          patch("main_runner.SimBroker"), \
          patch("main_runner.StrategyFactory.create_strategy"), \
@@ -59,7 +59,7 @@ def test_main_runner_unknown_provider_fails_fast():
     }
 
     with patch("sys.argv", test_args), \
-         patch("main_runner.load_provider_config", return_value=provider_config):
+         patch("ams.utils.provider_config.load_provider_config", return_value=provider_config):
         with pytest.raises(ValueError, match="Unknown provider: not-a-provider"):
             main_runner.main()
 
@@ -161,7 +161,7 @@ def test_provider_default_data_path_is_not_re_resolved_by_cwd(tmp_path, monkeypa
 
     monkeypatch.chdir(tmp_path)
 
-    with patch("main_runner.load_provider_config", return_value=provider_config), \
+    with patch("ams.utils.provider_config.load_provider_config", return_value=provider_config), \
          patch("main_runner.resolve_mutable_data_path") as mock_resolver, \
          patch("main_runner.HistoryDataFeed") as mock_data_feed:
         resolved = main_runner.resolve_backtest_data_path(
@@ -222,7 +222,7 @@ def test_main_runner_argument_default():
     }
     
     with patch("sys.argv", test_args), \
-         patch("main_runner.load_provider_config", return_value=provider_config), \
+         patch("ams.utils.provider_config.load_provider_config", return_value=provider_config), \
          patch("main_runner.HistoryDataFeed") as mock_data_feed, \
          patch("main_runner.SimBroker"), \
          patch("main_runner.StrategyFactory.create_strategy"), \

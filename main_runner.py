@@ -10,9 +10,8 @@ from ams.runners.backtest_runner import BacktestRunner
 from ams.models.config import TakeProfitConfig, TakeProfitMode
 from ams.utils.path_resolver import resolve_mutable_data_path
 from ams.utils.provider_config import (
-    get_provider_artifact_paths,
     load_provider_config,
-    resolve_provider_name,
+    resolve_provider_dataset_path,
 )
 
 # Ensure cb_rotation is registered
@@ -32,13 +31,7 @@ def resolve_backtest_data_path(*, explicit_data_path: str | None, requested_sour
             raise ValueError(f"Explicit data path does not exist: {resolved}")
         return str(resolved)
 
-    config = load_provider_config()
-    provider_name = resolve_provider_name(requested_source, config=config)
-    provider_paths = get_provider_artifact_paths(provider_name, config=config)
-    data_path = provider_paths.get("dataset_path")
-    if not data_path:
-        raise ValueError(f"Provider '{provider_name}' does not define a dataset_path")
-    return data_path
+    return resolve_provider_dataset_path(requested_source)
 
 
 def main():
