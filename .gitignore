@@ -68,3 +68,7 @@ data/
 .sdlc_repo.lock
 .sdlc_lock_manifest.json
 output.json
+
+# Generated reports
+reports/report_*.json
+reports/report_*.txt
