@@ -1,162 +1,154 @@
-import subprocess
-import sys
 import json
+from copy import deepcopy
+from decimal import Decimal
+
 import pytest
-import os
 
-import site
+from ams.core.cb_rotation_strategy import CBRotationStrategy
+from ams.core.factory import StrategyFactory
+from ams.core.history_datafeed import HistoryDataFeed
+from ams.core.sim_broker import SimBroker
+from ams.models.config import TakeProfitConfig, TakeProfitMode
+from ams.runners.backtest_runner import BacktestRunner
+from ams.utils import reporting
+from ams.utils.path_resolver import resolve_repo_asset
 
-from ams.utils.path_resolver import get_repo_root, resolve_repo_asset
 
-# Resolve golden fixtures as repo-owned stable assets independent of cwd.
-PROJECT_ROOT = get_repo_root()
+SUMMARY_METRICS = (
+    "final_equity",
+    "total_return",
+    "max_drawdown",
+    "calmar_ratio",
+)
+SENSITIVITY_CASE_KEY = "CASE_WEEKLY_BEST"
 GOLDEN_CASES_FILE = resolve_repo_asset("tests/golden/baselines/golden_cases.json")
 GOLDEN_DATA_PATH = resolve_repo_asset("tests/golden/data/cb_history_factors_golden_2025_2026.csv")
 
-def load_base_config():
+
+def _ensure_strategy_registered():
+    StrategyFactory.register_strategy("cb_rotation")(CBRotationStrategy)
+
+
+def _load_golden_case(case_key: str = SENSITIVITY_CASE_KEY):
     if not GOLDEN_CASES_FILE.exists():
         pytest.skip(f"Golden cases file not found: {GOLDEN_CASES_FILE}")
+
     data = json.loads(GOLDEN_CASES_FILE.read_text(encoding="utf-8"))
-    # Use CASE_WEEKLY_BEST as the standard sensitivity baseline
-    return data.get("CASE_WEEKLY_BEST")
+    case = data.get(case_key)
+    assert case is not None, f"{case_key} not found in golden_cases.json"
+    return case
 
-def run_backtest(params):
-    command = [
-        sys.executable, str(PROJECT_ROOT / "main_runner.py"),
-        "--strategy", params["strategy"],
-        "--start-date", params["start_date"],
-        "--end-date", params["end_date"],
-        "--capital", str(params["capital"]),
-        "--top-n", str(params["top_n"]),
-        "--rebalance", params["rebalance"],
-        "--tp-mode", params["tp_mode"],
-        "--tp-pos", str(params["tp_pos"]),
-        "--tp-intra", str(params["tp_intra"]),
-        "--sl", str(params["sl"]),
-        "--data-path", str(GOLDEN_DATA_PATH),
-        "--format", "json"
-    ]
-    env = os.environ.copy()
-    user_site = site.getusersitepackages()
-    env["PYTHONPATH"] = f"{PROJECT_ROOT}:{user_site}"
-    result = subprocess.run(command, capture_output=True, text=True, cwd=PROJECT_ROOT, env=env)
-    if result.returncode != 0:
-        print(f"Backtest failed with return code {result.returncode}")
-        print(f"STDOUT: {result.stdout}")
-        print(f"STDERR: {result.stderr}")
-        return None
-    try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError as e:
-        print(f"Failed to decode JSON: {e}")
-        print(f"STDOUT: {result.stdout}")
+
+def _build_take_profit_config(params):
+    tp_mode = params.get("tp_mode")
+    if tp_mode is None:
         return None
 
-def test_stop_loss_sensitivity():
-    """
-    Test Case 1: Verify that changing sl affects the summary results.
-    """
-    base_params = load_base_config()
-    assert base_params is not None, "CASE_WEEKLY_BEST not found in golden_cases.json"
-    
-    res_base = run_backtest(base_params)
-    assert res_base is not None, "Base backtest failed"
-    summary_base = res_base["summary"]
-    
-    # Perturb sl
-    perturbed_params = base_params.copy()
-    perturbed_params["sl"] = -0.05  # Base is -0.10
-    res_perturbed = run_backtest(perturbed_params)
-    assert res_perturbed is not None, "Perturbed backtest failed (sl)"
-    summary_perturbed = res_perturbed["summary"]
-    
-    # Check sensitivity
-    metrics = ["final_equity", "total_return", "max_drawdown", "calmar_ratio"]
-    different = any(str(summary_base[m]) != str(summary_perturbed[m]) for m in metrics)
-    
-    assert different, (
-        f"Sensitivity failure: Summary results (final_equity, total_return, max_drawdown, calmar_ratio) "
-        f"remained identical when sl was modified from {base_params['sl']} to {perturbed_params['sl']}. "
-        f"This suggests 'sl' parameter may be disconnected from execution logic."
+    mode = TakeProfitMode(tp_mode)
+    pos_threshold = params.get("tp_pos")
+    intra_threshold = params.get("tp_intra")
+
+    if mode == TakeProfitMode.BOTH and (pos_threshold is None or intra_threshold is None):
+        raise ValueError(f"ERROR: --tp-mode '{tp_mode}' requires both --tp-pos and --tp-intra to be set.")
+
+    return TakeProfitConfig(
+        mode=mode,
+        pos_threshold=Decimal(str(pos_threshold)) if pos_threshold is not None else None,
+        intra_threshold=Decimal(str(intra_threshold)) if intra_threshold is not None else None,
     )
 
-def test_tp_pos_sensitivity():
-    """
-    Test Case 2: Verify that changing tp_pos affects the summary results.
-    """
-    base_params = load_base_config()
-    assert base_params is not None, "CASE_WEEKLY_BEST not found in golden_cases.json"
-    
-    res_base = run_backtest(base_params)
-    assert res_base is not None, "Base backtest failed"
-    summary_base = res_base["summary"]
-    
-    # Perturb tp_pos
-    perturbed_params = base_params.copy()
-    perturbed_params["tp_pos"] = 0.25  # Base is 0.15
-    res_perturbed = run_backtest(perturbed_params)
-    assert res_perturbed is not None, "Perturbed backtest failed (tp_pos)"
-    summary_perturbed = res_perturbed["summary"]
-    
-    # Check sensitivity
-    metrics = ["final_equity", "total_return", "max_drawdown", "calmar_ratio"]
-    different = any(str(summary_base[m]) != str(summary_perturbed[m]) for m in metrics)
-    
-    assert different, (
-        f"Sensitivity failure: Summary results remained identical when tp_pos was modified "
-        f"from {base_params['tp_pos']} to {perturbed_params['tp_pos']}. "
-        f"This suggests 'tp_pos' parameter may be disconnected from execution logic."
+
+def _run_backtest_in_process(params, golden_market_data):
+    _ensure_strategy_registered()
+
+    data_feed = HistoryDataFeed(data=golden_market_data)
+    broker = SimBroker(initial_cash=params["capital"])
+    strategy = StrategyFactory.create_strategy(
+        params["strategy"],
+        top_n=params["top_n"],
+        rebalance_period=params["rebalance"],
+        stop_loss_threshold=params["sl"],
+        tp_mode=params["tp_mode"],
+        tp_config=_build_take_profit_config(params),
+    )
+    runner = BacktestRunner(data_feed, broker, strategy)
+    equity_curve = runner.run(params["start_date"], params["end_date"])
+    return reporting.generate_report_data(equity_curve, params["capital"])
+
+
+def _summary_changed(before_summary, after_summary):
+    return any(str(before_summary[metric]) != str(after_summary[metric]) for metric in SUMMARY_METRICS)
+
+
+def _describe_summary_comparison(before_summary, after_summary):
+    return "; ".join(
+        f"{metric}: {before_summary[metric]} -> {after_summary[metric]}"
+        for metric in SUMMARY_METRICS
     )
 
-def test_tp_intra_sensitivity():
-    """
-    Test Case 3: Verify that changing tp_intra affects the summary results.
-    """
-    base_params = load_base_config()
-    assert base_params is not None, "CASE_WEEKLY_BEST not found in golden_cases.json"
-    
-    res_base = run_backtest(base_params)
-    assert res_base is not None, "Base backtest failed"
-    summary_base = res_base["summary"]
-    
-    # Perturb tp_intra
-    perturbed_params = base_params.copy()
-    perturbed_params["tp_intra"] = 0.08  # Base is 0.12
-    res_perturbed = run_backtest(perturbed_params)
-    assert res_perturbed is not None, "Perturbed backtest failed (tp_intra)"
-    summary_perturbed = res_perturbed["summary"]
-    
-    # Check sensitivity
-    metrics = ["final_equity", "total_return", "max_drawdown", "calmar_ratio"]
-    different = any(str(summary_base[m]) != str(summary_perturbed[m]) for m in metrics)
-    
-    assert different, (
-        f"Sensitivity failure: Summary results remained identical when tp_intra was modified "
-        f"from {base_params['tp_intra']} to {perturbed_params['tp_intra']}. "
-        f"This suggests 'tp_intra' parameter may be disconnected from execution logic."
+
+@pytest.fixture(scope="module")
+def baseline_case():
+    # Shared baseline config path and case loading for the sensitivity matrix.
+    return _load_golden_case()
+
+
+@pytest.fixture(scope="module")
+def golden_market_data():
+    if not GOLDEN_DATA_PATH.exists():
+        pytest.skip(f"Golden data file not found: {GOLDEN_DATA_PATH}")
+
+    # Load the repo-owned golden dataset once, then hand each run a fresh feed copy.
+    return HistoryDataFeed(file_path=str(GOLDEN_DATA_PATH)).data.copy()
+
+
+@pytest.fixture(scope="module")
+def baseline_summary(baseline_case, golden_market_data):
+    # Execute the golden baseline exactly once and reuse the summary across all perturbations.
+    return _run_backtest_in_process(baseline_case, golden_market_data)["summary"]
+
+
+@pytest.mark.parametrize(
+    ("parameter_name", "perturbed_value"),
+    [("sl", -0.05), ("tp_pos", 0.25), ("tp_intra", 0.08)],
+    ids=["sl--0.05", "tp_pos-0.25", "tp_intra-0.08"],
+)
+def test_sensitivity_dimension_changes_summary(
+    parameter_name,
+    perturbed_value,
+    baseline_case,
+    baseline_summary,
+    golden_market_data,
+):
+    perturbed_params = deepcopy(baseline_case)
+    original_value = perturbed_params[parameter_name]
+    perturbed_params[parameter_name] = perturbed_value
+
+    perturbed_summary = _run_backtest_in_process(perturbed_params, golden_market_data)["summary"]
+
+    assert _summary_changed(baseline_summary, perturbed_summary), (
+        f"Sensitivity failure: summary remained identical when {parameter_name} was modified "
+        f"from {original_value} to {perturbed_value}. "
+        f"Baseline vs perturbed: {_describe_summary_comparison(baseline_summary, perturbed_summary)}"
     )
 
-def test_no_false_negatives():
-    """
-    Test Case 4: Verify that the test fails if and only if the results are identical.
-    This meta-test ensures our 'different' logic is sound.
-    """
+
+def test_summary_difference_helper_only_flags_real_changes():
     summary_a = {
         "final_equity": "5160304.1",
         "total_return": "0.290076025",
         "max_drawdown": "-0.03358338309209775",
-        "calmar_ratio": "8.637486705985126892185289367"
+        "calmar_ratio": "8.637486705985126892185289367",
     }
     summary_b = summary_a.copy()
-    
-    metrics = ["final_equity", "total_return", "max_drawdown", "calmar_ratio"]
-    
-    # Identical summaries
-    different = any(str(summary_a[m]) != str(summary_b[m]) for m in metrics)
-    assert not different, "Identical summaries should NOT be marked as different"
-    
-    # One metric different
+
+    assert not _summary_changed(summary_a, summary_b), (
+        "Identical summaries should NOT be marked as different"
+    )
+
     summary_c = summary_a.copy()
     summary_c["final_equity"] = "5160304.2"
-    different = any(str(summary_a[m]) != str(summary_c[m]) for m in metrics)
-    assert different, "Summaries with one different metric SHOULD be marked as different"
+
+    assert _summary_changed(summary_a, summary_c), (
+        "Summaries with one different metric SHOULD be marked as different"
+    )
