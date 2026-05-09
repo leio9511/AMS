@@ -17,7 +17,7 @@ import main_runner
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-def test_main_runner_uses_project_local_default_from_provider_config():
+def test_main_runner_uses_project_local_default_from_provider_config(tmp_path):
     test_args = ["main_runner.py", "--strategy", "cb_rotation", "--start-date", "2025-01-01", 
                  "--end-date", "2025-01-31", "--capital", "4000000", "--top-n", "20", 
                  "--rebalance", "daily", "--tp-mode", "position", "--tp-pos", "0.20", 
@@ -38,7 +38,7 @@ def test_main_runner_uses_project_local_default_from_provider_config():
          patch("main_runner.StrategyFactory.create_strategy"), \
          patch("main_runner.BacktestRunner"), \
          patch("main_runner.reporting.generate_report_data"), \
-         patch("main_runner.resolve_runtime_output_path", return_value=MagicMock(path=Path("/tmp/mock_report_dir"))):
+         patch("main_runner.resolve_runtime_output_path", return_value=MagicMock(path=tmp_path / "mock_report_dir")):
         main_runner.main()
 
         mock_data_feed.assert_called_once()
@@ -103,7 +103,7 @@ def test_explicit_data_path_is_resolved_as_cli_mutable_data_override(tmp_path):
          patch("main_runner.StrategyFactory.create_strategy"), \
          patch("main_runner.BacktestRunner"), \
          patch("main_runner.reporting.generate_report_data"), \
-         patch("main_runner.resolve_runtime_output_path", return_value=MagicMock(path=Path("/tmp/mock_report_dir"))):
+         patch("main_runner.resolve_runtime_output_path", return_value=MagicMock(path=tmp_path / "mock_report_dir")):
         main_runner.main()
 
     mock_resolver.assert_called_once()
@@ -211,7 +211,7 @@ def test_phase2_blocker_statement_in_docs():
     architecture_content = (REPO_ROOT / "docs" / "architecture" / "ARCHITECTURE.md").read_text(encoding="utf-8")
     assert statement in architecture_content
 
-def test_main_runner_argument_default():
+def test_main_runner_argument_default(tmp_path):
     test_args = ["main_runner.py", "--strategy", "cb_rotation", "--start-date", "2025-01-01", 
                  "--end-date", "2025-01-31", "--capital", "4000000", "--top-n", "20", 
                  "--rebalance", "daily", "--tp-mode", "position", "--tp-pos", "0.20", 
@@ -232,7 +232,7 @@ def test_main_runner_argument_default():
          patch("main_runner.StrategyFactory.create_strategy"), \
          patch("main_runner.BacktestRunner"), \
          patch("main_runner.reporting.generate_report_data"), \
-         patch("main_runner.resolve_runtime_output_path", return_value=MagicMock(path=Path("/tmp/mock_report_dir"))):
+         patch("main_runner.resolve_runtime_output_path", return_value=MagicMock(path=tmp_path / "mock_report_dir")):
         main_runner.main()
         
         mock_data_feed.assert_called_once()
@@ -347,3 +347,11 @@ def test_skill_md_content():
     expected_block = "5. **Strategy Backtester**:\n   `python3 main_runner.py --strategy <ID> --start-date <YYYY-MM-DD> --end-date <YYYY-MM-DD> --capital <FLOAT> --top-n <INT> --rebalance <daily|weekly> --tp-mode <both|position|intraday> --tp-pos <FLOAT> --tp-intra <FLOAT> --sl <FLOAT> [--data-source auto|jqdata|tushare] [--format json]`\n   Use this for rigorous strategy validation. Use `--format json` for bit-accurate results."
     
     assert expected_block in content
+
+def test_cli_help_does_not_advertise_root_only_default_paths():
+    result = subprocess.run([sys.executable, "main_runner.py", "--help"], capture_output=True, text=True)
+    assert result.returncode == 0
+    assert "provider contract precedence" in result.stdout
+    assert "configured default provider's project-local dataset path" in result.stdout
+    assert '/root/projects/AMS/data/cb_history_factors_jqdata.csv' not in result.stdout
+    assert '/root/.openclaw/workspace/data/cb_history_factors.csv' not in result.stdout

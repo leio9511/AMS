@@ -78,3 +78,26 @@ def test_json_format_integrity(isolated_paths):
         week = output["weekly_performance"][0]
         assert isinstance(week["total_assets"], str)
         assert isinstance(week["weekly_profit_pct"], str)
+
+def test_real_cli_execution_with_custom_output_dir_smoke(isolated_paths, tmp_path):
+    custom_output_dir = tmp_path / "custom_reports"
+    
+    result = _run_cli([
+        "--data-path", isolated_paths["data"],
+        "--output-dir", str(custom_output_dir)
+    ], env=isolated_paths["env"])
+    
+    assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
+    
+    # Verify the output directory was created
+    assert custom_output_dir.exists(), "Custom output directory was not created"
+    assert custom_output_dir.is_dir(), "Custom output path is not a directory"
+    
+    # Verify a report file was generated inside it
+    report_files = list(custom_output_dir.glob("report_*.json"))
+    assert len(report_files) == 1, "Expected exactly one report file in the custom output directory"
+    
+    # Optional: verify it is valid JSON
+    with open(report_files[0], 'r') as f:
+        output = json.load(f)
+    assert "summary" in output
