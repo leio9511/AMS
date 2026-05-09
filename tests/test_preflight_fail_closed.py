@@ -151,6 +151,8 @@ def test_preflight_fails_before_pytest_on_malformed_json(tmp_path):
     "manifest_payload",
     [
         [],
+        "a string manifest",
+        42,
         {"pytest": [], "extra": []},
         {"pytest": "tests/test_placeholder.py"},
         {"pytest": [123]},
