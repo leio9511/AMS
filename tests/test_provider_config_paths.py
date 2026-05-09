@@ -18,6 +18,8 @@ def _write_provider_config(config_file: Path, payload: dict) -> None:
 
 
 def test_provider_dataset_and_metrics_use_resolver_project_local_defaults(tmp_path, monkeypatch):
+    monkeypatch.delenv("AMS_JQDATA_DATASET_PATH", raising=False)
+    monkeypatch.delenv("AMS_JQDATA_METRICS_PATH", raising=False)
     repo_root = get_repo_root()
     config_file = tmp_path / "ams_config.json"
     _write_provider_config(

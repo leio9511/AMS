@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 import datetime
 
-from etl.jqdata_sync_cb import audit_cb_data, DATA_PATH, METRICS_PATH
+from etl.jqdata_sync_cb import audit_cb_data
 from etl.cb_etl_pipeline import (
     STAGE_STATUS_PASS,
     STAGE_STATUS_FAIL,

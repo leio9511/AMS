@@ -1,3 +1,4 @@
+from ams.utils.provider_config import resolve_provider_dataset_path, get_provider_artifact_paths
 import etl.jqdata_sync_cb
 import json
 import os
@@ -75,9 +76,9 @@ def test_redemption_source_contract_keeps_null_delist_behavior_deterministic(moc
 
     sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
 
-    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+    df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
     assert bool(df.loc[0, "is_redeemed"]) is False
-    with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
+    with open(get_provider_artifact_paths("jqdata")["metrics_path"], "r", encoding="utf-8") as f:
         metrics = json.load(f)
     assert metrics["is_redeemed_missing_delist_count"] == 1
 
@@ -130,7 +131,7 @@ def test_is_redeemed_becomes_true_on_and_after_delist_date(mock_validator_cls, m
 
     sync_cb_data(start_date="2020-01-01", end_date="2020-01-02")
 
-    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+    df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
     assert bool(df.loc[df["date"] == "2020-01-01", "is_redeemed"].iloc[0]) is False
     assert bool(df.loc[df["date"] == "2020-01-02", "is_redeemed"].iloc[0]) is True
 
@@ -172,9 +173,9 @@ def test_null_delist_date_forces_false_and_increments_missing_delist_metric(mock
 
     sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
 
-    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+    df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
     assert bool(df.loc[0, "is_redeemed"]) is False
-    with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
+    with open(get_provider_artifact_paths("jqdata")["metrics_path"], "r", encoding="utf-8") as f:
         metrics = json.load(f)
     assert metrics["is_redeemed_missing_delist_count"] == 1
 
@@ -216,5 +217,5 @@ def test_etl_never_queries_finance_ccb_call_after_contract_repair(mock_validator
 
     sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
 
-    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+    df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
     assert bool(df.loc[0, "is_redeemed"]) is True

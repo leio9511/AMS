@@ -103,7 +103,7 @@ def test_backup_creation(mock_jqdata, tmp_path):
         
         # Mocking os.path.exists to return True for the specific file
         def side_effect_exists(path):
-            if path == etl.jqdata_sync_cb.DATA_PATH:
+            if path == os.environ["AMS_JQDATA_DATASET_PATH"]:
                 return True
             return False
 
@@ -113,7 +113,7 @@ def test_backup_creation(mock_jqdata, tmp_path):
              except:
                  pass # We expect it might fail later due to other paths
              
-             mock_replace.assert_any_call(etl.jqdata_sync_cb.DATA_PATH, f"{etl.jqdata_sync_cb.DATA_PATH}.bak")
+             mock_replace.assert_any_call(os.environ["AMS_JQDATA_DATASET_PATH"], f"{os.environ["AMS_JQDATA_DATASET_PATH"]}.bak")
 
 def test_validator_integration(mock_jqdata, tmp_path):
     # This test checks if CBDataValidator is called
@@ -146,7 +146,7 @@ def test_atomic_write_success(mock_jqdata, tmp_path):
         })
         
         sync_cb_data()
-        mock_replace.assert_any_call(f"{etl.jqdata_sync_cb.DATA_PATH}.tmp", etl.jqdata_sync_cb.DATA_PATH)
+        mock_replace.assert_any_call(f"{os.environ["AMS_JQDATA_DATASET_PATH"]}.tmp", os.environ["AMS_JQDATA_DATASET_PATH"])
 
 
 def test_sync_cb_data_writes_metrics_artifact_without_breaking_atomic_csv_flow(mock_jqdata, tmp_path):
@@ -167,9 +167,9 @@ def test_sync_cb_data_writes_metrics_artifact_without_breaking_atomic_csv_flow(m
 
         sync_cb_data()
 
-        mock_replace.assert_any_call(f"{etl.jqdata_sync_cb.DATA_PATH}.tmp", etl.jqdata_sync_cb.DATA_PATH)
+        mock_replace.assert_any_call(f"{os.environ["AMS_JQDATA_DATASET_PATH"]}.tmp", os.environ["AMS_JQDATA_DATASET_PATH"])
         opened_paths = [call.args[0] for call in mock_open.call_args_list if call.args]
-        assert f"{etl.jqdata_sync_cb.METRICS_PATH}.tmp" in opened_paths
+        assert f"{os.environ["AMS_JQDATA_METRICS_PATH"]}.tmp" in opened_paths
 
 def test_validation_interception(mock_jqdata, tmp_path):
     with patch("os.replace") as mock_replace, \
@@ -189,3 +189,66 @@ def test_validation_interception(mock_jqdata, tmp_path):
         
         with pytest.raises(SystemExit):
             sync_cb_data()
+
+from etl.cb_etl_runner import run_etl
+
+def test_etl_rejects_root_bound_dataset_and_metrics_overrides(mock_jqdata):
+    with pytest.raises(Exception, match="Path contains prohibited host layout coupling"):
+        run_etl("2025-01-06", "2025-02-06", "jqdata", promote=True, dataset_path="/root/projects/AMS/data/test.csv")
+    
+    with pytest.raises(Exception, match="Path contains prohibited host layout coupling"):
+        run_etl("2025-01-06", "2025-02-06", "jqdata", promote=True, metrics_path="/root/projects/AMS/data/test.json")
+
+
+def test_jqdata_sync_defaults_resolve_from_provider_config_not_root_constants(mock_jqdata, monkeypatch):
+    import ams.utils.provider_config
+    
+    mock_config = {
+        "default_provider": "jqdata",
+        "providers": {
+            "jqdata": {
+                "dataset_path": "data/my_custom_cb_dataset.csv",
+                "metrics_path": "data/my_custom_cb_metrics.json"
+            }
+        }
+    }
+    
+    with patch("etl.cb_etl_runner.load_provider_config", return_value=mock_config):
+        with patch("os.replace") as mock_replace, \
+             patch("ams.validators.cb_data_validator.CBDataValidator") as mock_validator_cls, \
+             patch("os.makedirs"), \
+             patch("os.path.exists", return_value=False), \
+             patch("pandas.DataFrame.to_csv"), \
+             patch("builtins.open", create=True):
+             
+             mock_validator = mock_validator_cls.return_value
+             mock_validator.validate_dataframe.return_value = True
+             
+             run_etl("2025-01-06", "2025-02-06", "jqdata", promote=True)
+             
+             expected_dataset = "data/my_custom_cb_dataset.csv"
+             expected_metrics = "data/my_custom_cb_metrics.json"
+             mock_replace.assert_any_call(f"{expected_dataset}.tmp", expected_dataset)
+             mock_replace.assert_any_call(f"{expected_metrics}.tmp", expected_metrics)
+
+def test_etl_path_contract_in_non_root_environment(mock_jqdata, monkeypatch):
+    non_root_dataset = "/tmp/clean_env/data.csv"
+    non_root_metrics = "/tmp/clean_env/metrics.json"
+    
+    with patch.dict("os.environ", {
+        "AMS_JQDATA_DATASET_PATH": non_root_dataset,
+        "AMS_JQDATA_METRICS_PATH": non_root_metrics
+    }), patch("os.replace") as mock_replace, \
+        patch("ams.validators.cb_data_validator.CBDataValidator") as mock_validator_cls, \
+        patch("os.makedirs"), \
+        patch("os.path.exists", return_value=False), \
+        patch("pandas.DataFrame.to_csv"), \
+        patch("builtins.open", create=True):
+        
+        mock_validator = mock_validator_cls.return_value
+        mock_validator.validate_dataframe.return_value = True
+        
+        run_etl("2025-01-06", "2025-02-06", "jqdata", promote=True)
+        
+        mock_replace.assert_any_call(f"{non_root_dataset}.tmp", non_root_dataset)
+        mock_replace.assert_any_call(f"{non_root_metrics}.tmp", non_root_metrics)

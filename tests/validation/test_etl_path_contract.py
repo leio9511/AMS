@@ -77,6 +77,8 @@ def jqdata_success_mock():
 
 
 def test_jqdata_sync_defaults_resolve_from_provider_config_not_root_constants(tmp_path, monkeypatch, jqdata_success_mock):
+    monkeypatch.delenv("AMS_JQDATA_DATASET_PATH", raising=False)
+    monkeypatch.delenv("AMS_JQDATA_METRICS_PATH", raising=False)
     dataset_path = tmp_path / "artifacts" / "cb_history_factors_jqdata.csv"
     metrics_path = tmp_path / "artifacts" / "cb_history_factors_jqdata.metrics.json"
     config_path = tmp_path / "ams_config.json"
@@ -85,13 +87,6 @@ def test_jqdata_sync_defaults_resolve_from_provider_config_not_root_constants(tm
     monkeypatch.setenv("AMS_CONFIG_PATH", str(config_path))
     monkeypatch.setenv("JQDATA_USER", "test_user")
     monkeypatch.setenv("JQDATA_PWD", "test_password")
-    monkeypatch.setattr(jq_sync, "DATA_PATH", jq_sync._DEFAULT_DATA_PATH)
-    monkeypatch.setattr(jq_sync, "METRICS_PATH", jq_sync._DEFAULT_METRICS_PATH)
-
-    forbidden_root = "/root/" + "projects/AMS"
-    assert forbidden_root not in jq_sync.DATA_PATH
-    assert forbidden_root not in jq_sync.METRICS_PATH
-
     sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
 
     assert dataset_path.exists()

@@ -1,3 +1,4 @@
+from ams.utils.provider_config import resolve_provider_dataset_path, get_provider_artifact_paths
 import etl.jqdata_sync_cb
 import json
 import os
@@ -81,7 +82,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
 
         sync_cb_data(self.start_date, self.end_date)
 
-        df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+        df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
         self.assertTrue((df["premium_rate"] > 0).all())
         self.assertEqual(df["premium_rate"].iloc[0], 0.1)
         self.assertEqual(df["premium_rate"].iloc[4], 0.3)
@@ -112,7 +113,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
 
         sync_cb_data("2024-01-03", "2024-01-03")
 
-        df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+        df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
         self.assertEqual(df["underlying_ticker"].iloc[0], self.underlying)
         self.assertTrue(df["is_st"].iloc[0])
 
@@ -141,7 +142,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
 
         sync_cb_data("2024-01-03", "2024-01-03")
 
-        df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+        df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
         queried_raw_codes = mock_jq.bond.CONBOND_DAILY_CONVERT.code.in_.call_args.args[0]
         self.assertEqual(queried_raw_codes, [self.raw_code])
         self.assertEqual(df["underlying_ticker"].iloc[0], self.underlying)
@@ -174,9 +175,9 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
 
         sync_cb_data("2024-01-03", "2024-01-03")
 
-        df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+        df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
         self.assertEqual(df["premium_rate"].iloc[0], 0.155)
-        with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
+        with open(get_provider_artifact_paths("jqdata")["metrics_path"], "r", encoding="utf-8") as f:
             metrics = json.load(f)
         self.assertEqual(metrics["premium_rate_source_row_count"], 1)
         self.assertEqual(metrics["premium_rate_joined_row_count"], 1)
@@ -207,9 +208,9 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
 
         sync_cb_data("2024-04-30", "2024-04-30")
 
-        df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+        df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
         self.assertTrue(df["is_redeemed"].iloc[0])
-        with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
+        with open(get_provider_artifact_paths("jqdata")["metrics_path"], "r", encoding="utf-8") as f:
             metrics = json.load(f)
         self.assertEqual(metrics["is_redeemed_missing_delist_count"], 0)
 
@@ -281,10 +282,10 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         self.assertEqual(get_extras_kwargs["start_date"], "2025-01-17")
         self.assertEqual(get_extras_kwargs["end_date"], "2025-01-17")
 
-        df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+        df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
         self.assertEqual(df["ticker"].tolist(), ["123456.XSHG"])
 
-        with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
+        with open(get_provider_artifact_paths("jqdata")["metrics_path"], "r", encoding="utf-8") as f:
             metrics = json.load(f)
         self.assertEqual(metrics["filtered_bond_codes_outside_basic_info"], ["999999"])
         self.assertEqual(metrics["filtered_bond_codes_missing_company_code_legacy"], ["654321"])
@@ -314,7 +315,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
 
         sync_cb_data("2024-01-03", "2024-01-03")
 
-        df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+        df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
         self.assertTrue(df["is_st"].iloc[0])
 
     @patch("etl.jqdata_sync_cb.jqdatasdk")
@@ -430,7 +431,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         original_replace = os.replace
 
         def mock_replace(src, dst):
-            if src == f"{etl.jqdata_sync_cb.DATA_PATH}.tmp":
+            if src == f"{resolve_provider_dataset_path("jqdata")}.tmp":
                 raise OSError("Mock failure")
             return original_replace(src, dst)
 
@@ -512,9 +513,7 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
             f.write("dummy")
 
         try:
-            with patch("etl.jqdata_sync_cb.DATA_PATH", mock_data_path), patch(
-                "etl.jqdata_sync_cb.METRICS_PATH", mock_metrics_path
-            ), patch("os.replace", side_effect=mock_replace), patch("os.remove") as mock_remove:
+            with patch.dict("os.environ", {"AMS_JQDATA_DATASET_PATH": mock_data_path, "AMS_JQDATA_METRICS_PATH": mock_metrics_path}), patch("os.replace", side_effect=mock_replace), patch("os.remove") as mock_remove:
                 with self.assertRaises(SystemExit) as cm:
                     sync_cb_data("2024-01-03", "2024-01-03")
 

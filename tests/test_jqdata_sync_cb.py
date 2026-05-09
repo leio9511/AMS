@@ -1,3 +1,4 @@
+from ams.utils.provider_config import resolve_provider_dataset_path, get_provider_artifact_paths
 import etl.jqdata_sync_cb
 import json
 import os
@@ -6,6 +7,7 @@ from unittest.mock import patch
 
 import pandas as pd
 import pytest
+from ams.utils.provider_config import resolve_provider_dataset_path, get_provider_artifact_paths
 
 from etl.jqdata_sync_cb import SUPPORTABILITY_REGRESSION_ERROR, sync_cb_data
 
@@ -34,8 +36,6 @@ def test_jqdata_successful_sync_uses_contract_resolved_dataset_path(mock_semanti
     }
     config_path.write_text(json.dumps(config_payload), encoding="utf-8")
     monkeypatch.setenv("AMS_CONFIG_PATH", str(config_path))
-    monkeypatch.setattr(etl.jqdata_sync_cb, "DATA_PATH", etl.jqdata_sync_cb._DEFAULT_DATA_PATH)
-    monkeypatch.setattr(etl.jqdata_sync_cb, "METRICS_PATH", etl.jqdata_sync_cb._DEFAULT_METRICS_PATH)
     monkeypatch.chdir(tmp_path)
 
     mock_semantic_validator.return_value.validate_dataframe.return_value = True
@@ -72,8 +72,8 @@ def test_jqdata_successful_sync_uses_contract_resolved_dataset_path(mock_semanti
 
     sync_cb_data()
 
-    assert "/root/" + "projects/AMS" not in etl.jqdata_sync_cb.DATA_PATH
-    assert not Path(etl.jqdata_sync_cb.DATA_PATH).exists()
+    assert "/root/" + "projects/AMS" not in resolve_provider_dataset_path("jqdata")
+    # removed because we removed DATA_PATH
     assert dataset_path.exists()
     df = pd.read_csv(dataset_path)
     expected_cols = {
@@ -147,7 +147,7 @@ def test_integrated_source_contract_repairs_keep_dataset_generation_green(mock_s
 
     sync_cb_data()
 
-    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+    df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
     assert len(df) == 2
     assert set(df["premium_rate"].round(3).tolist()) == {0.155, 0.1}
     assert bool(df.loc[df["ticker"] == "123071.XSHE", "is_redeemed"].iloc[0]) is False
@@ -191,7 +191,7 @@ def test_integrated_source_contract_flow_rejects_legacy_underlying_and_redemptio
 
     sync_cb_data()
 
-    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+    df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
     assert bool(df.loc[0, "is_redeemed"]) is True
     assert df.loc[0, "underlying_ticker"] == "000001.XSHE"
 
@@ -326,8 +326,8 @@ def test_bonds_outside_basic_info_are_filtered_not_blocking(mock_semantic_valida
     sync_cb_data()
 
     # Output CSV exists and contains ONLY 110059.XSHG
-    assert os.path.exists(etl.jqdata_sync_cb.DATA_PATH)
-    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+    assert os.path.exists(resolve_provider_dataset_path("jqdata"))
+    df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
     assert len(df) == 1
     assert set(df["ticker"].unique()) == {"110059.XSHG"}
     assert "125302.XSHG" not in df["ticker"].values
@@ -386,9 +386,9 @@ def test_sync_cb_data_real_window_known_legacy_case_is_accounted_for_in_reason_c
 
     sync_cb_data(start_date="2025-01-17", end_date="2025-01-17")
 
-    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+    df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
     assert set(df["ticker"].unique()) == {"110059.XSHG"}
-    with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
+    with open(get_provider_artifact_paths("jqdata")["metrics_path"], "r", encoding="utf-8") as f:
         metrics = json.load(f)
     assert metrics["filtered_bonds_missing_company_code_legacy_count"] == 1
     assert metrics["filtered_rows_missing_company_code_legacy_count"] == 1
@@ -471,13 +471,13 @@ def test_sync_cb_data_exclusion_only_window_does_not_raise_false_missing_is_st_f
             "is_redeemed": [False],
         }
     )
-    existing_canonical.to_csv(etl.jqdata_sync_cb.DATA_PATH, index=False)
+    existing_canonical.to_csv(resolve_provider_dataset_path("jqdata"), index=False)
 
     sync_cb_data(start_date="2025-01-17", end_date="2025-01-17")
 
-    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+    df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
     assert df.to_dict(orient="records") == existing_canonical.to_dict(orient="records")
-    with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
+    with open(get_provider_artifact_paths("jqdata")["metrics_path"], "r", encoding="utf-8") as f:
         metrics = json.load(f)
     assert metrics["row_count"] == 0
     assert metrics["filtered_bond_codes_outside_basic_info"] == ["999999"]
@@ -644,10 +644,10 @@ def test_sync_cb_data_keeps_outside_basic_info_filtering_and_supportable_rows_gr
 
     sync_cb_data(start_date="2025-01-17", end_date="2025-01-17")
 
-    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+    df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
     assert len(df) == 1
     assert set(df["ticker"].unique()) == {"110059.XSHG"}
-    with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
+    with open(get_provider_artifact_paths("jqdata")["metrics_path"], "r", encoding="utf-8") as f:
         metrics = json.load(f)
     assert metrics["filtered_bond_codes_outside_basic_info"] == ["999999"]
     assert metrics["filtered_bonds_missing_company_code_legacy_count"] == 0

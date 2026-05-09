@@ -1,3 +1,4 @@
+from ams.utils.provider_config import resolve_provider_dataset_path, get_provider_artifact_paths
 import etl.jqdata_sync_cb
 import os
 import re
@@ -65,7 +66,7 @@ def test_underlying_ticker_is_mapped_from_basic_info_company_code(mock_validator
 
     sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
 
-    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+    df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
     assert df.loc[0, "underlying_ticker"] == "600000.XSHG"
 
 

@@ -42,11 +42,8 @@ def mock_dataset_paths():
     with tempfile.TemporaryDirectory() as tmpdir:
         data_path = os.path.join(tmpdir, "cb_history_factors.csv")
         metrics_path = os.path.join(tmpdir, "cb_history_factors.metrics.json")
-        with patch("etl.jqdata_sync_cb.DATA_PATH", data_path), \
-             patch("etl.jqdata_sync_cb.METRICS_PATH", metrics_path):
+        with patch.dict(os.environ, {"AMS_JQDATA_DATASET_PATH": data_path, "AMS_JQDATA_METRICS_PATH": metrics_path}):
             yield
-
-
 @pytest.fixture
 def isolated_paths(tmp_path):
     source_fixture = repo_asset("tests/fixtures/cb_history_factors.csv")

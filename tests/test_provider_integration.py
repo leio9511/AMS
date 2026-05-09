@@ -35,6 +35,8 @@ def temp_config(tmp_path):
 
 
 def test_config_precedence(temp_config):
+    if "AMS_JQDATA_DATASET_PATH" in os.environ: del os.environ["AMS_JQDATA_DATASET_PATH"]
+    if "AMS_JQDATA_METRICS_PATH" in os.environ: del os.environ["AMS_JQDATA_METRICS_PATH"]
     # Verify that CLI (or explicit call) overrides config default
     with patch("etl.cb_etl_runner.get_provider") as mock_get_provider:
         with patch("etl.cb_etl_runner.CBETLPipeline") as mock_pipeline_cls:
@@ -117,6 +119,8 @@ def test_main_runner_datasource_selection(temp_config):
 
 
 def test_provider_provenance(temp_config):
+    if "AMS_JQDATA_DATASET_PATH" in os.environ: del os.environ["AMS_JQDATA_DATASET_PATH"]
+    if "AMS_JQDATA_METRICS_PATH" in os.environ: del os.environ["AMS_JQDATA_METRICS_PATH"]
     # Verify that running for both results in two distinct files
     with patch("etl.cb_etl_runner.get_provider"):
         with patch("etl.cb_etl_runner.CBETLPipeline") as mock_pipeline_cls:

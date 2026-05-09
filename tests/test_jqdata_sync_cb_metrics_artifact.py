@@ -1,3 +1,4 @@
+from ams.utils.provider_config import resolve_provider_dataset_path, get_provider_artifact_paths
 import json
 import os
 from unittest.mock import patch
@@ -64,12 +65,12 @@ def test_metrics_artifact_created_at_contract_resolved_path(
 
     sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
 
-    assert "/root/" + "projects/AMS" not in etl.jqdata_sync_cb.METRICS_PATH
-    assert os.path.exists(etl.jqdata_sync_cb.METRICS_PATH)
+    assert "/root/" + "projects/AMS" not in get_provider_artifact_paths("jqdata")["metrics_path"]
+    assert os.path.exists(get_provider_artifact_paths("jqdata")["metrics_path"])
     forbidden_root_metrics = os.path.join("/root", "projects", "AMS", "data", "cb_history_factors_jqdata.metrics.json")
-    if etl.jqdata_sync_cb.METRICS_PATH != forbidden_root_metrics:
+    if get_provider_artifact_paths("jqdata")["metrics_path"] != forbidden_root_metrics:
         assert not os.path.exists(forbidden_root_metrics)
-    with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
+    with open(get_provider_artifact_paths("jqdata")["metrics_path"], "r", encoding="utf-8") as f:
         metrics = json.load(f)
     assert metrics["row_count"] == 1
     assert metrics["source_lineage"] == "jqdata_sync_cb"
@@ -136,14 +137,14 @@ def test_metrics_artifact_records_zero_survivors_for_exclusion_only_window(
             "is_redeemed": [False],
         }
     )
-    existing_canonical.to_csv(etl.jqdata_sync_cb.DATA_PATH, index=False)
+    existing_canonical.to_csv(resolve_provider_dataset_path("jqdata"), index=False)
 
     sync_cb_data(start_date="2025-01-17", end_date="2025-01-18")
 
-    df = pd.read_csv(etl.jqdata_sync_cb.DATA_PATH)
+    df = pd.read_csv(resolve_provider_dataset_path("jqdata"))
     assert df.to_dict(orient="records") == existing_canonical.to_dict(orient="records")
 
-    with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
+    with open(get_provider_artifact_paths("jqdata")["metrics_path"], "r", encoding="utf-8") as f:
         metrics = json.load(f)
 
     assert metrics["row_count"] == 0
@@ -222,8 +223,8 @@ def test_metrics_artifact_contains_required_premium_and_redemption_contract_fiel
 
     sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
 
-    assert os.path.exists(etl.jqdata_sync_cb.METRICS_PATH)
-    with open(etl.jqdata_sync_cb.METRICS_PATH, "r", encoding="utf-8") as f:
+    assert os.path.exists(get_provider_artifact_paths("jqdata")["metrics_path"])
+    with open(get_provider_artifact_paths("jqdata")["metrics_path"], "r", encoding="utf-8") as f:
         metrics = json.load(f)
 
     queried_raw_codes = mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.call_args.args[0]
@@ -288,7 +289,7 @@ def test_etl_writes_all_required_metrics(mock_validator_cls, mock_semantic_valid
     with patch("os.replace"):
         sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
 
-    tmp_metrics_path = etl.jqdata_sync_cb.METRICS_PATH + ".tmp"
+    tmp_metrics_path = get_provider_artifact_paths("jqdata")["metrics_path"] + ".tmp"
     assert os.path.exists(tmp_metrics_path)
     with open(tmp_metrics_path, "r", encoding="utf-8") as f:
         metrics = json.load(f)
@@ -369,7 +370,7 @@ def test_metrics_artifact_separates_outside_basic_info_and_missing_company_code_
     with patch("os.replace"):
         sync_cb_data(start_date="2025-01-17", end_date="2025-01-17")
 
-    tmp_metrics_path = etl.jqdata_sync_cb.METRICS_PATH + ".tmp"
+    tmp_metrics_path = get_provider_artifact_paths("jqdata")["metrics_path"] + ".tmp"
     with open(tmp_metrics_path, "r", encoding="utf-8") as f:
         metrics = json.load(f)
 
@@ -438,7 +439,7 @@ def test_metrics_artifact_emits_zero_counts_and_empty_lists_for_absent_exclusion
     with patch("os.replace"):
         sync_cb_data(start_date="2025-01-17", end_date="2025-01-17")
 
-    tmp_metrics_path = etl.jqdata_sync_cb.METRICS_PATH + ".tmp"
+    tmp_metrics_path = get_provider_artifact_paths("jqdata")["metrics_path"] + ".tmp"
     with open(tmp_metrics_path, "r", encoding="utf-8") as f:
         metrics = json.load(f)
 
@@ -544,7 +545,7 @@ def test_metrics_artifact_code_lists_are_deterministically_sorted(
     with patch("os.replace"):
         sync_cb_data(start_date="2025-01-17", end_date="2025-01-18")
 
-    tmp_metrics_path = etl.jqdata_sync_cb.METRICS_PATH + ".tmp"
+    tmp_metrics_path = get_provider_artifact_paths("jqdata")["metrics_path"] + ".tmp"
     with open(tmp_metrics_path, "r", encoding="utf-8") as f:
         metrics = json.load(f)
 
