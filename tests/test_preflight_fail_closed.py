@@ -120,17 +120,17 @@ def _run_preflight_with_manifest(
     return result, args_capture_path
 
 
-def test_preflight_fails_when_ignore_manifest_is_missing(tmp_path):
+def test_preflight_runs_full_pytest_surface_for_missing_manifest(tmp_path):
     result, args_capture_path = _run_preflight_with_manifest(
         tmp_path,
         manifest_text=None,
         include_manifest=False,
     )
 
-    assert result.returncode != 0
-    assert not args_capture_path.exists()
-    assert "PREFLIGHT FAILED" in result.stdout
-    assert "ignore_tests.json" in result.stdout
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert args_capture_path.exists()
+    assert args_capture_path.read_text(encoding="utf-8") == ""
+    assert "✅ PREFLIGHT SUCCESS" in result.stdout
 
 
 
@@ -150,7 +150,6 @@ def test_preflight_fails_before_pytest_on_malformed_json(tmp_path):
     "manifest_payload",
     [
         [],
-        {},
         {"pytest": [], "extra": []},
         {"pytest": "tests/test_placeholder.py"},
         {"pytest": [123]},
@@ -173,9 +172,7 @@ def test_preflight_fails_before_pytest_on_structural_manifest_errors(
 @pytest.mark.parametrize(
     "manifest_text",
     [
-        None,
         "{\n",
-        json.dumps({}) + "\n",
         json.dumps({"pytest": [123]}) + "\n",
     ],
 )
@@ -244,6 +241,18 @@ def test_preflight_report_all_emits_summary_block_when_pytest_fails(tmp_path):
         in stdout
     )
 
+
+
+def test_preflight_runs_full_pytest_surface_for_manifest_missing_pytest_field(tmp_path):
+    result, args_capture_path = _run_preflight_with_manifest(
+        tmp_path,
+        manifest_text=json.dumps({}) + "\n",
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert args_capture_path.exists()
+    assert args_capture_path.read_text(encoding="utf-8") == ""
+    assert "✅ PREFLIGHT SUCCESS" in result.stdout
 
 
 def test_preflight_report_all_still_hard_fails_before_pytest_on_prerequisite_error(

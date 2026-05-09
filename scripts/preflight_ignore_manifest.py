@@ -19,10 +19,10 @@ def _parse_manifest_json(path: Path) -> Any:
 def _validate_manifest_structure(manifest: Any) -> dict[str, list[str]]:
     if not isinstance(manifest, dict):
         raise ValueError("ignore_tests.json must contain a top-level JSON object")
-    if set(manifest.keys()) != _ALLOWED_TOP_LEVEL_KEYS:
+    if not set(manifest.keys()).issubset(_ALLOWED_TOP_LEVEL_KEYS):
         raise ValueError("ignore_tests.json must contain only the 'pytest' top-level key")
 
-    pytest_entries = manifest.get("pytest")
+    pytest_entries = manifest.get("pytest", [])
     if not isinstance(pytest_entries, list):
         raise ValueError("ignore_tests.json 'pytest' value must be a list")
     if not all(isinstance(entry, str) for entry in pytest_entries):
@@ -34,7 +34,10 @@ def _validate_manifest_structure(manifest: Any) -> dict[str, list[str]]:
 
 def load_manifest(manifest_path: str | Path = DEFAULT_MANIFEST_PATH) -> dict[str, Any]:
     path = Path(manifest_path)
-    manifest = _parse_manifest_json(path)
+    try:
+        manifest = _parse_manifest_json(path)
+    except FileNotFoundError:
+        return {"pytest": []}
     return _validate_manifest_structure(manifest)
 
 
@@ -95,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         manifest = load_manifest(args.manifest)
         ignore_args = build_pytest_ignore_args(manifest, args.repo_root)
-    except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
+    except (json.JSONDecodeError, ValueError) as exc:
         print(exc, file=sys.stderr)
         return 1
 

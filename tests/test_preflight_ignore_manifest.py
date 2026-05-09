@@ -1,76 +1,65 @@
 import json
-import os
-import stat
-import subprocess
-import textwrap
 from pathlib import Path
 
-from scripts.preflight_ignore_manifest import build_pytest_ignore_args, load_manifest, main
+import pytest
 
-EXPECTED_PYTEST_IGNORE_ENTRIES = [
-    "tests/test_data_source.py",
-    "tests/test_execution_arbitration.py",
-    "tests/test_execution_semantics_stop_loss.py",
-    "tests/test_finance_fetcher.py",
-    "tests/test_main_runner.py",
-    "tests/test_main_runner_smoke.py",
-    "tests/test_order_semantics_e2e.py",
-    "tests/validation/test_golden_integrity.py",
-    "tests/validation/test_path_consistency.py",
-    "tests/validation/test_smoke.py",
-]
+from scripts.preflight_ignore_manifest import (
+    build_pytest_ignore_args,
+    load_manifest,
+    main,
+)
 
 
-def _write_fake_pytest(fake_pytest: Path) -> None:
-    fake_pytest.write_text(
-        textwrap.dedent(
-            """\
-            #!/bin/sh
-            printf '%s\\n' "$@" > "$PYTEST_ARGS_FILE"
-            printf '1 passed\\n'
-            """
-        ),
+def test_helper_builds_ordered_pytest_ignore_args_from_fixture_manifest(tmp_path):
+    manifest_path = tmp_path / "ignore_tests.json"
+    manifest_entries = [
+        "tests/custom_a.py",
+        "tests/nested/custom_b.py",
+    ]
+    manifest_path.write_text(
+        json.dumps({"pytest": manifest_entries}, indent=2) + "\n",
         encoding="utf-8",
     )
-    fake_pytest.chmod(fake_pytest.stat().st_mode | stat.S_IXUSR)
+    for entry in manifest_entries:
+        file_path = tmp_path / entry
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text("def test_placeholder():\n    assert True\n", encoding="utf-8")
 
+    manifest = load_manifest(manifest_path)
 
-
-def test_seed_manifest_matches_current_known_failure_surface():
-    repo_root = Path(__file__).resolve().parents[1]
-    manifest = json.loads((repo_root / "ignore_tests.json").read_text(encoding="utf-8"))
-
-    assert manifest == {"pytest": EXPECTED_PYTEST_IGNORE_ENTRIES}
-
-
-
-def test_helper_builds_ordered_pytest_ignore_args_from_seed_manifest():
-    repo_root = Path(__file__).resolve().parents[1]
-    manifest = load_manifest(repo_root / "ignore_tests.json")
-
-    assert build_pytest_ignore_args(manifest, repo_root) == [
-        f"--ignore={entry}" for entry in EXPECTED_PYTEST_IGNORE_ENTRIES
+    assert build_pytest_ignore_args(manifest, tmp_path) == [
+        f"--ignore={entry}" for entry in manifest_entries
     ]
 
 
-
-def test_helper_cli_emits_ordered_pytest_ignore_args_from_seed_manifest(capsys):
-    repo_root = Path(__file__).resolve().parents[1]
+def test_helper_cli_emits_ordered_pytest_ignore_args_from_fixture_manifest(tmp_path, capsys):
+    manifest_path = tmp_path / "ignore_tests.json"
+    manifest_entries = [
+        "tests/custom_a.py",
+        "tests/nested/custom_b.py",
+    ]
+    manifest_path.write_text(
+        json.dumps({"pytest": manifest_entries}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    for entry in manifest_entries:
+        file_path = tmp_path / entry
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text("def test_placeholder():\n    assert True\n", encoding="utf-8")
 
     exit_code = main(
-        ["--manifest", str(repo_root / "ignore_tests.json"), "--repo-root", str(repo_root)]
+        ["--manifest", str(manifest_path), "--repo-root", str(tmp_path)]
     )
     captured = capsys.readouterr()
 
     assert exit_code == 0
     assert captured.out.splitlines() == [
-        f"--ignore={entry}" for entry in EXPECTED_PYTEST_IGNORE_ENTRIES
+        f"--ignore={entry}" for entry in manifest_entries
     ]
     assert captured.err == ""
 
 
-
-def test_helper_emits_no_ignore_args_for_canonical_empty_manifest(tmp_path):
+def test_helper_returns_empty_ignore_args_for_empty_manifest(tmp_path):
     manifest_path = tmp_path / "ignore_tests.json"
     manifest_path.write_text('{"pytest": []}\n', encoding="utf-8")
     manifest = load_manifest(manifest_path)
@@ -78,98 +67,66 @@ def test_helper_emits_no_ignore_args_for_canonical_empty_manifest(tmp_path):
     assert build_pytest_ignore_args(manifest, tmp_path) == []
 
 
+def test_helper_treats_missing_manifest_as_empty_ignore_list(tmp_path):
+    manifest = load_manifest(tmp_path / "nonexistent.json")
+    assert manifest == {"pytest": []}
+    assert build_pytest_ignore_args(manifest, tmp_path) == []
 
-def test_preflight_invokes_pytest_with_manifest_supplied_ignore_args(tmp_path):
-    repo_root = Path(__file__).resolve().parents[1]
-    temp_repo = tmp_path / "repo"
-    scripts_dir = temp_repo / "scripts"
-    tests_dir = temp_repo / "tests"
-    fake_bin_dir = tmp_path / "bin"
-    args_capture_path = tmp_path / "pytest_args.txt"
-    manifest_entries = [
-        "tests/custom_a.py",
-        "tests/nested/custom_b.py",
-    ]
 
-    scripts_dir.mkdir(parents=True)
-    (tests_dir / "nested").mkdir(parents=True)
-    fake_bin_dir.mkdir(parents=True)
+def test_helper_treats_missing_pytest_field_as_empty_ignore_list(tmp_path):
+    manifest_path = tmp_path / "ignore_tests.json"
+    manifest_path.write_text("{}\n", encoding="utf-8")
+    manifest = load_manifest(manifest_path)
+    assert manifest == {"pytest": []}
+    assert build_pytest_ignore_args(manifest, tmp_path) == []
 
-    (temp_repo / "preflight.sh").write_text(
-        (repo_root / "preflight.sh").read_text(encoding="utf-8"),
-        encoding="utf-8",
+
+@pytest.mark.parametrize(
+    "manifest_text",
+    [
+        pytest.param("not json\n", id="malformed_json"),
+        pytest.param("[]\n", id="array_manifest"),
+        pytest.param('"a string"\n', id="string_manifest"),
+        pytest.param("42\n", id="number_manifest"),
+        pytest.param('{"pytest": "not_a_list"}\n', id="non_list_pytest"),
+        pytest.param('{"pytest": [123]}\n', id="non_string_entries"),
+    ],
+)
+def test_helper_cli_rejects_malformed_or_structurally_invalid_manifest_payloads(
+    tmp_path, capsys, manifest_text
+):
+    manifest_path = tmp_path / "ignore_tests.json"
+    manifest_path.write_text(manifest_text, encoding="utf-8")
+
+    exit_code = main(
+        ["--manifest", str(manifest_path), "--repo-root", str(tmp_path)]
     )
-    (scripts_dir / "preflight_ignore_manifest.py").write_text(
-        (repo_root / "scripts" / "preflight_ignore_manifest.py").read_text(encoding="utf-8"),
-        encoding="utf-8",
+    captured = capsys.readouterr()
+
+    assert exit_code != 0
+    assert captured.out == ""
+
+
+def test_helper_cli_returns_zero_for_missing_manifest(tmp_path, capsys):
+    exit_code = main(
+        ["--manifest", str(tmp_path / "nonexistent.json"), "--repo-root", str(tmp_path)]
     )
-    (temp_repo / "ignore_tests.json").write_text(
-        json.dumps({"pytest": manifest_entries}, indent=2) + "\n",
-        encoding="utf-8",
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_helper_cli_returns_zero_for_manifest_missing_pytest_field(tmp_path, capsys):
+    manifest_path = tmp_path / "ignore_tests.json"
+    manifest_path.write_text("{}\n", encoding="utf-8")
+
+    exit_code = main(
+        ["--manifest", str(manifest_path), "--repo-root", str(tmp_path)]
     )
+    captured = capsys.readouterr()
 
-    for entry in manifest_entries:
-        file_path = temp_repo / entry
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text("def test_placeholder():\n    assert True\n", encoding="utf-8")
-
-    fake_pytest = fake_bin_dir / "pytest"
-    _write_fake_pytest(fake_pytest)
-
-    env = os.environ.copy()
-    env["PATH"] = f"{fake_bin_dir}{os.pathsep}{env['PATH']}"
-    env["PYTEST_ARGS_FILE"] = str(args_capture_path)
-
-    result = subprocess.run(
-        ["bash", "preflight.sh"],
-        cwd=temp_repo,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 0, result.stderr or result.stdout
-    assert args_capture_path.read_text(encoding="utf-8").splitlines() == [
-        f"--ignore={entry}" for entry in manifest_entries
-    ]
-
-
-
-def test_preflight_fails_closed_when_manifest_is_missing(tmp_path):
-    repo_root = Path(__file__).resolve().parents[1]
-    temp_repo = tmp_path / "repo"
-    scripts_dir = temp_repo / "scripts"
-    fake_bin_dir = tmp_path / "bin"
-    args_capture_path = tmp_path / "pytest_args.txt"
-
-    scripts_dir.mkdir(parents=True)
-    fake_bin_dir.mkdir(parents=True)
-
-    (temp_repo / "preflight.sh").write_text(
-        (repo_root / "preflight.sh").read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
-    (scripts_dir / "preflight_ignore_manifest.py").write_text(
-        (repo_root / "scripts" / "preflight_ignore_manifest.py").read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
-
-    fake_pytest = fake_bin_dir / "pytest"
-    _write_fake_pytest(fake_pytest)
-
-    env = os.environ.copy()
-    env["PATH"] = f"{fake_bin_dir}{os.pathsep}{env['PATH']}"
-    env["PYTEST_ARGS_FILE"] = str(args_capture_path)
-
-    result = subprocess.run(
-        ["bash", "preflight.sh"],
-        cwd=temp_repo,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode != 0
-    assert not args_capture_path.exists()
-    assert "PREFLIGHT FAILED" in result.stdout
-    assert "ignore_tests.json" in result.stdout
+    assert exit_code == 0
+    assert captured.out == ""
+    assert captured.err == ""
