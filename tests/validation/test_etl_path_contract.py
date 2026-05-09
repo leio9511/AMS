@@ -127,6 +127,10 @@ def test_jqdata_audit_report_uses_runtime_output_contract(tmp_path, monkeypatch,
     default_report_path = audit_cb_data(start_date="2020-01-02", end_date="2020-01-02")
     assert Path(default_report_path).parent == get_repo_root() / "reports"
     assert forbidden_workspace not in default_report_path
+    
+    # Cleanup to avoid git untracked files
+    if Path(default_report_path).exists():
+        Path(default_report_path).unlink()
 
 
 @pytest.mark.parametrize(
