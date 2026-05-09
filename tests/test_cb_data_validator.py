@@ -250,7 +250,7 @@ def test_validator_uses_repo_relative_paths():
     
     import ams.validators.cb_data_validator as cv
     ams_pkg_dir = Path(cv.__file__).resolve().parent.parent
-    expected_path = ams_pkg_dir / "data" / "cb_history_factors.metrics.json"
+    expected_path = ams_pkg_dir.parent / "data" / "cb_history_factors.metrics.json"
 
     assert Path(validator.baseline_path) == expected_path
     assert not str(validator.baseline_path).startswith(("/root/" + "projects/AMS"))
@@ -270,6 +270,30 @@ def test_validator_consumes_resolver_for_metrics(tmp_path):
             cli_override=baseline_file
         )
         assert Path(validator.baseline_path) == Path(baseline_file)
+
+
+@pytest.mark.legacy_dataset_semantic
+def test_dataset_semantic_validator_accepts_explicit_temp_baseline_path(tmp_path):
+    baseline_file = tmp_path / "baseline.json"
+    baseline_data = {
+        "row_count": 100000,
+        "premium_rate_nonzero_ratio": 0.98,
+        "is_st_true_count": 2,
+        "is_redeemed_true_count": 2
+    }
+    baseline_file.write_text(json.dumps(baseline_data))
+
+    df = pd.DataFrame({
+        "underlying_ticker": ["000001"] * 50000,
+        "premium_rate": [0.1] * 49000 + [0.0] * 1000,
+        "is_st": [True] * 2 + [False] * 49998,
+        "is_redeemed": [True] * 2 + [False] * 49998
+    })
+
+    validator = DatasetSemanticValidator(baseline_path=str(baseline_file))
+    assert Path(validator.baseline_path) == baseline_file.resolve()
+    with pytest.raises(DataDriftViolation):
+        validator.validate_dataframe(df)
 
 
 @pytest.mark.legacy_dataset_semantic

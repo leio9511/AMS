@@ -148,9 +148,9 @@ class DatasetSemanticValidator:
 
     def __init__(self, baseline_path=None):
         if baseline_path is None:
-            # Baseline schemas are located relative to the ams package
+            # Baseline schemas are located relative to the repository root
             ams_pkg_dir = Path(__file__).resolve().parent.parent
-            self.baseline_path = str(ams_pkg_dir / self.DEFAULT_BASELINE_RELATIVE_PATH)
+            self.baseline_path = str(ams_pkg_dir.parent / self.DEFAULT_BASELINE_RELATIVE_PATH)
         else:
             self.baseline_path = str(resolve_mutable_data_path(
                 default_relative_path=self.DEFAULT_BASELINE_RELATIVE_PATH,
