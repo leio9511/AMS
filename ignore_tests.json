@@ -1,14 +1,3 @@
 {
-  "pytest": [
-    "tests/test_data_source.py",
-    "tests/test_execution_arbitration.py",
-    "tests/test_execution_semantics_stop_loss.py",
-    "tests/test_finance_fetcher.py",
-    "tests/test_main_runner.py",
-    "tests/test_main_runner_smoke.py",
-    "tests/test_order_semantics_e2e.py",
-    "tests/validation/test_golden_integrity.py",
-    "tests/validation/test_path_consistency.py",
-    "tests/validation/test_smoke.py"
-  ]
+  "pytest": []
 }
