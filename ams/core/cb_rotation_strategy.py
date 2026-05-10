@@ -19,6 +19,17 @@ def _build_exclusion_mask(series: pd.Series, *, null_default: bool, invalid_defa
     )
 
 
+def _default_exclusion_mask(df: pd.DataFrame, column_name: str, *, null_default: bool, invalid_default: bool) -> pd.Series:
+    if column_name not in df.columns:
+        return pd.Series(False, index=df.index, dtype=bool)
+
+    return _build_exclusion_mask(
+        df[column_name],
+        null_default=null_default,
+        invalid_default=invalid_default,
+    )
+
+
 class CBRotationStrategy(BaseStrategy):
 
     def __init__(self, top_n=20, liquidity_threshold=10000000, weight_per_position=0.05, 
@@ -72,14 +83,30 @@ class CBRotationStrategy(BaseStrategy):
         if 'suspended' in df.columns:
             df = df[~_build_exclusion_mask(df['suspended'], null_default=True, invalid_default=True)]
 
-        if 'redeem_risk' in df.columns:
-            df = df[~_build_exclusion_mask(df['redeem_risk'], null_default=False, invalid_default=True)]
-
-        if 'is_redeemed' in df.columns:
-            df = df[~_build_exclusion_mask(df['is_redeemed'], null_default=False, invalid_default=True)]
-
-        if 'is_st' in df.columns:
-            df = df[~_build_exclusion_mask(df['is_st'], null_default=True, invalid_default=True)]
+        # Wave 1 redemption contract split:
+        # - redeem_risk: trading-risk exclusion
+        # - is_redeemed: terminal-state fallback exclusion
+        # - is_st: legacy risk exclusion retained as-is
+        redeem_risk_exclude = _default_exclusion_mask(
+            df,
+            'redeem_risk',
+            null_default=False,
+            invalid_default=True,
+        )
+        is_redeemed_exclude = _default_exclusion_mask(
+            df,
+            'is_redeemed',
+            null_default=False,
+            invalid_default=True,
+        )
+        is_st_exclude = _default_exclusion_mask(
+            df,
+            'is_st',
+            null_default=True,
+            invalid_default=True,
+        )
+        exclude_if = redeem_risk_exclude | is_redeemed_exclude | is_st_exclude
+        df = df[~exclude_if]
 
         stopped_out_tickers = set()
         current_holdings = list(getattr(context, 'holdings', []))

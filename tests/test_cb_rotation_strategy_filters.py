@@ -96,6 +96,18 @@ def test_filter_redeem_risk_before_terminal_state():
     assert 'CB3' in portfolio
     assert 'CB4' in portfolio
 
+def test_filter_terminal_is_redeemed_even_when_redeem_risk_is_false():
+    data = get_base_data()
+    data.loc[data['ticker'] == 'CB2', 'redeem_risk'] = False
+    data.loc[data['ticker'] == 'CB2', 'is_redeemed'] = True
+
+    strategy = CBRotationStrategy()
+    context = MockContext()
+    portfolio = strategy.generate_target_portfolio(context, data)
+
+    assert 'CB2' not in portfolio
+    assert set(portfolio.keys()) == {'CB1', 'CB3', 'CB4'}
+
 def test_non_risk_non_terminal_bond_remains_eligible():
     data = get_base_data()
 
@@ -107,6 +119,15 @@ def test_non_risk_non_terminal_bond_remains_eligible():
     assert 'CB2' in portfolio
     assert 'CB3' in portfolio
     assert 'CB4' in portfolio
+
+def test_missing_redeem_risk_column_defaults_to_legacy_false_behavior():
+    data = get_base_data().drop(columns=['redeem_risk'])
+
+    strategy = CBRotationStrategy()
+    context = MockContext()
+    portfolio = strategy.generate_target_portfolio(context, data)
+
+    assert set(portfolio.keys()) == {'CB1', 'CB2', 'CB3', 'CB4'}
 
 def test_filter_st_stocks():
     data = get_base_data()
