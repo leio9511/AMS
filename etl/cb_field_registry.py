@@ -10,6 +10,12 @@ FIELD_LAYER_ENRICHMENT = "enrichment"
 VALIDATOR_SCOPE_CORE = "core"
 VALIDATOR_SCOPE_ENRICHMENT = "enrichment"
 
+# Wave 1 redemption semantic split contract:
+# - redeem_risk = trading-risk window field used by strategy/risk filtering
+# - is_redeemed = terminal/delist state derived from redemption source contract
+# The two fields are intentionally separate so the system can represent
+# redeem_risk=True while is_redeemed=False during the pre-delist risk window.
+
 TUSHARE_CONVERT_PRICE_PROVENANCE_LATEST = "latest_non_null_convertprice_aft"
 TUSHARE_CONVERT_PRICE_PROVENANCE_INITIAL = "convert_price_initial"
 TUSHARE_CONVERT_PRICE_PROVENANCE_BASIC = "cb_basic.conv_price"
@@ -117,8 +123,14 @@ FIELD_REGISTRY: dict[str, GovernedField] = {
     "redeem_risk": GovernedField(
         name="redeem_risk",
         layer=FIELD_LAYER_CORE,
-        source_semantics="Trading-risk redemption window field consumed by strategy filtering independently from terminal redemption state.",
-        fallback_semantics="Wave 1 transitional default is redeem_risk=False unless an explicit controlled fixture/source sets it.",
+        source_semantics=(
+            "Trading-risk redemption window field consumed by strategy filtering "
+            "before terminal-state filtering; may be True while is_redeemed remains False."
+        ),
+        fallback_semantics=(
+            "Wave 1 transitional default is redeem_risk=False unless an explicit controlled "
+            "fixture/source sets the trading-risk window state."
+        ),
         validator_scope=VALIDATOR_SCOPE_CORE,
         degraded_behavior="Deterministic placeholder/default population is allowed while upstream sourcing remains transitional.",
         promotion_sensitive=True,
@@ -126,7 +138,10 @@ FIELD_REGISTRY: dict[str, GovernedField] = {
     "is_redeemed": GovernedField(
         name="is_redeemed",
         layer=FIELD_LAYER_CORE,
-        source_semantics="Derived from governed redemption source contract using delist_Date.",
+        source_semantics=(
+            "Terminal/delist redemption state derived from the governed delist_Date source contract; "
+            "it is not the trading-risk window field."
+        ),
         fallback_semantics="Null primary behavior is is_redeemed=False per redemption contract.",
         validator_scope=VALIDATOR_SCOPE_CORE,
         degraded_behavior="Core path failure if the source contract regresses.",

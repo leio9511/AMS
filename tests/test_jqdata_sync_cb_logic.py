@@ -784,6 +784,14 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
                 metrics = json.load(f)
             self.assertEqual(metrics["redeem_risk_true_count"], 1)
             self.assertEqual(metrics["is_redeemed_true_count"], 0)
+            self.assertEqual(metrics["canonical_core_fields"][8:11], ["is_st", "redeem_risk", "is_redeemed"])
+            self.assertEqual(
+                metrics["split_redemption_semantics"],
+                {
+                    "redeem_risk": "trading-risk window",
+                    "is_redeemed": "terminal/delist state",
+                },
+            )
 
 if __name__ == "__main__":
     unittest.main()

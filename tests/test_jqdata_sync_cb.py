@@ -178,6 +178,92 @@ def test_canonical_dataset_artifact_preserves_split_redemption_state_after_round
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
 @patch("etl.jqdata_sync_cb.jqdatasdk")
 @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+def test_jqdata_metrics_artifact_records_split_redemption_semantics_and_counts(
+    mock_semantic_validator, mock_jqdatasdk
+):
+    mock_semantic_validator.return_value.validate_dataframe.return_value = True
+    mock_jqdatasdk.auth.return_value = None
+
+    mock_df_bonds = pd.DataFrame({"code": ["123071.XSHE"], "end_date": [pd.NaT]})
+    mock_df_bonds.index = ["123071.XSHE"]
+    mock_jqdatasdk.get_all_securities.return_value = mock_df_bonds
+
+    bonds_info = pd.DataFrame(
+        {
+            "code": ["123071"],
+            "company_code": ["000001.XSHE"],
+            "delist_Date": ["2025-12-31"],
+        }
+    )
+    premium = pd.DataFrame(
+        {
+            "date": ["2020-01-02"],
+            "code": ["123071"],
+            "exchange_code": ["XSHE"],
+            "convert_premium_rate": [15.5],
+        }
+    )
+    mock_jqdatasdk.bond.run_query.side_effect = [
+        bonds_info,
+        premium,
+        pd.DataFrame(columns=["date", "code", "exchange_code", "convert_premium_rate"]),
+    ]
+
+    mock_jqdatasdk.get_extras.return_value = pd.DataFrame(
+        {"000001.XSHE": [False]}, index=pd.to_datetime(["2020-01-02"])
+    )
+    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+    mock_jqdatasdk.get_price.return_value = pd.DataFrame(
+        {
+            "time": ["2020-01-02"],
+            "code": ["123071.XSHE"],
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.5],
+            "volume": [1000],
+        }
+    ).set_index(["time", "code"])
+    mock_jqdatasdk.get_security_info.side_effect = AssertionError("legacy get_security_info path must not be used")
+    mock_jqdatasdk.finance.run_query.side_effect = AssertionError("finance.CCB_CALL must not be queried")
+
+    metrics_path = get_provider_artifact_paths("jqdata")["metrics_path"]
+    original_run_etl = etl.jqdata_sync_cb.run_etl
+
+    def inject_split_state(*args, **kwargs):
+        report_path = original_run_etl(*args, **kwargs)
+        dataset_path = resolve_provider_dataset_path("jqdata")
+        df = pd.read_csv(dataset_path)
+        df.loc[df["ticker"] == "123071.XSHE", "redeem_risk"] = True
+        df.to_csv(dataset_path, index=False)
+        with open(metrics_path, "r", encoding="utf-8") as f:
+            metrics = json.load(f)
+        metrics["redeem_risk_true_count"] = 1
+        metrics["is_redeemed_true_count"] = 0
+        with open(metrics_path, "w", encoding="utf-8") as f:
+            json.dump(metrics, f, ensure_ascii=False, indent=2)
+        return report_path
+
+    with patch("etl.jqdata_sync_cb.run_etl", side_effect=inject_split_state):
+        sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
+
+    with open(metrics_path, "r", encoding="utf-8") as f:
+        metrics = json.load(f)
+
+    assert metrics["redeem_risk_true_count"] == 1
+    assert metrics["is_redeemed_true_count"] == 0
+    assert metrics["canonical_core_fields"][8:11] == ["is_st", "redeem_risk", "is_redeemed"]
+    assert metrics["split_redemption_semantics"] == {
+        "redeem_risk": "trading-risk window",
+        "is_redeemed": "terminal/delist state",
+    }
+
+
+@patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
+@patch("etl.jqdata_sync_cb.jqdatasdk")
+@patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
 def test_integrated_source_contract_repairs_keep_dataset_generation_green(mock_semantic_validator, mock_jqdatasdk):
     mock_semantic_validator.return_value.validate_dataframe.return_value = True
     mock_jqdatasdk.auth.return_value = None

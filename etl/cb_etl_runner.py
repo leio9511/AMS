@@ -116,6 +116,12 @@ def _build_candidate_summary_metrics(df: pd.DataFrame) -> dict:
     }
 
 
+# Promotion/persistence contract:
+# - promoted canonical datasets must preserve both redeem_risk and is_redeemed
+# - promoted metrics must expose redeem_risk_true_count and is_redeemed_true_count
+#   so split-state artifact round-trips remain reviewable in runner outputs
+
+
 def _ensure_canonical_columns(df: pd.DataFrame) -> pd.DataFrame:
     normalized = df.copy()
     default_factories = {
@@ -281,6 +287,23 @@ def run_etl(start_date, end_date, source_name, promote=False, jqdata_client=None
             "end_date": end_date,
             "generated_at": datetime.datetime.now().isoformat(),
             "source_lineage": "jqdata_sync_cb" if source_name == "jqdata" else f"cb_etl_runner_{source_name}",
+            "canonical_core_fields": [
+                "ticker",
+                "date",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "underlying_ticker",
+                "is_st",
+                "redeem_risk",
+                "is_redeemed",
+            ],
+            "split_redemption_semantics": {
+                "redeem_risk": "trading-risk window",
+                "is_redeemed": "terminal/delist state",
+            },
             "premium_rate_source_row_count": pipeline.results["source_coverage"].get("premium_source_row_count", 0),
             "premium_rate_joined_row_count": pipeline.results["premium_join_summary"].get("premium_joined_row_count", 0),
             "premium_rate_join_coverage_ratio": 1.0 - pipeline.results["premium_join_summary"].get("missing_premium_ratio", 0.0) if not df_supportable.empty else 0.0,
