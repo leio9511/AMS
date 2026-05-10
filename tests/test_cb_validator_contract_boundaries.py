@@ -337,6 +337,22 @@ def test_stage_f_missing_redeem_risk_column_fails_governed_core_contract_check()
 
 
 
+def test_stage_f_normalization_does_not_mask_invalid_redeem_risk_non_boolean_values():
+    pipeline = _contract_valid_pipeline()
+    pipeline.df["redeem_risk"] = [False, "bad-bool"]
+
+    assert pipeline.run_stage_f_validator() is False
+
+    summary = pipeline.results["validator_summary"]
+    assert summary["core_validator_status"] == "FAIL"
+    assert summary["failure_type"] == "VALIDATOR_SCHEMA_FAILURE"
+    assert summary["status"] == "FAIL"
+    assert "redeem_risk" in summary["core_validator_message"]
+    assert summary["promotion_gate_status"] == "BLOCKED"
+    assert summary["promotion_gate_message"] == "Promotion blocked: core_validator_status != PASS"
+
+
+
 def test_stage_f_validator_allows_is_st_gap_without_erasing_stage_d_gap_witness():
     pipeline = _contract_valid_pipeline()
     pipeline.df["is_st"] = [False, None]
