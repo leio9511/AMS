@@ -3,14 +3,15 @@ from pathlib import Path
 
 import pandera as pa
 import pandas as pd
-import numpy as np
 
 try:
+    from ams.utils.contract_flags import normalize_contract_flag_series
     from ams.utils.path_resolver import resolve_mutable_data_path
 except ModuleNotFoundError:
     import sys
 
     sys.path.append(str(Path(__file__).resolve().parents[2]))
+    from ams.utils.contract_flags import normalize_contract_flag_series
     from ams.utils.path_resolver import resolve_mutable_data_path
 
 cb_schema = pa.DataFrameSchema(
@@ -27,33 +28,6 @@ cb_schema = pa.DataFrameSchema(
 CORE_VALIDATOR_TICKER_DTYPE = pd.StringDtype(storage="pyarrow")
 
 
-def _normalize_contract_bool_value(value):
-    if isinstance(value, (bool, np.bool_)):
-        return bool(value)
-
-    if isinstance(value, (int, np.integer)) and value in (0, 1):
-        return bool(value)
-
-    if isinstance(value, (float, np.floating)) and value in (0.0, 1.0):
-        return bool(int(value))
-
-    return pd.NA
-
-
-def _normalize_contract_bool_series(series: pd.Series) -> pd.Series:
-    normalized = series.map(
-        lambda value: pd.NA if pd.isna(value) else _normalize_contract_bool_value(value)
-    )
-    invalid_mask = series.notna() & normalized.isna()
-    if invalid_mask.any():
-        return series
-
-    if normalized.isna().any():
-        return normalized.astype("boolean")
-
-    return normalized.astype(bool)
-
-
 def _normalize_is_st_for_core_validator(series: pd.Series) -> pd.Series:
     """Normalize is_st for Stage-F core validation only.
 
@@ -64,14 +38,12 @@ def _normalize_is_st_for_core_validator(series: pd.Series) -> pd.Series:
     the schema validator still rejects them.
     """
 
-    normalized = series.map(
-        lambda value: False if pd.isna(value) else _normalize_contract_bool_value(value)
+    return normalize_contract_flag_series(
+        series,
+        null_default=False,
+        invalid="preserve",
+        field_name="is_st",
     )
-    invalid_mask = series.notna() & normalized.isna()
-    if invalid_mask.any():
-        return series
-
-    return normalized.astype(bool)
 
 
 def normalize_core_validator_frame(df: pd.DataFrame) -> pd.DataFrame:
@@ -87,17 +59,20 @@ def normalize_core_validator_frame(df: pd.DataFrame) -> pd.DataFrame:
         normalized["is_st"] = _normalize_is_st_for_core_validator(normalized["is_st"])
 
     if "redeem_risk" in normalized.columns:
-        normalized["redeem_risk"] = normalized["redeem_risk"].map(
-            lambda value: False if pd.isna(value) else _normalize_contract_bool_value(value)
+        normalized["redeem_risk"] = normalize_contract_flag_series(
+            normalized["redeem_risk"],
+            null_default=False,
+            invalid="preserve",
+            field_name="redeem_risk",
         )
-        invalid_mask = normalized["redeem_risk"].isna() & df["redeem_risk"].notna()
-        if invalid_mask.any():
-            normalized["redeem_risk"] = df["redeem_risk"]
-        else:
-            normalized["redeem_risk"] = normalized["redeem_risk"].astype(bool)
 
     if "is_redeemed" in normalized.columns:
-        normalized["is_redeemed"] = _normalize_contract_bool_series(normalized["is_redeemed"])
+        normalized["is_redeemed"] = normalize_contract_flag_series(
+            normalized["is_redeemed"],
+            null_default=None,
+            invalid="preserve",
+            field_name="is_redeemed",
+        )
 
     return normalized
 

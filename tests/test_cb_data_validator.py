@@ -3,6 +3,7 @@ import os
 import pandas as pd
 import pytest
 from ams.validators.cb_data_validator import CBDataValidator, normalize_core_validator_frame
+from ams.utils.contract_flags import normalize_contract_flag_series
 from ams.utils.path_resolver import HostLayoutCouplingError, get_repo_root
 
 def test_validator_with_perfect_dataframe():
@@ -146,6 +147,21 @@ def test_normalize_core_validator_frame_defaults_redeem_risk_nulls_to_false_for_
 
     assert normalized["redeem_risk"].dtype == bool
     assert normalized["redeem_risk"].tolist() == [False, False, False, True]
+
+
+
+def test_shared_contract_flag_normalizer_accepts_string_booleans_consistently_for_redeem_risk():
+    raw = pd.Series([False, "true", "0", 1, None, pd.NA], dtype="object")
+
+    normalized = normalize_contract_flag_series(
+        raw,
+        null_default=False,
+        invalid="preserve",
+        field_name="redeem_risk",
+    )
+
+    assert normalized.dtype == bool
+    assert normalized.tolist() == [False, True, False, True, False, False]
 
 
 

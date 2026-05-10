@@ -1,9 +1,9 @@
 from ams.models.config import TakeProfitConfig, TakeProfitMode, TakeProfitPolicy
 from decimal import Decimal
 import pandas as pd
-import numpy as np
 from ams.core.base import BaseStrategy
 from ams.core.order import Order, OrderDirection, OrderType, OrderStatus
+from ams.utils.contract_flags import build_contract_flag_exclusion_mask
 
 
 TP_MODE_POSITION = "position"
@@ -11,35 +11,12 @@ TP_MODE_INTRADAY = "intraday"
 TP_MODE_BOTH = "both"
 
 
-def _normalize_strategy_flag_value(value):
-    if isinstance(value, (bool, np.bool_)):
-        return bool(value)
-
-    if isinstance(value, (int, np.integer)) and value in (0, 1):
-        return bool(value)
-
-    if isinstance(value, (float, np.floating)) and value in (0.0, 1.0):
-        return bool(int(value))
-
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"true", "1"}:
-            return True
-        if lowered in {"false", "0"}:
-            return False
-
-    return pd.NA
-
-
 def _build_exclusion_mask(series: pd.Series, *, null_default: bool, invalid_default: bool) -> pd.Series:
-    normalized = series.map(
-        lambda value: pd.NA if pd.isna(value) else _normalize_strategy_flag_value(value)
+    return build_contract_flag_exclusion_mask(
+        series,
+        null_default=null_default,
+        invalid_default=invalid_default,
     )
-    invalid_mask = series.notna() & normalized.isna()
-    normalized = normalized.where(~normalized.isna(), null_default)
-    if invalid_mask.any():
-        normalized.loc[invalid_mask] = invalid_default
-    return normalized.astype(bool)
 
 
 class CBRotationStrategy(BaseStrategy):

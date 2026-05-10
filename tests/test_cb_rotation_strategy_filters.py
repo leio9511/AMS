@@ -43,6 +43,19 @@ def test_filter_chain_treats_null_is_redeemed_as_non_terminal_per_contract():
     assert set(portfolio.keys()) == {'CB1', 'CB2', 'CB3', 'CB4'}
 
 
+def test_filter_chain_accepts_string_redeem_risk_values_via_shared_contract_normalizer():
+    data = get_base_data()
+    data = data.astype({'redeem_risk': 'object'})
+    data.loc[:, 'redeem_risk'] = [False, 'true', '0', False]
+
+    strategy = CBRotationStrategy()
+    context = MockContext()
+    portfolio = strategy.generate_target_portfolio(context, data)
+
+    assert 'CB2' not in portfolio
+    assert set(portfolio.keys()) == {'CB1', 'CB3', 'CB4'}
+
+
 def test_filter_chain_treats_null_st_flags_conservatively():
     data = get_base_data()
     data = data.astype({'is_st': 'object'})
