@@ -61,16 +61,16 @@ class CBRotationStrategy(BaseStrategy):
             df = df[df['volume'] > 0]
             
         if 'suspended' in df.columns:
-            df = df[~df['suspended']]
+            df = df[~df['suspended'].fillna(False).astype(bool)]
 
         if 'redeem_risk' in df.columns:
-            df = df[~df['redeem_risk']]
+            df = df[~df['redeem_risk'].fillna(False).astype(bool)]
 
         if 'is_redeemed' in df.columns:
-            df = df[~df['is_redeemed']]
+            df = df[~df['is_redeemed'].fillna(False).astype(bool)]
 
         if 'is_st' in df.columns:
-            df = df[~df['is_st']]
+            df = df[~df['is_st'].fillna(False).astype(bool)]
 
         stopped_out_tickers = set()
         current_holdings = list(getattr(context, 'holdings', []))

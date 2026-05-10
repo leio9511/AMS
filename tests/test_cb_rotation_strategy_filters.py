@@ -18,6 +18,26 @@ def get_base_data():
         'is_st': [False, False, False, False]
     })
 
+
+def test_filter_chain_treats_null_risk_flags_as_safe_defaults():
+    data = get_base_data()
+    data = data.astype(
+        {
+            'redeem_risk': 'object',
+            'is_redeemed': 'object',
+            'is_st': 'object',
+        }
+    )
+    data.loc[:, 'redeem_risk'] = [False, None, pd.NA, False]
+    data.loc[:, 'is_redeemed'] = [False, False, None, pd.NA]
+    data.loc[:, 'is_st'] = [False, pd.NA, False, None]
+
+    strategy = CBRotationStrategy()
+    context = MockContext()
+    portfolio = strategy.generate_target_portfolio(context, data)
+
+    assert set(portfolio.keys()) == {'CB1', 'CB2', 'CB3', 'CB4'}
+
 def test_filter_forced_redemption():
     data = get_base_data()
     # CB2 is redeemed

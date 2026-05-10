@@ -88,6 +88,7 @@ def test_jqdata_successful_sync_uses_contract_resolved_dataset_path(mock_semanti
         "double_low",
         "underlying_ticker",
         "is_st",
+        "redeem_risk",
         "is_redeemed",
     }
     assert expected_cols.issubset(set(df.columns))

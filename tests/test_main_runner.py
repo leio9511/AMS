@@ -251,11 +251,11 @@ def test_cli_tp_mode_validation():
 def test_cli_integration_json_output(tmp_path, capsys):
     # Create a small fixture CSV
     csv_file = tmp_path / "test_cb_data.csv"
-    csv_content = """ticker,date,open,high,low,close,volume,premium_rate,double_low,underlying_ticker,is_st,is_redeemed
-123001.SZ,2025-01-06,120.0,122.0,119.0,121.0,100000,0.05,125.0,300001.SZ,False,False
-123002.SZ,2025-01-06,110.0,112.0,109.0,111.0,200000,0.10,121.0,300002.SZ,False,False
-123001.SZ,2025-01-07,121.0,123.0,120.0,122.0,110000,0.06,128.0,300001.SZ,False,False
-123002.SZ,2025-01-07,111.0,113.0,110.0,112.0,210000,0.11,123.0,300002.SZ,False,False
+    csv_content = """ticker,date,open,high,low,close,volume,premium_rate,double_low,underlying_ticker,is_st,redeem_risk,is_redeemed
+123001.SZ,2025-01-06,120.0,122.0,119.0,121.0,100000,0.05,125.0,300001.SZ,False,False,False
+123002.SZ,2025-01-06,110.0,112.0,109.0,111.0,200000,0.10,121.0,300002.SZ,False,False,False
+123001.SZ,2025-01-07,121.0,123.0,120.0,122.0,110000,0.06,128.0,300001.SZ,False,False,False
+123002.SZ,2025-01-07,111.0,113.0,110.0,112.0,210000,0.11,123.0,300002.SZ,False,False,False
 """
     csv_file.write_text(csv_content)
 
