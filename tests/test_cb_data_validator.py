@@ -57,6 +57,22 @@ def test_validator_catches_missing_columns():
     assert validator.validate_dataframe(df) is False
 
 
+def test_core_validator_requires_redeem_risk_column_in_stage_f_contract():
+    validator = CBDataValidator()
+    df = pd.DataFrame(
+        {
+            "ticker": ["110001.XSHG"],
+            "date": [pd.Timestamp("2025-01-06")],
+            "close": [100.0],
+            "is_st": [False],
+            "is_redeemed": [False],
+        }
+    )
+
+    assert validator.validate_dataframe(df) is False
+    assert "redeem_risk" in validator.last_error_message
+
+
 def test_core_validator_only_checks_prd_required_columns_and_close_semantics():
     validator = CBDataValidator()
     valid_core = normalize_core_validator_frame(
