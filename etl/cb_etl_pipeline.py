@@ -720,6 +720,12 @@ class CBETLPipeline:
         stage["missing_redemption_ratio"] = 0.0
 
         try:
+            contract = REDEMPTION_SOURCE_CONTRACT
+            raw_has_primary_field = (
+                self.df_bonds_info is not None
+                and contract["primary_field"] in self.df_bonds_info.columns
+            )
+
             # Evaluate redemption coverage ONLY against the Core Universe
             # specifically the supportable subset of the Core Universe
             df_core_universe_supportable = self.df[self.df["supportability_bucket"].eq(SUPPORTABILITY_BUCKET_SUPPORTABLE)].copy()
@@ -742,9 +748,13 @@ class CBETLPipeline:
             total_rows = len(df_core_universe_supportable)
             stage["missing_redemption_ratio"] = stage["missing_redemption_row_count"] / total_rows if total_rows > 0 else 0.0
 
-            if total_rows > 0 and stage["missing_redemption_ratio"] >= 0.20 and stage["redemption_joined_row_count"] == 0:
+            if total_rows > 0 and not raw_has_primary_field:
                 stage["status"] = STAGE_STATUS_FAIL
                 stage["failure_type"] = "REDEMPTION_SOURCE_GAP"
+                stage["message"] = (
+                    f"Redemption source contract regression: missing primary field {contract['primary_field']} "
+                    f"in {contract['source_table']}"
+                )
             else:
                 stage["status"] = STAGE_STATUS_PASS
 
@@ -796,6 +806,8 @@ class CBETLPipeline:
             return STAGE_STATUS_NOT_RUN
 
         redemption_status = self.results["redemption_summary"]["status"]
+        if redemption_status == STAGE_STATUS_FAIL:
+            return STAGE_STATUS_FAIL
         if redemption_status == STAGE_STATUS_NOT_RUN:
             return STAGE_STATUS_NOT_RUN
         return STAGE_STATUS_PASS
