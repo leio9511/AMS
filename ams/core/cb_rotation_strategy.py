@@ -87,6 +87,7 @@ class CBRotationStrategy(BaseStrategy):
         # - redeem_risk: trading-risk exclusion
         # - is_redeemed: terminal-state fallback exclusion
         # - is_st: legacy risk exclusion retained as-is
+        # Missing redeem_risk must remain backward-compatible and behave as False.
         redeem_risk_exclude = _default_exclusion_mask(
             df,
             'redeem_risk',
@@ -105,7 +106,7 @@ class CBRotationStrategy(BaseStrategy):
             null_default=True,
             invalid_default=True,
         )
-        exclude_if = redeem_risk_exclude | is_redeemed_exclude | is_st_exclude
+        exclude_if = is_st_exclude | redeem_risk_exclude | is_redeemed_exclude
         df = df[~exclude_if]
 
         stopped_out_tickers = set()

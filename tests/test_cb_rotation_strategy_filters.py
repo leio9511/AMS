@@ -108,7 +108,7 @@ def test_filter_terminal_is_redeemed_even_when_redeem_risk_is_false():
     assert 'CB2' not in portfolio
     assert set(portfolio.keys()) == {'CB1', 'CB3', 'CB4'}
 
-def test_non_risk_non_terminal_bond_remains_eligible():
+def test_non_risk_bond_remains_eligible_with_split_redemption_contract_present():
     data = get_base_data()
 
     strategy = CBRotationStrategy()
