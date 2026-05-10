@@ -11,6 +11,8 @@ FORBIDDEN_HOST_LAYOUT_TEXT = [
     ".openclaw/" + "workspace",
 ]
 
+WITNESS_RELATIVE_PATH = "tests/golden/data/redeem_risk_split_state_witness.csv"
+
 
 def _parse_csv_bool(value: str) -> bool:
     normalized = value.strip().lower()
@@ -48,6 +50,10 @@ def test_golden_snapshot_integrity_uses_repo_asset_contract():
     with snapshot_path.open("r", encoding="utf-8") as f:
         actual_row_count = sum(1 for _ in f)
     assert actual_row_count == metadata["row_count"], f"Row count mismatch: expected {metadata['row_count']}, got {actual_row_count}"
+
+    assert metadata["source_lineage"] == (
+        "Repo-owned golden snapshot derived from AMS product backtest data and frozen for Phase 1C validation on 2026-04-23"
+    )
 
 
 def test_baseline_artifacts_loadable():
@@ -102,9 +108,37 @@ def test_golden_metadata_does_not_bake_in_root_lineage():
                 assert pattern not in value, f"Host layout pattern found in {key}: {value}"
 
 
+def test_golden_split_state_witness_metadata_is_witness_scoped():
+    metadata_path = resolve_repo_asset("tests/golden/data/metadata.json")
+    witness_path = resolve_repo_asset(WITNESS_RELATIVE_PATH)
+
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+
+    assert metadata["witness_filename"] == "redeem_risk_split_state_witness.csv"
+    assert witness_path.name == metadata["witness_filename"]
+    assert metadata["witness_row_count"] == 1
+    assert metadata["witness_split_state_row_count"] == 1
+    assert metadata["witness_redeem_risk_true_count"] == 1
+    assert metadata["witness_is_redeemed_false_count"] == 1
+    assert metadata["witness_is_st_false_count"] == 1
+
+    snapshot_contract_keys = {"sha256", "file_size_bytes", "row_count", "source_lineage"}
+    witness_contract_keys = {
+        "witness_filename",
+        "witness_row_count",
+        "witness_split_state_row_count",
+        "witness_redeem_risk_true_count",
+        "witness_is_redeemed_false_count",
+        "witness_is_st_false_count",
+    }
+
+    assert snapshot_contract_keys.issubset(metadata)
+    assert witness_contract_keys.issubset(metadata)
+    assert not snapshot_contract_keys & {key for key in metadata if key.startswith("witness_")}
+
+
 def test_golden_split_state_witness_asset_is_repo_owned_and_loadable():
-    witness_relative = "tests/golden/data/redeem_risk_split_state_witness.csv"
-    witness_path = resolve_repo_asset(witness_relative)
+    witness_path = resolve_repo_asset(WITNESS_RELATIVE_PATH)
     golden_data_dir = resolve_repo_asset("tests/golden/data")
 
     assert witness_path.exists(), "Witness artifact missing"
@@ -119,7 +153,7 @@ def test_golden_split_state_witness_asset_is_repo_owned_and_loadable():
 
 
 def test_golden_split_state_witness_encodes_redeem_risk_before_terminal_state():
-    witness_path = resolve_repo_asset("tests/golden/data/redeem_risk_split_state_witness.csv")
+    witness_path = resolve_repo_asset(WITNESS_RELATIVE_PATH)
 
     with witness_path.open("r", encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
