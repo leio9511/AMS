@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 from etl.cb_provider_base import BaseDataProvider, DataProviderAuthError
 from etl.cb_audit_contract import (
@@ -61,6 +62,42 @@ REDEMPTION_SOURCE_CONTRACT = {
     ],
     "null_primary_behavior": "is_redeemed=False",
 }
+
+
+def _normalize_contract_bool_value(value):
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+
+    if isinstance(value, (int, np.integer)) and value in (0, 1):
+        return bool(value)
+
+    if isinstance(value, (float, np.floating)) and value in (0.0, 1.0):
+        return bool(int(value))
+
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1"}:
+            return True
+        if lowered in {"false", "0"}:
+            return False
+
+    return pd.NA
+
+
+def _normalize_redeem_risk_series(series: pd.Series) -> pd.Series:
+    normalized = series.map(
+        lambda value: False if pd.isna(value) else _normalize_contract_bool_value(value)
+    )
+    invalid_mask = series.notna() & normalized.isna()
+    if invalid_mask.any():
+        invalid_values = sorted({str(value) for value in series.loc[invalid_mask].tolist()})
+        raise ValueError(
+            "redeem_risk contains invalid non-boolean-like values: "
+            f"{invalid_values}"
+        )
+
+    return normalized.astype(bool)
+
 
 def _split_bond_ticker(ticker: str) -> tuple[str | None, str | None]:
     if not isinstance(ticker, str) or "." not in ticker:
@@ -762,8 +799,8 @@ class CBETLPipeline:
                 df_core_universe_supportable["date"] >= df_core_universe_supportable["delist_Date"]
             )
             if "redeem_risk" in df_core_universe_supportable.columns:
-                df_core_universe_supportable["redeem_risk"] = (
-                    df_core_universe_supportable["redeem_risk"].fillna(False).astype(bool)
+                df_core_universe_supportable["redeem_risk"] = _normalize_redeem_risk_series(
+                    df_core_universe_supportable["redeem_risk"]
                 )
             else:
                 df_core_universe_supportable["redeem_risk"] = False

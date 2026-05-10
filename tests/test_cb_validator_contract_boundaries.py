@@ -187,6 +187,51 @@ def test_stage_e_redemption_contract_allows_null_delist_as_non_terminal_row():
     assert bool(pipeline.df.loc[0, "is_redeemed"]) is False
 
 
+def test_stage_e_redemption_contract_allows_split_state_rows_with_redeem_risk_true_before_terminal_state():
+    pipeline = CBETLPipeline("2025-01-06", "2025-01-06", provider=MagicMock())
+    pipeline.df = pd.DataFrame(
+        {
+            "ticker": ["110001.XSHG"],
+            "date": [pd.Timestamp("2025-01-06")],
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.5],
+            "volume": [1000],
+            "bond_code_raw": ["110001"],
+            "bond_exchange_code": ["XSHG"],
+            "supportability_bucket": [SUPPORTABILITY_BUCKET_SUPPORTABLE],
+            "underlying_ticker": ["600001.XSHG"],
+            "is_st": [False],
+            "redeem_risk": [True],
+        }
+    )
+    pipeline.df_bonds_info = pd.DataFrame(
+        {
+            "code": ["110001"],
+            "company_code": ["600001.XSHG"],
+            "delist_Date": [None],
+        }
+    )
+    pipeline.bond_to_delist = {"110001": pd.NaT}
+    pipeline.results["source_coverage"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
+    pipeline.results["supportability_summary"].update(
+        {
+            "status": "PASS",
+            "failure_type": "NONE",
+            "message": "",
+            "supportable_row_count": 1,
+            "supportable_unique_bond_count": 1,
+        }
+    )
+
+    assert pipeline.run_stage_e_redemption_delist() is True
+
+    summary = pipeline.results["redemption_summary"]
+    assert summary["status"] == "PASS"
+    assert bool(pipeline.df.loc[0, "redeem_risk"]) is True
+    assert bool(pipeline.df.loc[0, "is_redeemed"]) is False
+
 def test_stage_e_redemption_contract_fails_closed_when_primary_field_missing_from_source_contract():
     pipeline = CBETLPipeline("2025-01-06", "2025-01-06", provider=MagicMock())
     pipeline.df = pd.DataFrame(
@@ -232,6 +277,50 @@ def test_stage_e_redemption_contract_fails_closed_when_primary_field_missing_fro
     assert "missing primary field delist_Date" in summary["message"]
 
 
+
+def test_stage_e_redemption_contract_rejects_invalid_redeem_risk_values_in_supportable_rows():
+    pipeline = CBETLPipeline("2025-01-06", "2025-01-06", provider=MagicMock())
+    pipeline.df = pd.DataFrame(
+        {
+            "ticker": ["110001.XSHG"],
+            "date": [pd.Timestamp("2025-01-06")],
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.5],
+            "volume": [1000],
+            "bond_code_raw": ["110001"],
+            "bond_exchange_code": ["XSHG"],
+            "supportability_bucket": [SUPPORTABILITY_BUCKET_SUPPORTABLE],
+            "underlying_ticker": ["600001.XSHG"],
+            "is_st": [False],
+            "redeem_risk": ["bad-bool"],
+        }
+    )
+    pipeline.df_bonds_info = pd.DataFrame(
+        {
+            "code": ["110001"],
+            "company_code": ["600001.XSHG"],
+            "delist_Date": [None],
+        }
+    )
+    pipeline.bond_to_delist = {"110001": pd.NaT}
+    pipeline.results["source_coverage"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
+    pipeline.results["supportability_summary"].update(
+        {
+            "status": "PASS",
+            "failure_type": "NONE",
+            "message": "",
+            "supportable_row_count": 1,
+            "supportable_unique_bond_count": 1,
+        }
+    )
+
+    assert pipeline.run_stage_e_redemption_delist() is False
+
+    summary = pipeline.results["redemption_summary"]
+    assert summary["status"] == "FAIL"
+    assert "redeem_risk contains invalid non-boolean-like values" in summary["message"]
 
 def test_stage_f_missing_redeem_risk_column_fails_governed_core_contract_check():
     pipeline = _contract_valid_pipeline()
