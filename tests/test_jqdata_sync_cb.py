@@ -1,5 +1,6 @@
 from ams.utils.provider_config import resolve_provider_dataset_path, get_provider_artifact_paths
 import etl.jqdata_sync_cb
+import io
 import json
 import os
 from pathlib import Path
@@ -93,6 +94,79 @@ def test_jqdata_successful_sync_uses_contract_resolved_dataset_path(mock_semanti
     }
     assert expected_cols.issubset(set(df.columns))
     assert df.loc[0, "underlying_ticker"] == "000001.XSHE"
+
+
+@patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
+@patch("etl.jqdata_sync_cb.jqdatasdk")
+@patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+def test_canonical_dataset_artifact_preserves_split_redemption_state_after_round_trip(
+    mock_semantic_validator, mock_jqdatasdk
+):
+    mock_semantic_validator.return_value.validate_dataframe.return_value = True
+    mock_jqdatasdk.auth.return_value = None
+
+    mock_df_bonds = pd.DataFrame({"code": ["123071.XSHE"], "end_date": [pd.NaT]})
+    mock_df_bonds.index = ["123071.XSHE"]
+    mock_jqdatasdk.get_all_securities.return_value = mock_df_bonds
+
+    bonds_info = pd.DataFrame(
+        {
+            "code": ["123071"],
+            "company_code": ["000001.XSHE"],
+            "delist_Date": ["2025-12-31"],
+        }
+    )
+    premium = pd.DataFrame(
+        {
+            "date": ["2020-01-02"],
+            "code": ["123071"],
+            "exchange_code": ["XSHE"],
+            "convert_premium_rate": [15.5],
+        }
+    )
+    mock_jqdatasdk.bond.run_query.side_effect = [
+        bonds_info,
+        premium,
+        pd.DataFrame(columns=["date", "code", "exchange_code", "convert_premium_rate"]),
+    ]
+
+    mock_jqdatasdk.get_extras.return_value = pd.DataFrame(
+        {"000001.XSHE": [False]}, index=pd.to_datetime(["2020-01-02"])
+    )
+    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+    mock_jqdatasdk.get_price.return_value = pd.DataFrame(
+        {
+            "time": ["2020-01-02"],
+            "code": ["123071.XSHE"],
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.5],
+            "volume": [1000],
+        }
+    ).set_index(["time", "code"])
+    mock_jqdatasdk.get_security_info.side_effect = AssertionError("legacy get_security_info path must not be used")
+    mock_jqdatasdk.finance.run_query.side_effect = AssertionError("finance.CCB_CALL must not be queried")
+
+    sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
+
+    persisted = pd.read_csv(resolve_provider_dataset_path("jqdata"))
+    persisted.loc[persisted["ticker"] == "123071.XSHE", "redeem_risk"] = True
+    persisted.loc[persisted["ticker"] == "123071.XSHE", "is_redeemed"] = False
+    persisted.to_csv(resolve_provider_dataset_path("jqdata"), index=False)
+
+    round_tripped = pd.read_csv(resolve_provider_dataset_path("jqdata"))
+    split_row = round_tripped.loc[round_tripped["ticker"] == "123071.XSHE"].iloc[0]
+    assert bool(split_row["redeem_risk"]) is True
+    assert bool(split_row["is_redeemed"]) is False
+
+    serialized = round_tripped.to_csv(index=False)
+    reloaded = pd.read_csv(io.StringIO(serialized))
+    reloaded_split_row = reloaded.loc[reloaded["ticker"] == "123071.XSHE"].iloc[0]
+    assert bool(reloaded_split_row["redeem_risk"]) is True
+    assert bool(reloaded_split_row["is_redeemed"]) is False
 
 
 @patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)

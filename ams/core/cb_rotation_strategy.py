@@ -10,6 +10,38 @@ TP_MODE_POSITION = "position"
 TP_MODE_INTRADAY = "intraday"
 TP_MODE_BOTH = "both"
 
+
+def _normalize_strategy_flag_value(value):
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+
+    if isinstance(value, (int, np.integer)) and value in (0, 1):
+        return bool(value)
+
+    if isinstance(value, (float, np.floating)) and value in (0.0, 1.0):
+        return bool(int(value))
+
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1"}:
+            return True
+        if lowered in {"false", "0"}:
+            return False
+
+    return pd.NA
+
+
+def _build_exclusion_mask(series: pd.Series, *, null_default: bool, invalid_default: bool) -> pd.Series:
+    normalized = series.map(
+        lambda value: pd.NA if pd.isna(value) else _normalize_strategy_flag_value(value)
+    )
+    invalid_mask = series.notna() & normalized.isna()
+    normalized = normalized.where(~normalized.isna(), null_default)
+    if invalid_mask.any():
+        normalized.loc[invalid_mask] = invalid_default
+    return normalized.astype(bool)
+
+
 class CBRotationStrategy(BaseStrategy):
 
     def __init__(self, top_n=20, liquidity_threshold=10000000, weight_per_position=0.05, 
@@ -61,16 +93,16 @@ class CBRotationStrategy(BaseStrategy):
             df = df[df['volume'] > 0]
             
         if 'suspended' in df.columns:
-            df = df[~df['suspended'].fillna(False).astype(bool)]
+            df = df[~_build_exclusion_mask(df['suspended'], null_default=True, invalid_default=True)]
 
         if 'redeem_risk' in df.columns:
-            df = df[~df['redeem_risk'].fillna(False).astype(bool)]
+            df = df[~_build_exclusion_mask(df['redeem_risk'], null_default=False, invalid_default=True)]
 
         if 'is_redeemed' in df.columns:
-            df = df[~df['is_redeemed'].fillna(False).astype(bool)]
+            df = df[~_build_exclusion_mask(df['is_redeemed'], null_default=True, invalid_default=True)]
 
         if 'is_st' in df.columns:
-            df = df[~df['is_st'].fillna(False).astype(bool)]
+            df = df[~_build_exclusion_mask(df['is_st'], null_default=True, invalid_default=True)]
 
         stopped_out_tickers = set()
         current_holdings = list(getattr(context, 'holdings', []))
