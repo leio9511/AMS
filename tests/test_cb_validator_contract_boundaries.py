@@ -139,6 +139,21 @@ def test_stage_f_normalization_does_not_mask_real_core_contract_failures():
 
 
 
+def test_stage_f_missing_redeem_risk_column_fails_governed_core_contract_check():
+    pipeline = _contract_valid_pipeline()
+    pipeline.df = pipeline.df.drop(columns=["redeem_risk"])
+
+    assert pipeline.run_stage_f_validator() is False
+
+    summary = pipeline.results["validator_summary"]
+    assert summary["core_validator_status"] == "FAIL"
+    assert summary["failure_type"] == "VALIDATOR_SCHEMA_FAILURE"
+    assert summary["status"] == "FAIL"
+    assert "required canonical columns are missing" in summary["message"]
+    assert "redeem_risk" in summary["message"]
+
+
+
 def test_stage_f_validator_allows_is_st_gap_without_erasing_stage_d_gap_witness():
     pipeline = _contract_valid_pipeline()
     pipeline.df["is_st"] = [False, None]

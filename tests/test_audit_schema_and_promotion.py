@@ -356,6 +356,7 @@ def test_validator_summary_uses_prd_semantics_without_legacy_dataset_drift_failu
             "double_low": [110.5, 113.5],
             "underlying_ticker": ["600001.XSHG", "600002.XSHG"],
             "is_st": [False, False],
+            "redeem_risk": [False, False],
             "is_redeemed": [False, False],
             "bond_code_raw": ["110001", "110002"],
             "bond_exchange_code": ["XSHG", "XSHG"],
@@ -430,6 +431,7 @@ def test_audit_core_pass_with_enrichment_degraded():
             "supportability_bucket": [SUPPORTABILITY_BUCKET_SUPPORTABLE],
             "underlying_ticker": ["600001.XSHG"],
             "is_st": [False],
+            "redeem_risk": [False],
             "is_redeemed": [False],
         }
     )
@@ -486,6 +488,7 @@ def test_promotion_gate_blocked_when_double_low_or_permission_contract_is_missin
             "supportability_bucket": [SUPPORTABILITY_BUCKET_SUPPORTABLE],
             "underlying_ticker": ["600001.XSHG"],
             "is_st": [False],
+            "redeem_risk": [False],
             "is_redeemed": [False],
         }
     )
@@ -549,6 +552,7 @@ def test_promotion_gate_blocked_when_double_low_or_permission_contract_is_missin
             "supportability_bucket": [SUPPORTABILITY_BUCKET_SUPPORTABLE],
             "underlying_ticker": ["600001.XSHG"],
             "is_st": [False],
+            "redeem_risk": [False],
             "is_redeemed": [False],
         }
     )
@@ -607,6 +611,7 @@ def test_concurrent_run_blocked_reports_only_orch_blocker():
             "supportability_bucket": [SUPPORTABILITY_BUCKET_SUPPORTABLE],
             "underlying_ticker": ["600001.XSHG"],
             "is_st": [False],
+            "redeem_risk": [False],
             "is_redeemed": [False],
         }
     )
@@ -666,6 +671,7 @@ def test_core_path_is_not_masked_when_supportability_stage_fails():
             "supportability_bucket": [SUPPORTABILITY_BUCKET_SUPPORTABLE],
             "underlying_ticker": [None],
             "is_st": [False],
+            "redeem_risk": [False],
             "is_redeemed": [False],
         }
     )
@@ -775,6 +781,7 @@ def test_run_etl_promotion_gate_blocks_promotion(tmp_path):
             "double_low": [None],
             "underlying_ticker": ["600001.XSHG"],
             "is_st": [False],
+            "redeem_risk": [False],
             "is_redeemed": [False],
             "supportability_bucket": ["supportable"],
             "bond_code_raw": ["110001"],

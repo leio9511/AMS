@@ -890,9 +890,6 @@ class CBETLPipeline:
 
             validator_l1 = CBDataValidator()
 
-            if "redeem_risk" not in df_work.columns:
-                df_work["redeem_risk"] = False
-
             core_missing_cols = [c for c in CORE_VALIDATOR_COLUMNS if c not in df_work.columns]
             enrichment_missing_cols = [c for c in ("premium_rate", "double_low") if c not in df_work.columns]
             if core_missing_cols:
