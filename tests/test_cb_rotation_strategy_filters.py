@@ -84,50 +84,50 @@ def test_filter_forced_redemption():
 
 def test_filter_redeem_risk_before_terminal_state():
     data = get_base_data()
-    data.loc[data['ticker'] == 'CB2', 'redeem_risk'] = True
-    data.loc[data['ticker'] == 'CB2', 'is_redeemed'] = False
+    data.loc[data['ticker'] == 'CB2', ['close_price', 'premium_rate', 'redeem_risk', 'is_redeemed', 'is_st']] = [80.0, 0.01, True, False, False]
 
-    strategy = CBRotationStrategy()
+    strategy = CBRotationStrategy(top_n=1)
     context = MockContext()
     portfolio = strategy.generate_target_portfolio(context, data)
 
     assert 'CB2' not in portfolio
-    assert 'CB1' in portfolio
-    assert 'CB3' in portfolio
-    assert 'CB4' in portfolio
+    assert set(portfolio.keys()) == {'CB3'}
+
 
 def test_filter_terminal_is_redeemed_even_when_redeem_risk_is_false():
     data = get_base_data()
-    data.loc[data['ticker'] == 'CB2', 'redeem_risk'] = False
-    data.loc[data['ticker'] == 'CB2', 'is_redeemed'] = True
+    data.loc[data['ticker'] == 'CB2', ['close_price', 'premium_rate', 'redeem_risk', 'is_redeemed', 'is_st']] = [80.0, 0.01, False, True, False]
 
-    strategy = CBRotationStrategy()
+    strategy = CBRotationStrategy(top_n=1)
     context = MockContext()
     portfolio = strategy.generate_target_portfolio(context, data)
 
     assert 'CB2' not in portfolio
-    assert set(portfolio.keys()) == {'CB1', 'CB3', 'CB4'}
+    assert set(portfolio.keys()) == {'CB3'}
+
 
 def test_non_risk_bond_remains_eligible_with_split_redemption_contract_present():
     data = get_base_data()
+    data.loc[data['ticker'] == 'CB2', ['close_price', 'premium_rate', 'redeem_risk', 'is_redeemed', 'is_st']] = [80.0, 0.01, False, False, False]
 
-    strategy = CBRotationStrategy()
+    strategy = CBRotationStrategy(top_n=1)
     context = MockContext()
     portfolio = strategy.generate_target_portfolio(context, data)
 
-    assert 'CB1' in portfolio
     assert 'CB2' in portfolio
-    assert 'CB3' in portfolio
-    assert 'CB4' in portfolio
+    assert set(portfolio.keys()) == {'CB2'}
+
 
 def test_missing_redeem_risk_column_defaults_to_legacy_false_behavior():
     data = get_base_data().drop(columns=['redeem_risk'])
+    data.loc[data['ticker'] == 'CB2', ['close_price', 'premium_rate', 'is_redeemed', 'is_st']] = [80.0, 0.01, False, False]
 
-    strategy = CBRotationStrategy()
+    strategy = CBRotationStrategy(top_n=1)
     context = MockContext()
     portfolio = strategy.generate_target_portfolio(context, data)
 
-    assert set(portfolio.keys()) == {'CB1', 'CB2', 'CB3', 'CB4'}
+    assert 'CB2' in portfolio
+    assert set(portfolio.keys()) == {'CB2'}
 
 def test_filter_st_stocks():
     data = get_base_data()

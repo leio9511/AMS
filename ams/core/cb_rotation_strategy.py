@@ -30,6 +30,36 @@ def _default_exclusion_mask(df: pd.DataFrame, column_name: str, *, null_default:
     )
 
 
+def _build_candidate_exclusion_mask(df: pd.DataFrame) -> pd.Series:
+    """Build the candidate exclusion mask for the split redemption contract.
+
+    The Wave 1 contract keeps `is_redeemed` as the terminal-state flag and
+    introduces `redeem_risk` as the trading-risk flag. Legacy inputs without
+    `redeem_risk` remain supported and must behave as though the flag is False.
+    """
+    normalized = df if 'redeem_risk' in df.columns else df.assign(redeem_risk=False)
+
+    is_st_exclude = _default_exclusion_mask(
+        normalized,
+        'is_st',
+        null_default=True,
+        invalid_default=True,
+    )
+    redeem_risk_exclude = _build_exclusion_mask(
+        normalized['redeem_risk'],
+        null_default=False,
+        invalid_default=True,
+    )
+    is_redeemed_exclude = _default_exclusion_mask(
+        normalized,
+        'is_redeemed',
+        null_default=False,
+        invalid_default=True,
+    )
+
+    return is_st_exclude | redeem_risk_exclude | is_redeemed_exclude
+
+
 class CBRotationStrategy(BaseStrategy):
 
     def __init__(self, top_n=20, liquidity_threshold=10000000, weight_per_position=0.05, 
@@ -83,31 +113,9 @@ class CBRotationStrategy(BaseStrategy):
         if 'suspended' in df.columns:
             df = df[~_build_exclusion_mask(df['suspended'], null_default=True, invalid_default=True)]
 
-        # Wave 1 redemption contract split:
-        # - redeem_risk: trading-risk exclusion
-        # - is_redeemed: terminal-state fallback exclusion
-        # - is_st: legacy risk exclusion retained as-is
-        # Missing redeem_risk must remain backward-compatible and behave as False.
-        redeem_risk_exclude = _default_exclusion_mask(
-            df,
-            'redeem_risk',
-            null_default=False,
-            invalid_default=True,
-        )
-        is_redeemed_exclude = _default_exclusion_mask(
-            df,
-            'is_redeemed',
-            null_default=False,
-            invalid_default=True,
-        )
-        is_st_exclude = _default_exclusion_mask(
-            df,
-            'is_st',
-            null_default=True,
-            invalid_default=True,
-        )
-        exclude_if = is_st_exclude | redeem_risk_exclude | is_redeemed_exclude
-        df = df[~exclude_if]
+        # Candidate exclusions must follow the split redemption contract:
+        # exclude_if = is_st or redeem_risk or is_redeemed
+        df = df[~_build_candidate_exclusion_mask(df)]
 
         stopped_out_tickers = set()
         current_holdings = list(getattr(context, 'holdings', []))
