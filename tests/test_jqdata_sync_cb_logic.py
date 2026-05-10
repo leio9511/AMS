@@ -2,6 +2,7 @@ from ams.utils.provider_config import resolve_provider_dataset_path, get_provide
 import etl.jqdata_sync_cb
 import json
 import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -706,6 +707,83 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
         self.assertEqual(summary["status"], "FAIL")
         self.assertEqual(summary["failure_type"], "IS_ST_SOURCE_GAP")
         self.assertEqual(summary["missing_is_st_ratio"], 1.0)
+
+    @patch("etl.jqdata_sync_cb.jqdatasdk")
+    @patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+    @patch("ams.validators.cb_data_validator.CBDataValidator")
+    def test_persisted_canonical_dataset_retains_redeem_risk_and_terminal_state_split(
+        self, mock_validator, mock_semantic_validator, mock_jq
+    ):
+        mock_semantic_validator.return_value.validate_dataframe.return_value = True
+        mock_validator.return_value.validate_dataframe.return_value = True
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dataset_path = os.path.join(tmpdir, "cb_history_factors_jqdata.csv")
+            metrics_path = os.path.join(tmpdir, "cb_history_factors_jqdata.metrics.json")
+
+            with patch.dict(
+                os.environ,
+                {
+                    "JQDATA_USER": "test",
+                    "JQDATA_PWD": "test",
+                    "AMS_JQDATA_DATASET_PATH": dataset_path,
+                    "AMS_JQDATA_METRICS_PATH": metrics_path,
+                },
+                clear=False,
+            ):
+                mock_jq.auth.return_value = None
+                mock_jq.get_all_securities.return_value = pd.DataFrame(index=[self.ticker])
+                mock_jq.get_security_info.side_effect = AssertionError(
+                    "legacy get_security_info path must not be used"
+                )
+
+                mock_jq.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+                mock_jq.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+                mock_jq.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+                mock_jq.get_price.return_value = self._single_price_df("2024-01-03")
+                premium = pd.DataFrame(
+                    {
+                        "date": ["2024-01-03"],
+                        "code": [self.raw_code],
+                        "exchange_code": [self.exchange_code],
+                        "convert_premium_rate": [10.0],
+                    }
+                )
+                mock_jq.bond.run_query.side_effect = [self._mock_bonds_info("2024-12-31"), premium]
+                mock_jq.get_extras.return_value = pd.DataFrame(
+                    {self.underlying: [False]}, index=pd.to_datetime(["2024-01-03"])
+                )
+
+                original_stage_d = CBETLPipeline.run_stage_d_is_st_join
+
+                def inject_split_state(stage_pipeline):
+                    result = original_stage_d(stage_pipeline)
+                    if result:
+                        stage_pipeline.df.loc[
+                            stage_pipeline.df["ticker"].eq(self.ticker), "redeem_risk"
+                        ] = True
+                    return result
+
+                with patch.object(
+                    CBETLPipeline,
+                    "run_stage_d_is_st_join",
+                    autospec=True,
+                    side_effect=inject_split_state,
+                ):
+                    sync_cb_data("2024-01-03", "2024-01-03")
+
+            persisted = pd.read_csv(dataset_path)
+            self.assertIn("redeem_risk", persisted.columns)
+            self.assertIn("is_redeemed", persisted.columns)
+
+            split_row = persisted.loc[persisted["ticker"] == self.ticker].iloc[0]
+            self.assertEqual(str(split_row["redeem_risk"]).strip().lower(), "true")
+            self.assertEqual(str(split_row["is_redeemed"]).strip().lower(), "false")
+
+            with open(metrics_path, "r", encoding="utf-8") as f:
+                metrics = json.load(f)
+            self.assertEqual(metrics["redeem_risk_true_count"], 1)
+            self.assertEqual(metrics["is_redeemed_true_count"], 0)
 
 if __name__ == "__main__":
     unittest.main()
