@@ -150,12 +150,18 @@ def test_canonical_dataset_artifact_preserves_split_redemption_state_after_round
     mock_jqdatasdk.get_security_info.side_effect = AssertionError("legacy get_security_info path must not be used")
     mock_jqdatasdk.finance.run_query.side_effect = AssertionError("finance.CCB_CALL must not be queried")
 
-    sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
+    original_run_etl = etl.jqdata_sync_cb.run_etl
 
-    persisted = pd.read_csv(resolve_provider_dataset_path("jqdata"))
-    persisted.loc[persisted["ticker"] == "123071.XSHE", "redeem_risk"] = True
-    persisted.loc[persisted["ticker"] == "123071.XSHE", "is_redeemed"] = False
-    persisted.to_csv(resolve_provider_dataset_path("jqdata"), index=False)
+    def inject_split_state(*args, **kwargs):
+        report_path = original_run_etl(*args, **kwargs)
+        dataset_path = resolve_provider_dataset_path("jqdata")
+        df = pd.read_csv(dataset_path)
+        df.loc[df["ticker"] == "123071.XSHE", "redeem_risk"] = True
+        df.to_csv(dataset_path, index=False)
+        return report_path
+
+    with patch("etl.jqdata_sync_cb.run_etl", side_effect=inject_split_state):
+        sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
 
     round_tripped = pd.read_csv(resolve_provider_dataset_path("jqdata"))
     split_row = round_tripped.loc[round_tripped["ticker"] == "123071.XSHE"].iloc[0]

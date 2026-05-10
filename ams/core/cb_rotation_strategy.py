@@ -99,7 +99,7 @@ class CBRotationStrategy(BaseStrategy):
             df = df[~_build_exclusion_mask(df['redeem_risk'], null_default=False, invalid_default=True)]
 
         if 'is_redeemed' in df.columns:
-            df = df[~_build_exclusion_mask(df['is_redeemed'], null_default=True, invalid_default=True)]
+            df = df[~_build_exclusion_mask(df['is_redeemed'], null_default=False, invalid_default=True)]
 
         if 'is_st' in df.columns:
             df = df[~_build_exclusion_mask(df['is_st'], null_default=True, invalid_default=True)]
