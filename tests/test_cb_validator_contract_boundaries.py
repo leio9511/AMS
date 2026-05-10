@@ -19,6 +19,7 @@ def _contract_valid_pipeline() -> CBETLPipeline:
             "double_low": [110.5, 113.5],
             "underlying_ticker": ["600001.XSHG", "600002.XSHG"],
             "is_st": [False, False],
+            "redeem_risk": [False, False],
             "is_redeemed": [False, False],
             "bond_code_raw": ["110001", "110002"],
             "bond_exchange_code": ["XSHG", "XSHG"],

@@ -41,6 +41,7 @@ def test_core_validator_passes_on_active_universe():
         "date": ["2023-01-01"],
         "close": [100.5],
         "is_st": [False],
+        "redeem_risk": [False],
         "is_redeemed": [False]
     })
     

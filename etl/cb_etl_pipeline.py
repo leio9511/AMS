@@ -25,6 +25,7 @@ from etl.cb_audit_contract import (
     build_validator_summary,
     ensure_issue_1218_witness,
 )
+from etl.cb_field_registry import CANONICAL_CB_COLUMNS, CORE_VALIDATOR_COLUMNS
 
 # Constants from jqdata_sync_cb.py
 SUPPORTABILITY_BUCKET_SUPPORTABLE = "supportable"
@@ -44,29 +45,6 @@ SUPPORTABILITY_EXCLUSION_BUCKETS = {
         "codes_key": "filtered_bond_codes_missing_company_code_legacy",
     },
 }
-
-CANONICAL_CB_COLUMNS = [
-    "ticker",
-    "date",
-    "open",
-    "high",
-    "low",
-    "close",
-    "volume",
-    "premium_rate",
-    "double_low",
-    "underlying_ticker",
-    "is_st",
-    "is_redeemed",
-]
-
-CORE_VALIDATOR_COLUMNS = [
-    "ticker",
-    "date",
-    "close",
-    "is_st",
-    "is_redeemed",
-]
 
 ENRICHMENT_DEGRADED_FAILURE_TYPES = {
     "RATE_LIMITED_ENRICHMENT",
@@ -256,11 +234,14 @@ def _build_empty_canonical_cb_frame() -> pd.DataFrame:
             "low": pd.Series(dtype="float64"),
             "close": pd.Series(dtype="float64"),
             "volume": pd.Series(dtype="float64"),
-            "premium_rate": pd.Series(dtype="float64"),
-            "double_low": pd.Series(dtype="float64"),
             "underlying_ticker": pd.Series(dtype="object"),
             "is_st": pd.Series(dtype="bool"),
+            "redeem_risk": pd.Series(dtype="bool"),
             "is_redeemed": pd.Series(dtype="bool"),
+            "premium_rate": pd.Series(dtype="float64"),
+            "double_low": pd.Series(dtype="float64"),
+            "convert_price": pd.Series(dtype="float64"),
+            "convert_price_provenance": pd.Series(dtype="object"),
         }
     )[CANONICAL_CB_COLUMNS]
 
@@ -767,12 +748,26 @@ class CBETLPipeline:
             else:
                 stage["status"] = STAGE_STATUS_PASS
 
-            df_core_universe_supportable["is_redeemed"] = df_core_universe_supportable["delist_Date"].notna() & (df_core_universe_supportable["date"] >= df_core_universe_supportable["delist_Date"])
+            df_core_universe_supportable["is_redeemed"] = df_core_universe_supportable["delist_Date"].notna() & (
+                df_core_universe_supportable["date"] >= df_core_universe_supportable["delist_Date"]
+            )
+            if "redeem_risk" in df_core_universe_supportable.columns:
+                df_core_universe_supportable["redeem_risk"] = (
+                    df_core_universe_supportable["redeem_risk"].fillna(False).astype(bool)
+                )
+            else:
+                df_core_universe_supportable["redeem_risk"] = False
             
             if "is_redeemed" in self.df.columns:
                 self.df.drop(columns=["is_redeemed"], inplace=True)
-            self.df = pd.merge(self.df, df_core_universe_supportable[["date", "bond_code_raw", "bond_exchange_code", "is_redeemed"]], 
-                               on=["date", "bond_code_raw", "bond_exchange_code"], how="left")
+            if "redeem_risk" in self.df.columns:
+                self.df.drop(columns=["redeem_risk"], inplace=True)
+            self.df = pd.merge(
+                self.df,
+                df_core_universe_supportable[["date", "bond_code_raw", "bond_exchange_code", "redeem_risk", "is_redeemed"]], 
+                on=["date", "bond_code_raw", "bond_exchange_code"],
+                how="left",
+            )
             
             return stage["status"] == STAGE_STATUS_PASS
 
@@ -894,6 +889,9 @@ class CBETLPipeline:
             from ams.validators.cb_data_validator import CBDataValidator, normalize_core_validator_frame
 
             validator_l1 = CBDataValidator()
+
+            if "redeem_risk" not in df_work.columns:
+                df_work["redeem_risk"] = False
 
             core_missing_cols = [c for c in CORE_VALIDATOR_COLUMNS if c not in df_work.columns]
             enrichment_missing_cols = [c for c in ("premium_rate", "double_low") if c not in df_work.columns]

@@ -101,6 +101,7 @@ def _build_candidate_summary_metrics(df: pd.DataFrame) -> dict:
             "premium_rate_nonzero_ratio": 0.0,
             "premium_rate_zero_ratio": 0.0,
             "is_st_true_count": 0,
+            "redeem_risk_true_count": 0,
             "is_redeemed_true_count": 0,
         }
 
@@ -110,8 +111,36 @@ def _build_candidate_summary_metrics(df: pd.DataFrame) -> dict:
         "premium_rate_nonzero_ratio": float((df["premium_rate"] != 0).mean()) if "premium_rate" in df.columns else 0.0,
         "premium_rate_zero_ratio": float((df["premium_rate"] == 0).mean()) if "premium_rate" in df.columns else 0.0,
         "is_st_true_count": int(df["is_st"].sum()) if "is_st" in df.columns else 0,
+        "redeem_risk_true_count": int(df["redeem_risk"].sum()) if "redeem_risk" in df.columns else 0,
         "is_redeemed_true_count": int(df["is_redeemed"].sum()) if "is_redeemed" in df.columns else 0,
     }
+
+
+def _ensure_canonical_columns(df: pd.DataFrame) -> pd.DataFrame:
+    normalized = df.copy()
+    default_factories = {
+        "ticker": lambda idx: pd.Series(dtype="object", index=idx),
+        "date": lambda idx: pd.Series(dtype="datetime64[ns]", index=idx),
+        "open": lambda idx: pd.Series(float("nan"), index=idx, dtype="float64"),
+        "high": lambda idx: pd.Series(float("nan"), index=idx, dtype="float64"),
+        "low": lambda idx: pd.Series(float("nan"), index=idx, dtype="float64"),
+        "close": lambda idx: pd.Series(float("nan"), index=idx, dtype="float64"),
+        "volume": lambda idx: pd.Series(float("nan"), index=idx, dtype="float64"),
+        "underlying_ticker": lambda idx: pd.Series(pd.NA, index=idx, dtype="object"),
+        "is_st": lambda idx: pd.Series(False, index=idx, dtype=bool),
+        "redeem_risk": lambda idx: pd.Series(False, index=idx, dtype=bool),
+        "is_redeemed": lambda idx: pd.Series(False, index=idx, dtype=bool),
+        "premium_rate": lambda idx: pd.Series(float("nan"), index=idx, dtype="float64"),
+        "double_low": lambda idx: pd.Series(float("nan"), index=idx, dtype="float64"),
+        "convert_price": lambda idx: pd.Series(float("nan"), index=idx, dtype="float64"),
+        "convert_price_provenance": lambda idx: pd.Series(pd.NA, index=idx, dtype="object"),
+    }
+
+    for column in CANONICAL_CB_COLUMNS:
+        if column not in normalized.columns:
+            normalized[column] = default_factories[column](normalized.index)
+
+    return normalized
 
 def _build_supportability_exclusion_metrics(df: pd.DataFrame) -> dict:
     if df is None or df.empty or "supportability_bucket" not in df.columns:
@@ -219,7 +248,9 @@ def run_etl(start_date, end_date, source_name, promote=False, jqdata_client=None
     else:
         # Promote mode
         df = pipeline.df
-        df_supportable = df[df["supportability_bucket"].eq(SUPPORTABILITY_BUCKET_SUPPORTABLE)].copy()
+        df_supportable = _ensure_canonical_columns(
+            df[df["supportability_bucket"].eq(SUPPORTABILITY_BUCKET_SUPPORTABLE)].copy()
+        )
 
         promotion_status = report.get("validator_summary", {}).get("promotion_gate_status", "PASS")
         promotion_message = report.get("validator_summary", {}).get("promotion_gate_message", "")

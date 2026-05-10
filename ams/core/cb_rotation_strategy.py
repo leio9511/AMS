@@ -63,6 +63,9 @@ class CBRotationStrategy(BaseStrategy):
         if 'suspended' in df.columns:
             df = df[~df['suspended']]
 
+        if 'redeem_risk' in df.columns:
+            df = df[~df['redeem_risk']]
+
         if 'is_redeemed' in df.columns:
             df = df[~df['is_redeemed']]
 

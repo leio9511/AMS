@@ -12,6 +12,7 @@ def test_validator_with_perfect_dataframe():
         "close": [105.0, 110.0],
         "premium_rate": [15.0, 20.0],
         "is_st": [False, False],
+        "redeem_risk": [False, False],
         "is_redeemed": [False, False]
     })
     validator = CBDataValidator()
@@ -23,6 +24,7 @@ def test_validator_catches_nan_close(capsys):
         "date": ["2023-01-01"],
         "close": [float("nan")],
         "is_st": [False],
+        "redeem_risk": [False],
         "is_redeemed": [False]
     })
     validator = CBDataValidator()
@@ -37,6 +39,7 @@ def test_validator_catches_invalid_close_price():
         "close": [-1.0],
         "premium_rate": [15.0],
         "is_st": [False],
+        "redeem_risk": [False],
         "is_redeemed": [False]
     })
     validator = CBDataValidator()
@@ -63,6 +66,7 @@ def test_core_validator_only_checks_prd_required_columns_and_close_semantics():
                 "date": [pd.Timestamp("2025-01-06"), pd.Timestamp("2025-01-06")],
                 "close": [100.0, 101.0],
                 "is_st": [False, False],
+                "redeem_risk": [False, False],
                 "is_redeemed": [False, False],
             }
         )
@@ -76,6 +80,7 @@ def test_core_validator_only_checks_prd_required_columns_and_close_semantics():
         normalize_core_validator_frame(valid_core.assign(close=[0.0, 101.0])),
         normalize_core_validator_frame(valid_core.assign(close=[-1.0, 101.0])),
         normalize_core_validator_frame(valid_core.assign(is_st=["bad-bool", False])),
+        normalize_core_validator_frame(valid_core.assign(redeem_risk=[False, "bad-bool"])),
         normalize_core_validator_frame(valid_core.assign(is_redeemed=[False, None])),
     ]
     for invalid_df in invalid_cases:
@@ -97,6 +102,7 @@ def test_normalize_core_validator_frame_fills_is_st_nulls_with_false_for_core_sc
             "date": [pd.Timestamp("2025-01-06")] * 4,
             "close": [100.0, 101.0, 102.0, 103.0],
             "is_st": [False, None, pd.NA, 1],
+            "redeem_risk": [False, False, False, False],
             "is_redeemed": [False, False, False, False],
         }
     )
@@ -108,6 +114,25 @@ def test_normalize_core_validator_frame_fills_is_st_nulls_with_false_for_core_sc
 
 
 
+def test_normalize_core_validator_frame_defaults_redeem_risk_nulls_to_false_for_wave1_contract():
+    raw = pd.DataFrame(
+        {
+            "ticker": ["110001.XSHG", "110002.XSHG", "110003.XSHG", "110004.XSHG"],
+            "date": [pd.Timestamp("2025-01-06")] * 4,
+            "close": [100.0, 101.0, 102.0, 103.0],
+            "is_st": [False, False, True, False],
+            "redeem_risk": [False, None, pd.NA, 1],
+            "is_redeemed": [False, False, False, False],
+        }
+    )
+
+    normalized = normalize_core_validator_frame(raw)
+
+    assert normalized["redeem_risk"].dtype == bool
+    assert normalized["redeem_risk"].tolist() == [False, False, False, True]
+
+
+
 def test_normalize_core_validator_frame_keeps_is_redeemed_nullable_behavior_unchanged():
     raw = pd.DataFrame(
         {
@@ -115,6 +140,7 @@ def test_normalize_core_validator_frame_keeps_is_redeemed_nullable_behavior_unch
             "date": [pd.Timestamp("2025-01-06")] * 4,
             "close": [100.0, 101.0, 102.0, 103.0],
             "is_st": [False, False, True, False],
+            "redeem_risk": [False, False, False, False],
             "is_redeemed": [False, None, pd.NA, 1],
         }
     )
@@ -138,6 +164,7 @@ def test_core_validator_accepts_is_st_source_gap_after_field_specific_normalizat
                 "date": [pd.Timestamp("2025-01-06")] * 3,
                 "close": [100.0, 101.0, 102.0],
                 "is_st": [False, None, pd.NA],
+                "redeem_risk": [False, False, False],
                 "is_redeemed": [False, False, False],
             }
         )
@@ -157,6 +184,7 @@ def test_core_validator_still_rejects_nullable_is_redeemed_contract_violation():
                 "date": [pd.Timestamp("2025-01-06"), pd.Timestamp("2025-01-06")],
                 "close": [100.0, 101.0],
                 "is_st": [False, None],
+                "redeem_risk": [False, False],
                 "is_redeemed": [False, None],
             }
         )
@@ -174,6 +202,7 @@ def test_normalize_core_validator_frame_returns_schema_compatible_core_dtypes():
             "date": [pd.Timestamp("2025-01-06"), pd.Timestamp("2025-01-07")],
             "close": ["100.5", "bad-close"],
             "is_st": [0, 1],
+            "redeem_risk": [0, 1],
             "is_redeemed": [False, None],
         }
     )
@@ -191,6 +220,9 @@ def test_normalize_core_validator_frame_returns_schema_compatible_core_dtypes():
 
     assert normalized["is_st"].dtype == bool
     assert normalized["is_st"].tolist() == [False, True]
+
+    assert normalized["redeem_risk"].dtype == bool
+    assert normalized["redeem_risk"].tolist() == [False, True]
 
     assert str(normalized["is_redeemed"].dtype) == "boolean"
     assert normalized.loc[0, "is_redeemed"] == False
@@ -215,6 +247,7 @@ def test_cli_valid_csv(tmp_path):
         "close": [105.0],
         "premium_rate": [15.0],
         "is_st": [False],
+        "redeem_risk": [False],
         "is_redeemed": [False]
     })
     df.to_csv(csv_file, index=False)
@@ -232,6 +265,7 @@ def test_cli_invalid_csv(tmp_path):
         "date": ["2023-01-01"],
         "close": [float("nan")],
         "is_st": [False],
+        "redeem_risk": [False],
         "is_redeemed": [False]
     })
     df.to_csv(csv_file, index=False)

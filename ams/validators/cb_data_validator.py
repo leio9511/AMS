@@ -19,6 +19,7 @@ cb_schema = pa.DataFrameSchema(
         "date": pa.Column(nullable=False),
         "close": pa.Column(float, checks=pa.Check(lambda s: s > 0), nullable=False),
         "is_st": pa.Column(bool, nullable=False),
+        "redeem_risk": pa.Column(bool, nullable=False),
         "is_redeemed": pa.Column(bool, nullable=False),
     }
 )
@@ -85,6 +86,16 @@ def normalize_core_validator_frame(df: pd.DataFrame) -> pd.DataFrame:
     if "is_st" in normalized.columns:
         normalized["is_st"] = _normalize_is_st_for_core_validator(normalized["is_st"])
 
+    if "redeem_risk" in normalized.columns:
+        normalized["redeem_risk"] = normalized["redeem_risk"].map(
+            lambda value: False if pd.isna(value) else _normalize_contract_bool_value(value)
+        )
+        invalid_mask = normalized["redeem_risk"].isna() & df["redeem_risk"].notna()
+        if invalid_mask.any():
+            normalized["redeem_risk"] = df["redeem_risk"]
+        else:
+            normalized["redeem_risk"] = normalized["redeem_risk"].astype(bool)
+
     if "is_redeemed" in normalized.columns:
         normalized["is_redeemed"] = _normalize_contract_bool_series(normalized["is_redeemed"])
 
@@ -97,7 +108,8 @@ class CBDataValidator:
     def validate_dataframe(self, df: pd.DataFrame) -> bool:
         self.last_error_message = ""
         try:
-            cb_schema.validate(df)
+            normalized = normalize_core_validator_frame(df)
+            cb_schema.validate(normalized)
             return True
         except pa.errors.SchemaError as e:
             self.last_error_message = str(e)

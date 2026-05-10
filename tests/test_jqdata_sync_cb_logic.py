@@ -621,11 +621,14 @@ class TestJQDataSyncCBLogic(unittest.TestCase):
             "low": 99.0,
             "close": 100.0,
             "volume": 1000,
-            "premium_rate": 0.1,
-            "double_low": 110.0,
             "underlying_ticker": "600000.XSHG",
             "is_st": False,
+            "redeem_risk": False,
             "is_redeemed": False,
+            "premium_rate": 0.1,
+            "double_low": 110.0,
+            "convert_price": None,
+            "convert_price_provenance": None,
             "supportability_bucket": SUPPORTABILITY_BUCKET_SUPPORTABLE
         }
         df.loc[0] = [data[c] for c in CANONICAL_CB_COLUMNS] + [data["supportability_bucket"]]

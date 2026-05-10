@@ -13,6 +13,7 @@ def get_base_data():
         'close_price': [100.0, 110.0, 90.0, 105.0],
         'premium_rate': [0.1, 0.2, 0.15, 0.05],
         'amount': [20000000, 20000000, 20000000, 20000000],
+        'redeem_risk': [False, False, False, False],
         'is_redeemed': [False, False, False, False],
         'is_st': [False, False, False, False]
     })
@@ -29,6 +30,32 @@ def test_filter_forced_redemption():
     # CB2 should not be in the portfolio
     assert 'CB2' not in portfolio
     assert 'CB1' in portfolio
+    assert 'CB3' in portfolio
+    assert 'CB4' in portfolio
+
+def test_filter_redeem_risk_before_terminal_state():
+    data = get_base_data()
+    data.loc[data['ticker'] == 'CB2', 'redeem_risk'] = True
+    data.loc[data['ticker'] == 'CB2', 'is_redeemed'] = False
+
+    strategy = CBRotationStrategy()
+    context = MockContext()
+    portfolio = strategy.generate_target_portfolio(context, data)
+
+    assert 'CB2' not in portfolio
+    assert 'CB1' in portfolio
+    assert 'CB3' in portfolio
+    assert 'CB4' in portfolio
+
+def test_non_risk_non_terminal_bond_remains_eligible():
+    data = get_base_data()
+
+    strategy = CBRotationStrategy()
+    context = MockContext()
+    portfolio = strategy.generate_target_portfolio(context, data)
+
+    assert 'CB1' in portfolio
+    assert 'CB2' in portfolio
     assert 'CB3' in portfolio
     assert 'CB4' in portfolio
 

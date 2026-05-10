@@ -114,6 +114,15 @@ FIELD_REGISTRY: dict[str, GovernedField] = {
         degraded_behavior="Core path failure if unavailable for supportable rows.",
         promotion_sensitive=True,
     ),
+    "redeem_risk": GovernedField(
+        name="redeem_risk",
+        layer=FIELD_LAYER_CORE,
+        source_semantics="Trading-risk redemption window field consumed by strategy filtering independently from terminal redemption state.",
+        fallback_semantics="Wave 1 transitional default is redeem_risk=False unless an explicit controlled fixture/source sets it.",
+        validator_scope=VALIDATOR_SCOPE_CORE,
+        degraded_behavior="Deterministic placeholder/default population is allowed while upstream sourcing remains transitional.",
+        promotion_sensitive=True,
+    ),
     "is_redeemed": GovernedField(
         name="is_redeemed",
         layer=FIELD_LAYER_CORE,
