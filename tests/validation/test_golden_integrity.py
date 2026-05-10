@@ -1,3 +1,4 @@
+import csv
 import json
 import hashlib
 
@@ -9,6 +10,15 @@ FORBIDDEN_HOST_LAYOUT_TEXT = [
     "/root/" + ".openclaw",
     ".openclaw/" + "workspace",
 ]
+
+
+def _parse_csv_bool(value: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise ValueError(f"Unsupported boolean literal in witness artifact: {value}")
 
 
 def test_golden_snapshot_integrity_uses_repo_asset_contract():
@@ -90,3 +100,42 @@ def test_golden_metadata_does_not_bake_in_root_lineage():
         if isinstance(value, str):
             for pattern in FORBIDDEN_HOST_LAYOUT_TEXT:
                 assert pattern not in value, f"Host layout pattern found in {key}: {value}"
+
+
+def test_golden_split_state_witness_asset_is_repo_owned_and_loadable():
+    witness_relative = "tests/golden/data/redeem_risk_split_state_witness.csv"
+    witness_path = resolve_repo_asset(witness_relative)
+    golden_data_dir = resolve_repo_asset("tests/golden/data")
+
+    assert witness_path.exists(), "Witness artifact missing"
+    assert witness_path.is_file(), "Witness artifact should be a file"
+    assert witness_path.suffix == ".csv"
+    assert witness_path.parent == golden_data_dir
+
+    with witness_path.open("r", encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+
+    assert len(rows) == 1, f"Witness artifact should contain exactly one data row, got {len(rows)}"
+
+
+def test_golden_split_state_witness_encodes_redeem_risk_before_terminal_state():
+    witness_path = resolve_repo_asset("tests/golden/data/redeem_risk_split_state_witness.csv")
+
+    with witness_path.open("r", encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+
+    split_state_rows = [
+        row
+        for row in rows
+        if _parse_csv_bool(row["redeem_risk"])
+        and not _parse_csv_bool(row["is_redeemed"])
+    ]
+
+    assert len(split_state_rows) == 1, (
+        "Witness artifact must encode exactly one split-state row with "
+        "redeem_risk=True and is_redeemed=False"
+    )
+
+    split_state_row = split_state_rows[0]
+    if "is_st" in split_state_row:
+        assert _parse_csv_bool(split_state_row["is_st"]) is False
