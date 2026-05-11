@@ -28,6 +28,18 @@ def derive_canonical_redemption_state(
 
     active_ledger = ledger_df[ledger_df['is_active_revision'] == True].copy()
     
+    invalid_revision_events = set()
+    if not ledger_df.empty and 'event_id' in ledger_df.columns and 'revision' in ledger_df.columns:
+        for event_id, group in ledger_df.groupby('event_id'):
+            revisions = group['revision'].sort_values().tolist()
+            if revisions != list(range(len(revisions))):
+                invalid_revision_events.add(event_id)
+            elif 'is_active_revision' in group.columns:
+                active_group = group[group['is_active_revision'] == True]
+                if len(active_group) == 1:
+                    if active_group['revision'].iloc[0] != revisions[-1]:
+                        invalid_revision_events.add(event_id)
+
     if active_ledger.empty:
         # If no active events, bonds might still need to be reported as False if we know them.
         # Let's derive the bonds from the whole ledger instead.
@@ -87,6 +99,49 @@ def derive_canonical_redemption_state(
                     "bond_code": bond,
                     "conflict_type": "CONFLICT_MULTIPLE_ACTIVE_REVISIONS_FOR_EVENT",
                     "contributing_event_ids": list(set(contributing_ids)),
+                    "resolution_mode": "blocked",
+                    "representative_event_id": None,
+                    "representative_revision": None
+                })
+                canonical_rows.append({
+                    'date': d_str,
+                    'bond_code': bond,
+                    'redeem_risk': pd.NA,
+                    'representative_event_id': None,
+                    'representative_revision': None,
+                    'contributing_event_count': len(overlapping_events)
+                })
+                continue
+                
+            # Check for CONFLICT_INVALID_REVISION_GRAPH
+            overlapping_invalid = overlapping_events[overlapping_events['event_id'].isin(invalid_revision_events)]
+            if not overlapping_invalid.empty:
+                traces.append({
+                    "date": d_str,
+                    "bond_code": bond,
+                    "conflict_type": "CONFLICT_INVALID_REVISION_GRAPH",
+                    "contributing_event_ids": list(set(overlapping_events['event_id'].tolist())),
+                    "resolution_mode": "blocked",
+                    "representative_event_id": None,
+                    "representative_revision": None
+                })
+                canonical_rows.append({
+                    'date': d_str,
+                    'bond_code': bond,
+                    'redeem_risk': pd.NA,
+                    'representative_event_id': None,
+                    'representative_revision': None,
+                    'contributing_event_count': len(overlapping_events)
+                })
+                continue
+                
+            # Check for CONFLICT_MUTUALLY_INCOMPATIBLE_ACTIVE_EVENTS
+            if len(overlapping_events['delisting_date'].unique()) > 1:
+                traces.append({
+                    "date": d_str,
+                    "bond_code": bond,
+                    "conflict_type": "CONFLICT_MUTUALLY_INCOMPATIBLE_ACTIVE_EVENTS",
+                    "contributing_event_ids": list(set(overlapping_events['event_id'].tolist())),
                     "resolution_mode": "blocked",
                     "representative_event_id": None,
                     "representative_revision": None

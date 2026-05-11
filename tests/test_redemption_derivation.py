@@ -193,3 +193,56 @@ def test_conflict_multiple_active_revisions():
     assert trace['conflict_type'] == 'CONFLICT_MULTIPLE_ACTIVE_REVISIONS_FOR_EVENT'
     assert trace['resolution_mode'] == 'blocked'
     assert trace['representative_event_id'] is None
+
+def test_conflict_mutually_incompatible_events():
+    ledger = pd.DataFrame({
+        'event_id': ['ev1', 'ev2'],
+        'revision': [0, 0],
+        'is_active_revision': [True, True],
+        'source_native_event_id': ['src_1', 'src_2'],
+        'bond_code': ['110000.XSHG', '110000.XSHG'],
+        'announcement_date': ['2025-01-02', '2025-01-02'],
+        'delisting_date': ['2025-01-10', '2025-01-15'], # Different delisting dates
+        'source': ['dummy', 'dummy'],
+        'updated_at': ['2025-01-01T10:00:00Z', '2025-01-01T11:00:00Z']
+    })
+    
+    df, traces = derive_canonical_redemption_state(ledger, ['2025-01-05'])
+    
+    assert len(df) == 1
+    assert pd.isna(df.iloc[0]['redeem_risk'])
+    
+    assert len(traces) == 1
+    trace = traces[0]
+    assert trace['conflict_type'] == 'CONFLICT_MUTUALLY_INCOMPATIBLE_ACTIVE_EVENTS'
+    assert trace['resolution_mode'] == 'blocked'
+    assert trace['representative_event_id'] is None
+
+def test_conflict_invalid_revision_graph():
+    # ev1 has active revision that is not max
+    # ev2 has skipped revision
+    ledger = pd.DataFrame({
+        'event_id': ['ev1', 'ev1', 'ev2', 'ev2'],
+        'revision': [0, 1, 0, 2],
+        'is_active_revision': [True, False, False, True], # ev1: active is 0 (not max 1), ev2: gap (0, 2)
+        'source_native_event_id': ['src_1', 'src_1', 'src_2', 'src_2'],
+        'bond_code': ['110000.XSHG', '110000.XSHG', '110001.XSHG', '110001.XSHG'],
+        'announcement_date': ['2025-01-02', '2025-01-02', '2025-01-02', '2025-01-02'],
+        'delisting_date': ['2025-01-10', '2025-01-10', '2025-01-10', '2025-01-10'],
+        'source': ['dummy', 'dummy', 'dummy', 'dummy'],
+        'updated_at': ['2025-01-01T10:00:00Z', '2025-01-04T10:00:00Z', '2025-01-01T10:00:00Z', '2025-01-04T10:00:00Z']
+    })
+    
+    # Target date overlaps both events
+    df, traces = derive_canonical_redemption_state(ledger, ['2025-01-05'])
+    
+    assert len(df) == 2 # one for each bond
+    for i in range(2):
+        assert pd.isna(df.iloc[i]['redeem_risk'])
+        
+    assert len(traces) == 2
+    for trace in traces:
+        assert trace['conflict_type'] == 'CONFLICT_INVALID_REVISION_GRAPH'
+        assert trace['resolution_mode'] == 'blocked'
+        assert trace['representative_event_id'] is None
+
