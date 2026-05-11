@@ -173,3 +173,43 @@ def test_golden_split_state_witness_encodes_redeem_risk_before_terminal_state():
     split_state_row = split_state_rows[0]
     if "is_st" in split_state_row:
         assert _parse_csv_bool(split_state_row["is_st"]) is False
+
+def test_validator_detects_observability_regression():
+    from ams.validators.cb_data_validator import CBDataValidator
+    import pandas as pd
+    validator = CBDataValidator()
+    df = pd.DataFrame({
+        "ticker": ["110001.XSHG", "110002.XSHG"],
+        "date": ["2023-01-01", "2023-01-02"],
+        "close": [100.0, 101.0],
+        "is_st": [False, False],
+        "redeem_risk": [True, False],
+        "is_redeemed": [True, False],
+    })
+    assert validator.validate_dataframe(df) is False
+    assert "OBSERVABILITY_CONTRACT_REGRESSION" in validator.last_error_message
+
+def test_validator_rejects_legacy_terminal_proxy():
+    from ams.validators.cb_data_validator import DatasetSemanticValidator
+    import pandas as pd
+    validator = DatasetSemanticValidator()
+    df = pd.DataFrame({
+        "underlying_ticker": ["000001.XSHE"] * 50000,
+        "premium_rate": [0.1] * 50000,
+        "is_st": [True] + [False] * 49999,
+        "redeem_risk": [True] + [False] * 49999,
+        "is_redeemed": [False] * 50000,
+    })
+    # This should not raise DataSemanticViolation for 'is_redeemed'
+    try:
+        validator.validate_dataframe(df)
+    except Exception as e:
+        assert "is_redeemed" not in str(e), "Validator still uses legacy terminal proxy"
+
+def test_golden_metadata_contains_wave2_fields():
+    metadata_path = resolve_repo_asset("tests/golden/data/metadata.json")
+    metadata_text = metadata_path.read_text(encoding="utf-8")
+    metadata = json.loads(metadata_text)
+    
+    assert "redeem_risk_true_count" in metadata
+    assert "is_redeemed_true_count" in metadata

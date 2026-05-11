@@ -973,6 +973,9 @@ class CBETLPipeline:
                 stage["status"] = STAGE_STATUS_FAIL
                 if stage["failure_type"] == "VALIDATOR_SEMANTIC_FAILURE":
                     stage["message"] = f"Semantic validation failed: {stage['core_validator_message']}" if stage["core_validator_message"] else "Semantic validation failed"
+                elif stage["core_validator_message"] and "OBSERVABILITY_CONTRACT_REGRESSION" in stage["core_validator_message"]:
+                    stage["failure_type"] = "OBSERVABILITY_CONTRACT_REGRESSION"
+                    stage["message"] = f"Observability contract regression: {stage['core_validator_message']}"
                 else:
                     if stage["failure_type"] == "NONE":
                         stage["failure_type"] = "VALIDATOR_SCHEMA_FAILURE"
@@ -1032,6 +1035,9 @@ class CBETLPipeline:
         if self.results["validator_summary"]["failure_type"] == "VALIDATOR_SEMANTIC_FAILURE":
             trigger = self.results["validator_summary"].get("core_validator_message") or self.results["validator_summary"].get("enrichment_validator_message", "")
             root_blockers.append(build_root_blocker("VALIDATOR_SEMANTIC_FAILURE", "F", trigger, {}))
+        if self.results["validator_summary"]["failure_type"] == "OBSERVABILITY_CONTRACT_REGRESSION":
+            trigger = self.results["validator_summary"].get("core_validator_message") or self.results["validator_summary"].get("enrichment_validator_message", "")
+            root_blockers.append(build_root_blocker("OBSERVABILITY_CONTRACT_REGRESSION", "F", trigger, {}))
 
         if self.results["supportability_summary"].get("missing_underlying_row_count", 0) > 0:
             secondary_findings.append(build_secondary_finding("MISSING_UNDERLYING_TICKER_ROWS", "B", "missing_underlying_row_count > 0", {"count": self.results["supportability_summary"]["missing_underlying_row_count"]}))

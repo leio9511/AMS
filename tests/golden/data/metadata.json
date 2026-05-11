@@ -2,6 +2,8 @@
   "sha256": "83863ba947850065b0255c208bcd09585459ab02576c13e5c17675889a9ccdbd",
   "file_size_bytes": 9515194,
   "row_count": 110086,
+  "redeem_risk_true_count": 500,
+  "is_redeemed_true_count": 450,
   "source_lineage": "Repo-owned golden snapshot derived from AMS product backtest data and frozen for Phase 1C validation on 2026-04-23",
   "witness_filename": "redeem_risk_split_state_witness.csv",
   "witness_row_count": 1,

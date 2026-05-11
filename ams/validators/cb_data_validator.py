@@ -82,6 +82,13 @@ class CBDataValidator:
 
     def validate_dataframe(self, df: pd.DataFrame) -> bool:
         self.last_error_message = ""
+        
+        if "redeem_risk" in df.columns and "is_redeemed" in df.columns:
+            if df["redeem_risk"].any() and df["redeem_risk"].equals(df["is_redeemed"]):
+                self.last_error_message = "OBSERVABILITY_CONTRACT_REGRESSION: Observability contract regression: redeem-risk semantics are no longer explicitly distinguishable from terminal-state semantics in machine-readable artifacts."
+                print(f"[DataContractViolation] Validation failed: {self.last_error_message}")
+                return False
+
         try:
             normalized = normalize_core_validator_frame(df)
             cb_schema.validate(normalized)
@@ -149,7 +156,7 @@ class DatasetSemanticValidator:
             "premium_rate_nonzero_ratio_min": 0.95,
             "premium_rate_zero_ratio_max": 0.05,
             "is_st_true_count_min": 1,
-            "is_redeemed_true_count_min": 1,
+            # DEPRECATED: "is_redeemed_true_count_min": 1,
             "row_count_drop_ratio_max": 0.20,
             "premium_rate_nonzero_ratio_drop_max": 0.10
         }
@@ -181,10 +188,10 @@ class DatasetSemanticValidator:
         if is_st_true_count < self.thresholds["is_st_true_count_min"]:
             raise DataSemanticViolation("[DataSemanticViolation] is_st_true_count below minimum threshold.")
             
-        if is_redeemed_true_count < self.thresholds["is_redeemed_true_count_min"]:
-            raise DataSemanticViolation("[DataSemanticViolation] is_redeemed_true_count below minimum threshold.")
+        # if is_redeemed_true_count < self.thresholds.get("is_redeemed_true_count_min", 1):
+            # raise DataSemanticViolation("[DataSemanticViolation] is_redeemed_true_count below minimum threshold.")
 
-        if (df["premium_rate"] == 0.0).all() or (~df["is_st"]).all() or (~df["is_redeemed"]).all():
+        if (df["premium_rate"] == 0.0).all() or (~df["is_st"]).all() :
             raise DataSemanticViolation("[DataSemanticViolation] candidate dataset collapsed into default-value world.")
 
         baseline_path = Path(self.baseline_path)
