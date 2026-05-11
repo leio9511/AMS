@@ -38,9 +38,9 @@ Phase 1.5: Backtest Reliability Hardening
 
 3. CB Source-Contract Hardening & Redemption Observability
    - Keep `underlying_ticker` and `premium_rate` on explicit documented source contracts
-   - **Redemption Wave 1**: Contract split applied (`redeem_risk` vs `is_redeemed`)
-   - **Redemption Wave 2**: Align observability & validation (metrics and audit report properly distinct risk-state from terminal-state)
-   - **Redemption Wave 3** *(Pending)*: Integrate event ledger / shared-state for true announcement-driven `redeem_risk` hydration
+   - **Redemption Wave 1**: Contract split applied (`redeem_risk` vs `is_redeemed`). See ISSUE-13.
+   - **Redemption Wave 2**: Align observability & validation (metrics and audit report properly distinguish risk-state from terminal-state). Phase 1.5 observability semantic split is a prerequisite to real event-driven state (Wave 3). See ISSUE-15.
+   - **Redemption Wave 3** *(Pending)*: Integrate event ledger / shared-state for true announcement-driven `redeem_risk` hydration.
    - Treat this as prerequisite upstream input quality for ISSUE-1142 dataset governance
 
 ## Gate to Next Phase
@@ -65,12 +65,15 @@ Before entering Phase 2, AMS must satisfy:
 - **Runtime outputs/state**: Deployment-relative, overrideable, and do not require OpenClaw workspace.
 
 ## Linked Issues / PRDs
+- ISSUE-13: Redemption Wave 1 - Contract Split (`redeem_risk` vs `is_redeemed`)
+- ISSUE-15: Redemption Wave 2 - Observability / Validation Alignment (Phase 1.5 Semantic Split)
 - ISSUE-1167: Standardized Unified Backtest Entrypoint
 - ISSUE-1172: Validation Framework
 - ISSUE-1182: CB source-contract repair for `underlying_ticker`, `premium_rate`, and `is_redeemed`
 - ISSUE-1142: CB research dataset governance and quality gates
 - PRD: `docs/PRDs/PRD_Standardized_Unified_Backtest_Entrypoint.md`
 - PRD: `docs/PRDs/PRD_CB_Source_Contract_Repair_for_Premium_Underlying_and_Redemption.md`
+- PRD: `docs/PRDs/PRD_Wave_2_Redeem_Risk_Observability_Alignment.md`
 
 ## Notes
 - `STATE.md` is runtime-oriented and may be overwritten by SDLC.
