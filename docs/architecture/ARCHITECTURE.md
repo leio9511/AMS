@@ -66,6 +66,17 @@ The handling of Convertible Bond redemption has been decoupled from a single ter
 - **Wave 2 (Observability / Validation Alignment):** The observability surfaces (metrics artifact, audit report, and validator summary) have been updated to explicitly expose the dual-field semantics, establishing `redeem_risk` as the true trading-risk window signal and `is_redeemed` as the terminal/delist state signal across all reporting layers. `is_redeemed` terminal counts can no longer be misconstrued as proxies for announcement-risk completeness. Missing or transitional evidence must remain explicitly observable (e.g., via `redeem_risk_observability_mode` and split-state row counts).
 - **Wave 3 (Event Ledger / Shared-State):** *Completed.* True real-time and historical announcements are integrated via an event ledger to hydrate `redeem_risk` dynamically. The persisted ledger is explicitly the *sole truth source* for redemption events post-ingestion.
 
+### Redemption Event Ledger Contracts (Wave 3)
+To ensure a single source of truth and deterministic derivation, Wave 3 strictly defines and freezes the following contract boundaries:
+1. **Ingress Artifact**: Path `data/redemption_event_facts_import.csv`. The only entry point for facts, but loses truth-source status post-ingestion.
+2. **Persisted Ledger**: Path `data/redemption_event_ledger.csv`. The sole post-ingestion truth source.
+3. **Canonical State Contract**: Path `data/canonical_redemption_state.csv`. Daily state output for downstream consumers, ensuring no dual truth sources.
+4. **Trace Artifact**: Path `reports/redemption_event_trace.json`. Used for tracking the mapping of daily state to ledger events.
+5. **Stable Event Identity**: `event_id` is defined as `source + ':' + source_native_event_id`.
+6. **Active Revision Rule**: Exactly one active revision per event. Monotonically increasing revision logic.
+7. **Representative Event Selection Rule**: When multiple active events coexist, the representative is chosen by earliest `announcement_date`, then latest `updated_at`, then lexical minimum `event_id`.
+8. **Conflict vs Coexistence Rule**: Differentiate between same-risk-window coexistence vs mutually incompatible conflicting events, where conflicts must be strictly traced rather than silently resolved.
+
 ### The "Data Circuit Breaker"
 Before any ETL script (e.g., fetching historical quotes) saves data to disk, it **MUST** pass through a Data Contract Validator (e.g., `ams.validators.cb_data_validator`).
 - **Pandera Schema**: We use `pandera` to declare strict schemas (e.g., `premium_rate` must be between -10.0 and 100.0, no NaNs allowed).
