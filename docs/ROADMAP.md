@@ -40,7 +40,7 @@ Phase 1.5: Backtest Reliability Hardening
    - Keep `underlying_ticker` and `premium_rate` on explicit documented source contracts
    - **Redemption Wave 1**: Contract split applied (`redeem_risk` vs `is_redeemed`). See ISSUE-13.
    - **Redemption Wave 2**: Align observability & validation (metrics and audit report properly distinguish risk-state from terminal-state). Phase 1.5 observability semantic split is a prerequisite to real event-driven state (Wave 3). See ISSUE-15.
-   - **Redemption Wave 3** *(Pending)*: Integrate event ledger / shared-state for true announcement-driven `redeem_risk` hydration.
+   - **Redemption Wave 3** *(Complete)*: Integrate event ledger / shared-state for true announcement-driven `redeem_risk` hydration. Phase 1.5 (Wave 3) is complete, explicitly noting that updater scheduling (Wave 5) and rollout (Wave 6) remain pending.
    - Treat this as prerequisite upstream input quality for ISSUE-1142 dataset governance
 
 ## Gate to Next Phase
