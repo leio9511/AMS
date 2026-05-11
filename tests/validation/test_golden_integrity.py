@@ -178,7 +178,9 @@ def test_validator_detects_observability_regression():
     from ams.validators.cb_data_validator import CBDataValidator
     import pandas as pd
     validator = CBDataValidator()
-    df = pd.DataFrame({
+    
+    # Test case 1: improperly merged (perfectly identical)
+    df_merged = pd.DataFrame({
         "ticker": ["110001.XSHG", "110002.XSHG"],
         "date": ["2023-01-01", "2023-01-02"],
         "close": [100.0, 101.0],
@@ -186,7 +188,17 @@ def test_validator_detects_observability_regression():
         "redeem_risk": [True, False],
         "is_redeemed": [True, False],
     })
-    assert validator.validate_dataframe(df) is False
+    assert validator.validate_dataframe(df_merged) is False
+    assert "OBSERVABILITY_CONTRACT_REGRESSION" in validator.last_error_message
+
+    # Test case 2: missing columns
+    df_missing = pd.DataFrame({
+        "ticker": ["110001.XSHG", "110002.XSHG"],
+        "date": ["2023-01-01", "2023-01-02"],
+        "close": [100.0, 101.0],
+        "is_st": [False, False],
+    })
+    assert validator.validate_dataframe(df_missing) is False
     assert "OBSERVABILITY_CONTRACT_REGRESSION" in validator.last_error_message
 
 def test_validator_rejects_legacy_terminal_proxy():
@@ -211,5 +223,5 @@ def test_golden_metadata_contains_wave2_fields():
     metadata_text = metadata_path.read_text(encoding="utf-8")
     metadata = json.loads(metadata_text)
     
-    assert "redeem_risk_true_count" in metadata
-    assert "is_redeemed_true_count" in metadata
+    assert metadata.get("redeem_risk_true_count") == 500
+    assert metadata.get("is_redeemed_true_count") == 450

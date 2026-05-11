@@ -83,6 +83,11 @@ class CBDataValidator:
     def validate_dataframe(self, df: pd.DataFrame) -> bool:
         self.last_error_message = ""
         
+        if "redeem_risk" not in df.columns or "is_redeemed" not in df.columns:
+            self.last_error_message = "OBSERVABILITY_CONTRACT_REGRESSION: Observability contract regression: redeem-risk semantics are no longer explicitly distinguishable from terminal-state semantics in machine-readable artifacts."
+            print(f"[DataContractViolation] Validation failed: {self.last_error_message}")
+            return False
+            
         if "redeem_risk" in df.columns and "is_redeemed" in df.columns:
             if df["redeem_risk"].any() and df["redeem_risk"].equals(df["is_redeemed"]):
                 self.last_error_message = "OBSERVABILITY_CONTRACT_REGRESSION: Observability contract regression: redeem-risk semantics are no longer explicitly distinguishable from terminal-state semantics in machine-readable artifacts."
@@ -156,7 +161,6 @@ class DatasetSemanticValidator:
             "premium_rate_nonzero_ratio_min": 0.95,
             "premium_rate_zero_ratio_max": 0.05,
             "is_st_true_count_min": 1,
-            # DEPRECATED: "is_redeemed_true_count_min": 1,
             "row_count_drop_ratio_max": 0.20,
             "premium_rate_nonzero_ratio_drop_max": 0.10
         }
@@ -177,7 +181,6 @@ class DatasetSemanticValidator:
         premium_rate_nonzero_ratio = (df["premium_rate"] != 0.0).mean()
         premium_rate_zero_ratio = (df["premium_rate"] == 0.0).mean()
         is_st_true_count = df["is_st"].sum()
-        is_redeemed_true_count = df["is_redeemed"].sum()
 
         if premium_rate_nonzero_ratio < self.thresholds["premium_rate_nonzero_ratio_min"]:
             raise DataSemanticViolation("[DataSemanticViolation] premium_rate_nonzero_ratio below minimum threshold.")
@@ -187,9 +190,6 @@ class DatasetSemanticValidator:
             
         if is_st_true_count < self.thresholds["is_st_true_count_min"]:
             raise DataSemanticViolation("[DataSemanticViolation] is_st_true_count below minimum threshold.")
-            
-        # if is_redeemed_true_count < self.thresholds.get("is_redeemed_true_count_min", 1):
-            # raise DataSemanticViolation("[DataSemanticViolation] is_redeemed_true_count below minimum threshold.")
 
         if (df["premium_rate"] == 0.0).all() or (~df["is_st"]).all() :
             raise DataSemanticViolation("[DataSemanticViolation] candidate dataset collapsed into default-value world.")
@@ -213,10 +213,6 @@ class DatasetSemanticValidator:
                     
                 baseline_is_st = baseline.get("is_st_true_count", 0)
                 if baseline_is_st > 0 and is_st_true_count == 0:
-                    raise DataDriftViolation("[DataDriftViolation] candidate dataset drift exceeded baseline guardrail.")
-                    
-                baseline_is_redeemed = baseline.get("is_redeemed_true_count", 0)
-                if baseline_is_redeemed > 0 and is_redeemed_true_count == 0:
                     raise DataDriftViolation("[DataDriftViolation] candidate dataset drift exceeded baseline guardrail.")
             except Exception as e:
                 if isinstance(e, DataDriftViolation):

@@ -71,7 +71,7 @@ def test_core_validator_requires_redeem_risk_column_in_stage_f_contract():
     )
 
     assert validator.validate_dataframe(df) is False
-    assert "redeem_risk" in validator.last_error_message
+    assert "OBSERVABILITY_CONTRACT_REGRESSION" in validator.last_error_message
 
 
 def test_core_validator_only_checks_prd_required_columns_and_close_semantics():
