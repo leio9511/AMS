@@ -59,6 +59,13 @@ For the convertible-bond research dataset, AMS now treats upstream source contra
 
 These source-contract guarantees are the prerequisite input layer for later dataset governance hardening under ISSUE-1142.
 
+### Redemption Semantics Evolution
+The handling of Convertible Bond redemption has been decoupled from a single terminal-state field into a multi-layered contract to ensure correct observability and behavior. The architecture evolves across three distinct waves:
+
+- **Wave 1 (Contract Split):** The redemption logic has been separated into two distinct boolean fields: `redeem_risk` (trading-risk window) and `is_redeemed` (terminal/delist state). Strategies have migrated to the filter signature `exclude_if = is_st or redeem_risk or is_redeemed`. This phase relies on deterministic placeholders and legacy upstream mapping where true risk signals are missing.
+- **Wave 2 (Observability / Validation Alignment):** The observability surfaces (metrics artifact, audit report, and validator summary) have been updated to explicitly expose the dual-field semantics. `is_redeemed` terminal counts can no longer be misconstrued as proxies for announcement-risk completeness. Missing or transitional evidence is made visible (e.g. `redeem_risk_observability_mode` and split-state row counts).
+- **Wave 3 (Event Ledger / Shared-State):** *Future phase.* True real-time and historical announcements will be integrated via an event ledger to hydrate `redeem_risk` dynamically, closing the loop between the observability contract and the raw upstream data.
+
 ### The "Data Circuit Breaker"
 Before any ETL script (e.g., fetching historical quotes) saves data to disk, it **MUST** pass through a Data Contract Validator (e.g., `ams.validators.cb_data_validator`).
 - **Pandera Schema**: We use `pandera` to declare strict schemas (e.g., `premium_rate` must be between -10.0 and 100.0, no NaNs allowed).

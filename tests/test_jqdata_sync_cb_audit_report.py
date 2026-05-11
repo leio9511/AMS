@@ -1,3 +1,46 @@
+
+from etl.cb_etl_pipeline import CBETLPipeline
+import pandas as pd
+from unittest.mock import MagicMock
+
+def _build_pipeline():
+    pipeline = CBETLPipeline("2025-01-06", "2025-01-06", provider=MagicMock())
+    pipeline.results["source_coverage"].update({"status": "PASS", "failure_type": "NONE", "message": ""})
+    pipeline.results["supportability_summary"].update({"status": "PASS", "failure_type": "NONE", "message": "", "supportable_row_count": 1})
+    pipeline.results["active_universe_summary"].update({"enrichment_target_row_count": 1})
+    
+    pipeline.df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2025-01-06"]),
+            "ticker": ["123456.XSHG"],
+            "bond_code_raw": ["123456"],
+            "bond_exchange_code": ["XSHG"],
+            "supportability_bucket": ["supportable"],
+            "underlying_ticker": ["600000.XSHG"],
+        }
+    )
+    pipeline.df_bonds_info = pd.DataFrame({
+        "code": ["123456.XSHG"],
+        "bond_code_raw": ["123456"],
+        "company_code": ["600000.XSHG"],
+        "delist_Date": ["2026-01-01"]
+    })
+    
+    def mock_map(df):
+        return {"123456": "600000.XSHG"}
+    def mock_delist_map(df):
+        return {"123456": "2026-01-01"}
+        
+    pipeline.bond_to_stock = mock_map(pipeline.df_bonds_info)
+    pipeline.bond_to_delist = mock_delist_map(pipeline.df_bonds_info)
+    
+    pipeline.run_stage_c_premium_join()
+    pipeline.run_stage_d_is_st_join()
+    pipeline.run_stage_e_redemption_delist()
+    pipeline.run_stage_f_validator()
+    
+    return pipeline
+
 import json
 import os
 from unittest.mock import patch, MagicMock
@@ -317,3 +360,37 @@ def test_validator_summary_uses_not_run_message_when_no_dedicated_validator_path
     assert report["validator_summary"]["enrichment_validator_status"] in {STAGE_STATUS_PASS, "DEGRADED"}
     assert report["validator_summary"]["promotion_gate_status"] in {"PASS", "BLOCKED"}
 
+
+def test_audit_report_distinguishes_risk_and_terminal_semantics():
+    pipeline = _build_pipeline()
+    report = pipeline.get_final_report()
+    
+    redemption_summary = report["redemption_summary"]
+    assert "redeem_risk_true_row_count" in redemption_summary
+    assert "is_redeemed_true_row_count" in redemption_summary
+    assert "redeem_split_state_row_count" in redemption_summary
+    assert "redeem_terminal_only_row_count" in redemption_summary
+    
+    msg = redemption_summary["message"]
+    assert "Terminal-state counts must not be treated as a proxy for announcement-risk correctness." in msg
+    assert "redeem_risk is the trading-risk window signal." in msg
+    assert "is_redeemed is the terminal/delist signal." in msg
+
+def test_missing_evidence_is_observable():
+    pipeline = _build_pipeline()
+    # Mocking missing evidence
+    pipeline.results["redemption_summary"]["redeem_risk_observability_mode"] = "TRANSITIONAL_PLACEHOLDER"
+    pipeline.results["redemption_summary"]["redeem_risk_unknown_interpretation"] = "UNKNOWN_IS_NOT_SAFE"
+    
+    root_blockers, secondary_findings = pipeline.compute_findings()
+    
+    found = False
+    for finding in secondary_findings:
+        if finding["type"] == "REDEEM_RISK_UNKNOWN_ROWS_PRESENT":
+            found = True
+            assert finding["evidence"]["interpretation"] == "UNKNOWN_IS_NOT_SAFE"
+    assert found, "Missing evidence must be observable via REDEEM_RISK_UNKNOWN_ROWS_PRESENT secondary finding"
+
+    report = pipeline.get_final_report()
+    msg = report["redemption_summary"]["message"]
+    assert "Unknown or transitional redeem-risk evidence must remain audit-visible." in msg

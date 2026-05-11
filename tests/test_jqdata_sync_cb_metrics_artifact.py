@@ -556,3 +556,72 @@ def test_metrics_artifact_code_lists_are_deterministically_sorted(
     assert metrics["filtered_rows_missing_company_code_legacy_count"] == 3
     assert metrics["filtered_bond_codes_missing_company_code_legacy"] == ["110001", "125302"]
     assert "filtered_bond_codes" not in metrics
+
+@patch.dict(os.environ, {"JQDATA_USER": "test_user", "JQDATA_PWD": "test_password"}, clear=True)
+@patch("etl.jqdata_sync_cb.jqdatasdk")
+@patch("ams.validators.cb_data_validator.DatasetSemanticValidator")
+@patch("ams.validators.cb_data_validator.CBDataValidator")
+def test_metrics_artifact_includes_split_state_fields(
+    mock_validator_cls, mock_semantic_validator_cls, mock_jqdatasdk
+):
+    mock_validator_cls.return_value.validate_dataframe.return_value = True
+    mock_semantic_validator_cls.return_value.validate_dataframe.return_value = True
+    mock_jqdatasdk.auth.return_value = None
+
+    mock_jqdatasdk.get_all_securities.return_value = pd.DataFrame(index=["123071.XSHE"])
+    mock_jqdatasdk.get_price.return_value = pd.DataFrame(
+        {
+            "open": [100.0],
+            "high": [101.0],
+            "low": [99.0],
+            "close": [100.5],
+            "volume": [1000],
+        },
+        index=pd.MultiIndex.from_tuples(
+            [
+                (pd.to_datetime("2020-01-02"), "123071.XSHE"),
+            ],
+            names=["time", "code"],
+        ),
+    )
+    mock_jqdatasdk.get_extras.return_value = pd.DataFrame(
+        {"000001.XSHE": [True]},
+        index=pd.to_datetime(["2020-01-02"]),
+    )
+
+    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.code.in_.return_value = True
+    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__ge__.return_value = True
+    mock_jqdatasdk.bond.CONBOND_DAILY_CONVERT.date.__le__.return_value = True
+
+    bonds_info = pd.DataFrame(
+        {
+            "code": ["123071"],
+            "company_code": ["000001.XSHE"],
+            "delist_Date": ["2020-01-03"],
+        }
+    )
+    premium = pd.DataFrame(
+        {
+            "date": ["2020-01-02"],
+            "code": ["123071"],
+            "exchange_code": ["XSHE"],
+            "convert_premium_rate": [15.5],
+        }
+    )
+    mock_jqdatasdk.bond.run_query.side_effect = [bonds_info, premium]
+
+    with patch("os.replace"):
+        sync_cb_data(start_date="2020-01-02", end_date="2020-01-02")
+
+    tmp_metrics_path = get_provider_artifact_paths("jqdata")["metrics_path"] + ".tmp"
+    with open(tmp_metrics_path, "r", encoding="utf-8") as f:
+        metrics = json.load(f)
+
+    assert "redeem_risk_true_count" in metrics
+    assert "is_redeemed_true_count" in metrics
+    assert "redeem_split_state_row_count" in metrics
+    assert "redeem_terminal_only_row_count" in metrics
+    assert "missing_redemption_row_count" in metrics
+    assert "missing_redemption_ratio" in metrics
+    assert "redeem_risk_observability_mode" in metrics
+    assert "redeem_risk_unknown_interpretation" in metrics

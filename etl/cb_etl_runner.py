@@ -103,6 +103,8 @@ def _build_candidate_summary_metrics(df: pd.DataFrame) -> dict:
             "is_st_true_count": 0,
             "redeem_risk_true_count": 0,
             "is_redeemed_true_count": 0,
+            "redeem_split_state_row_count": 0,
+            "redeem_terminal_only_row_count": 0,
         }
 
     return {
@@ -113,6 +115,8 @@ def _build_candidate_summary_metrics(df: pd.DataFrame) -> dict:
         "is_st_true_count": int(df["is_st"].sum()) if "is_st" in df.columns else 0,
         "redeem_risk_true_count": int(df["redeem_risk"].sum()) if "redeem_risk" in df.columns else 0,
         "is_redeemed_true_count": int(df["is_redeemed"].sum()) if "is_redeemed" in df.columns else 0,
+        "redeem_split_state_row_count": int((df["redeem_risk"] & ~df["is_redeemed"]).sum()) if "redeem_risk" in df.columns and "is_redeemed" in df.columns else 0,
+        "redeem_terminal_only_row_count": int((df["is_redeemed"] & ~df["redeem_risk"]).sum()) if "redeem_risk" in df.columns and "is_redeemed" in df.columns else 0,
     }
 
 
@@ -308,6 +312,10 @@ def run_etl(start_date, end_date, source_name, promote=False, jqdata_client=None
             "premium_rate_joined_row_count": pipeline.results["premium_join_summary"].get("premium_joined_row_count", 0),
             "premium_rate_join_coverage_ratio": 1.0 - pipeline.results["premium_join_summary"].get("missing_premium_ratio", 0.0) if not df_supportable.empty else 0.0,
             "is_redeemed_missing_delist_count": pipeline.results["redemption_summary"].get("missing_redemption_row_count", 0),
+            "missing_redemption_row_count": pipeline.results["redemption_summary"].get("missing_redemption_row_count", 0),
+            "missing_redemption_ratio": pipeline.results["redemption_summary"].get("missing_redemption_ratio", 0.0),
+            "redeem_risk_observability_mode": pipeline.results["redemption_summary"].get("redeem_risk_observability_mode", "TRANSITIONAL_PLACEHOLDER"),
+            "redeem_risk_unknown_interpretation": pipeline.results["redemption_summary"].get("redeem_risk_unknown_interpretation", "UNKNOWN_IS_NOT_SAFE"),
             **_build_candidate_summary_metrics(df_supportable_final),
             **supportability_metrics,
             "full_report": report

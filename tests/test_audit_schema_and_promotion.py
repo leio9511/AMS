@@ -108,6 +108,12 @@ EXPECTED_REDEMPTION_SUMMARY_KEYS = {
     "missing_redemption_row_count",
     "missing_redemption_unique_bond_count",
     "missing_redemption_ratio",
+    "redeem_risk_true_row_count",
+    "is_redeemed_true_row_count",
+    "redeem_split_state_row_count",
+    "redeem_terminal_only_row_count",
+    "redeem_risk_observability_mode",
+    "redeem_risk_unknown_interpretation",
 }
 
 EXPECTED_VALIDATOR_SUMMARY_KEYS = {
@@ -141,6 +147,7 @@ EXPECTED_ROOT_BLOCKER_TYPES = {
     "REDEMPTION_SOURCE_GAP",
     "VALIDATOR_SCHEMA_FAILURE",
     "VALIDATOR_SEMANTIC_FAILURE",
+    "OBSERVABILITY_CONTRACT_REGRESSION",
     "CONCURRENT_RUN_BLOCKED",
 }
 EXPECTED_ROOT_BLOCKER_STAGES = {"A", "B", "C", "D", "E", "F", "ORCH"}
@@ -150,6 +157,8 @@ EXPECTED_SECONDARY_FINDING_TYPES = {
     "MISSING_IS_ST_ROWS",
     "MISSING_UNDERLYING_TICKER_ROWS",
     "EXCLUSION_ONLY_WINDOW",
+    "REDEEM_RISK_UNKNOWN_ROWS_PRESENT",
+    "REDEEM_SPLIT_STATE_ROWS_PRESENT",
 }
 EXPECTED_SECONDARY_FINDING_STAGES = {"B", "C", "D", "E"}
 
@@ -812,3 +821,16 @@ def test_run_etl_promotion_gate_blocks_promotion(tmp_path):
     assert not (tmp_path / "cb.csv.bak").exists()
     assert not (tmp_path / "cb.metrics.json.tmp").exists()
     assert not (tmp_path / "cb.metrics.json.bak").exists()
+
+def test_audit_schema_promotion_allows_wave2_fields():
+    pipeline = _build_pipeline()
+    report = pipeline.get_final_report()
+    
+    assert "redeem_risk_true_row_count" in report["redemption_summary"]
+    assert "is_redeemed_true_row_count" in report["redemption_summary"]
+    assert "redeem_split_state_row_count" in report["redemption_summary"]
+    assert "redeem_terminal_only_row_count" in report["redemption_summary"]
+    assert "missing_redemption_row_count" in report["redemption_summary"]
+    assert "missing_redemption_ratio" in report["redemption_summary"]
+    assert "redeem_risk_observability_mode" in report["redemption_summary"]
+    assert "redeem_risk_unknown_interpretation" in report["redemption_summary"]

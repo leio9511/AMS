@@ -42,6 +42,7 @@ ROOT_BLOCKER_TYPES = {
     "REDEMPTION_SOURCE_GAP",
     "VALIDATOR_SCHEMA_FAILURE",
     "VALIDATOR_SEMANTIC_FAILURE",
+    "OBSERVABILITY_CONTRACT_REGRESSION",
     "CONCURRENT_RUN_BLOCKED",
 }
 
@@ -51,6 +52,8 @@ SECONDARY_FINDING_TYPES = {
     "MISSING_IS_ST_ROWS",
     "MISSING_UNDERLYING_TICKER_ROWS",
     "EXCLUSION_ONLY_WINDOW",
+    "REDEEM_RISK_UNKNOWN_ROWS_PRESENT",
+    "REDEEM_SPLIT_STATE_ROWS_PRESENT",
 }
 
 ACTIVE_UNIVERSE_SUMMARY_TEMPLATE = {
@@ -130,6 +133,12 @@ REDEMPTION_SUMMARY_TEMPLATE = {
     "missing_redemption_row_count": 0,
     "missing_redemption_unique_bond_count": 0,
     "missing_redemption_ratio": 0.0,
+    "redeem_risk_true_row_count": 0,
+    "is_redeemed_true_row_count": 0,
+    "redeem_split_state_row_count": 0,
+    "redeem_terminal_only_row_count": 0,
+    "redeem_risk_observability_mode": "TRANSITIONAL_PLACEHOLDER",
+    "redeem_risk_unknown_interpretation": "UNKNOWN_IS_NOT_SAFE",
 }
 
 VALIDATOR_SUMMARY_TEMPLATE = {
@@ -220,7 +229,7 @@ SUMMARY_ENUM_RULES = {
     },
     "validator_summary": {
         "status": {STAGE_STATUS_PASS, STAGE_STATUS_FAIL, STAGE_STATUS_NOT_RUN, STAGE_STATUS_DEGRADED},
-        "failure_type": {FAILURE_TYPE_NONE, "VALIDATOR_SCHEMA_FAILURE", "VALIDATOR_SEMANTIC_FAILURE"},
+        "failure_type": {FAILURE_TYPE_NONE, "VALIDATOR_SCHEMA_FAILURE", "VALIDATOR_SEMANTIC_FAILURE", "OBSERVABILITY_CONTRACT_REGRESSION"},
         "core_validator_status": CORE_VALIDATOR_STATUS_VALUES,
         "enrichment_validator_status": ENRICHMENT_PATH_STATUS_VALUES,
         "promotion_gate_status": PROMOTION_GATE_STATUS_VALUES,

@@ -750,16 +750,6 @@ class CBETLPipeline:
             total_rows = len(df_core_universe_supportable)
             stage["missing_redemption_ratio"] = stage["missing_redemption_row_count"] / total_rows if total_rows > 0 else 0.0
 
-            if total_rows > 0 and not raw_has_primary_field:
-                stage["status"] = STAGE_STATUS_FAIL
-                stage["failure_type"] = "REDEMPTION_SOURCE_GAP"
-                stage["message"] = (
-                    f"Redemption source contract regression: missing primary field {contract['primary_field']} "
-                    f"in {contract['source_table']}"
-                )
-            else:
-                stage["status"] = STAGE_STATUS_PASS
-
             df_core_universe_supportable["is_redeemed"] = df_core_universe_supportable["delist_Date"].notna() & (
                 df_core_universe_supportable["date"] >= df_core_universe_supportable["delist_Date"]
             )
@@ -772,6 +762,37 @@ class CBETLPipeline:
                 )
             else:
                 df_core_universe_supportable["redeem_risk"] = False
+
+            stage["redeem_risk_true_row_count"] = int(df_core_universe_supportable["redeem_risk"].sum())
+            stage["is_redeemed_true_row_count"] = int(df_core_universe_supportable["is_redeemed"].sum())
+            stage["redeem_split_state_row_count"] = int((df_core_universe_supportable["redeem_risk"] & ~df_core_universe_supportable["is_redeemed"]).sum())
+            stage["redeem_terminal_only_row_count"] = int((df_core_universe_supportable["is_redeemed"] & ~df_core_universe_supportable["redeem_risk"]).sum())
+            
+            stage["redeem_risk_observability_mode"] = "TRANSITIONAL_PLACEHOLDER"
+            stage["redeem_risk_unknown_interpretation"] = "UNKNOWN_IS_NOT_SAFE"
+
+            base_message = (
+                f"Redemption source contract regression: missing primary field {contract['primary_field']} "
+                f"in {contract['source_table']}"
+            ) if total_rows > 0 and not raw_has_primary_field else ""
+
+            audit_lines = [
+                "redeem_risk is the trading-risk window signal.",
+                "is_redeemed is the terminal/delist signal.",
+                "Terminal-state counts must not be treated as a proxy for announcement-risk correctness.",
+                "Unknown or transitional redeem-risk evidence must remain audit-visible."
+            ]
+
+            if base_message:
+                stage["message"] = base_message + " " + " ".join(audit_lines)
+            else:
+                stage["message"] = " ".join(audit_lines)
+
+            if total_rows > 0 and not raw_has_primary_field:
+                stage["status"] = STAGE_STATUS_FAIL
+                stage["failure_type"] = "REDEMPTION_SOURCE_GAP"
+            else:
+                stage["status"] = STAGE_STATUS_PASS
             
             if "is_redeemed" in self.df.columns:
                 self.df.drop(columns=["is_redeemed"], inplace=True)
@@ -1020,6 +1041,10 @@ class CBETLPipeline:
              secondary_findings.append(build_secondary_finding("MISSING_IS_ST_ROWS", "D", "missing_is_st_row_count > 0", {"count": self.results["is_st_join_summary"]["missing_is_st_row_count"]}))
         if self.results["redemption_summary"].get("missing_redemption_row_count", 0) > 0:
              secondary_findings.append(build_secondary_finding("MISSING_REDEMPTION_ROWS", "E", "missing_redemption_row_count > 0", {"count": self.results["redemption_summary"]["missing_redemption_row_count"]}))
+        if self.results["redemption_summary"].get("redeem_risk_observability_mode") == "TRANSITIONAL_PLACEHOLDER":
+             secondary_findings.append(build_secondary_finding("REDEEM_RISK_UNKNOWN_ROWS_PRESENT", "E", "redeem_risk_observability_mode == TRANSITIONAL_PLACEHOLDER", {"interpretation": self.results["redemption_summary"].get("redeem_risk_unknown_interpretation")}))
+        if self.results["redemption_summary"].get("redeem_split_state_row_count", 0) > 0:
+             secondary_findings.append(build_secondary_finding("REDEEM_SPLIT_STATE_ROWS_PRESENT", "E", "redeem_split_state_row_count > 0", {"count": self.results["redemption_summary"]["redeem_split_state_row_count"]}))
         if self.results["supportability_summary"]["status"] == STAGE_STATUS_PASS and self.results["supportability_summary"]["supportable_row_count"] == 0:
              secondary_findings.append(build_secondary_finding("EXCLUSION_ONLY_WINDOW", "B", "supportable_row_count == 0", {}))
 

@@ -36,10 +36,11 @@ Phase 1.5: Backtest Reliability Hardening
    - Establish smoke / regression / walk-forward layers
    - Use this as a quality gate before Phase 2
 
-3. CB Source-Contract Hardening
-   - Keep `underlying_ticker`, `premium_rate`, and `is_redeemed` on explicit documented source contracts
-   - Preserve the integrated ETL metrics artifact (resolved via the mutable research data precedence contract)
-   - Use regression guards to block fallback to `get_security_info(ticker).parent` and `finance.CCB_CALL`
+3. CB Source-Contract Hardening & Redemption Observability
+   - Keep `underlying_ticker` and `premium_rate` on explicit documented source contracts
+   - **Redemption Wave 1**: Contract split applied (`redeem_risk` vs `is_redeemed`)
+   - **Redemption Wave 2**: Align observability & validation (metrics and audit report properly distinct risk-state from terminal-state)
+   - **Redemption Wave 3** *(Pending)*: Integrate event ledger / shared-state for true announcement-driven `redeem_risk` hydration
    - Treat this as prerequisite upstream input quality for ISSUE-1142 dataset governance
 
 ## Gate to Next Phase
@@ -49,6 +50,7 @@ Before entering Phase 2, AMS must satisfy:
 - Smoke test passes in CI/preflight
 - `cb_rotation` has its first golden regression baseline
 - Validation framework requirements are documented and tracked
+- Redemption observability (Wave 2) is complete, preventing misleading terminal-count proxies
 - ISSUE-1142 is a blocking issue for AMS Phase 2. AMS must not enter Live QMT Integration until the historical CB dataset is strictly managed as explicit, configuration-controlled mutable research data, and the semantic quality gates defined in this PRD are enforced without declaring a root-only machine path as the canonical contract.
 
 ## Next Actions
