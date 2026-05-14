@@ -915,6 +915,56 @@ def test_run_redemption_sync_pipeline_calls_trade_calendar_and_wave3_only_after_
     }
 
 
+def test_run_redemption_sync_pipeline_uses_one_run_scoped_today_value_for_fetch_and_trade_calendar(tmp_path):
+    import_csv_path = tmp_path / "data" / "import.csv"
+    ledger_csv_path = tmp_path / "data" / "ledger.csv"
+    canonical_csv_path = tmp_path / "data" / "canonical.csv"
+    trace_json_path = tmp_path / "data" / "trace.json"
+
+    provider = StubProvider(
+        result=_mapped_result(
+            df_rows=[
+                {
+                    "source_native_event_id": "118033SH_20260514",
+                    "bond_code": "118033",
+                    "announcement_date": "2026-05-14",
+                    "delisting_date": "2026-06-15",
+                    "source": "tushare",
+                    "updated_at": "2026-05-14T10:00:00Z",
+                }
+            ],
+            filtered_snapshot_ids=["118033SH_20260514"],
+            rejected_duplicates=[],
+        ),
+        trade_calendar_result=["2026-05-15"],
+    )
+
+    today_values = iter(["2026-05-15", "2026-05-16"])
+    fetcher = RedemptionFetcher(
+        provider=provider,
+        import_csv_path=str(import_csv_path),
+        ledger_csv_path=str(ledger_csv_path),
+        canonical_csv_path=str(canonical_csv_path),
+        trace_json_path=str(trace_json_path),
+        rejected_trace_path=str(tmp_path / "data" / "rejected.json"),
+        state_path=str(tmp_path / "data" / "state.json"),
+        freshness_report_path=str(tmp_path / "data" / "freshness.json"),
+        today_fn=lambda: next(today_values),
+    )
+
+    def fake_wave3(**kwargs):
+        pd.DataFrame([{"event_id": "tushare:118033SH_20260514"}]).to_csv(ledger_csv_path, index=False)
+        pd.DataFrame([{"date": "2026-05-15"}]).to_csv(canonical_csv_path, index=False)
+        trace_json_path.write_text(json.dumps({"ok": True}), encoding="utf-8")
+
+    with patch("etl.redemption_fetcher.run_redemption_wave3_pipeline", side_effect=fake_wave3):
+        result = fetcher.run_redemption_sync_pipeline()
+
+    assert result.success is True
+    assert provider.calls == [(BOOTSTRAP_START_DATE, "2026-05-15")]
+    assert provider.trade_calendar_calls == [(BOOTSTRAP_START_DATE, "2026-05-15")]
+
+
 def test_run_redemption_sync_pipeline_cleans_backup_sidecars_after_successful_wave3_commit(tmp_path):
     import_csv_path = tmp_path / "data" / "import.csv"
     ledger_csv_path = tmp_path / "data" / "ledger.csv"

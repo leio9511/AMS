@@ -281,13 +281,18 @@ class RedemptionFetcher:
             "suggested_action": EMPTY_SNAPSHOT_WARNING_SUGGESTED_ACTION,
         }
 
-    def fetch_and_build_import_csv(self, import_csv_path: Optional[str] = None) -> FetchResult:
+    def fetch_and_build_import_csv(
+        self,
+        import_csv_path: Optional[str] = None,
+        today_str: Optional[str] = None,
+    ) -> FetchResult:
         target_import_csv_path = import_csv_path or self.import_csv_path
+        fetch_today = today_str or self._today_str()
 
         try:
             mapped_result = self.provider.fetch_and_map_redemption_events(
                 BOOTSTRAP_START_DATE,
-                self._today_str(),
+                fetch_today,
             )
         except Exception:
             return FetchResult(
@@ -343,7 +348,8 @@ class RedemptionFetcher:
         )
 
     def run_redemption_sync_pipeline(self) -> PipelineResult:
-        fetch_result = self.fetch_and_build_import_csv()
+        today = self._today_str()
+        fetch_result = self.fetch_and_build_import_csv(today_str=today)
         if not fetch_result.success:
             if fetch_result.status == "EMPTY_ABORT":
                 self._write_freshness_report(
@@ -361,7 +367,6 @@ class RedemptionFetcher:
                 disappearance_warning=None,
             )
 
-        today = self._today_str()
         target_dates = self.provider.fetch_trade_calendar(BOOTSTRAP_START_DATE, today)
         backup_state = self._create_wave3_backups()
 
