@@ -1,9 +1,29 @@
+import logging
+from dataclasses import dataclass
+
 import pandas as pd
 import tushare as ts
-import logging
-from etl.cb_provider_base import BaseDataProvider, DataProviderAuthError, DataProviderQuotaError, DataProviderError
+
+from etl.cb_provider_base import (
+    BaseDataProvider,
+    DataProviderAuthError,
+    DataProviderError,
+    DataProviderQuotaError,
+)
+from etl.redemption_ledger import IMPORT_COLUMNS
 
 logger = logging.getLogger(__name__)
+
+SOURCE_TUSHARE = "tushare"
+CALL_TYPE_REDEEM = "强赎"
+
+
+@dataclass
+class MappedRedemptionResult:
+    df: pd.DataFrame
+    filtered_snapshot_ids: list[str]
+    rejected_duplicates: list[dict]
+
 
 class TuShareProvider(BaseDataProvider):
     def __init__(self, token=None, pro=None):
@@ -14,6 +34,48 @@ class TuShareProvider(BaseDataProvider):
                 ts.set_token(token)
             self.pro = ts.pro_api()
         self._bond_to_stock_map = {}
+
+    @staticmethod
+    def _normalize_tushare_date(value) -> str:
+        if pd.isna(value):
+            return ""
+
+        raw = str(value).strip()
+        if not raw or raw.lower() == "nat":
+            return ""
+
+        try:
+            return pd.to_datetime(raw).strftime("%Y-%m-%d")
+        except Exception:
+            if len(raw) == 8 and raw.isdigit():
+                return f"{raw[:4]}-{raw[4:6]}-{raw[6:]}"
+            return raw
+
+    @staticmethod
+    def _source_id_date_token(value) -> str:
+        if pd.isna(value):
+            return ""
+
+        raw = str(value).strip()
+        if not raw:
+            return ""
+        if raw.endswith(".0") and raw[:-2].isdigit():
+            return raw[:-2]
+        if len(raw) == 8 and raw.isdigit():
+            return raw
+
+        normalized = TuShareProvider._normalize_tushare_date(raw)
+        if normalized:
+            return normalized.replace("-", "")
+        return raw
+
+    @staticmethod
+    def _empty_mapped_redemption_result() -> MappedRedemptionResult:
+        return MappedRedemptionResult(
+            df=pd.DataFrame(columns=IMPORT_COLUMNS),
+            filtered_snapshot_ids=[],
+            rejected_duplicates=[],
+        )
 
     def _handle_exception(self, e):
         err_msg = str(e).lower()
@@ -30,7 +92,7 @@ class TuShareProvider(BaseDataProvider):
             mapping = {
                 "ts_code": "code",
                 "stk_code": "company_code",
-                "delist_date": "delist_Date"
+                "delist_date": "delist_Date",
             }
             df = df.rename(columns=mapping)
 
@@ -48,7 +110,7 @@ class TuShareProvider(BaseDataProvider):
                     suffix = bond_code.split(".")[-1]
                     return f"{stock_code}.{suffix}"
                 return stock_code
-            
+
             df["company_code"] = df.apply(get_full_stock_ticker, axis=1)
 
             # Cache bond to stock mapping for reconstruction
@@ -56,6 +118,92 @@ class TuShareProvider(BaseDataProvider):
                 if pd.notna(row["code"]) and pd.notna(row["company_code"]):
                     self._bond_to_stock_map[row["code"]] = row["company_code"]
             return df
+        except Exception as e:
+            self._handle_exception(e)
+
+    def fetch_and_map_redemption_events(self, start_date: str, end_date: str) -> MappedRedemptionResult:
+        try:
+            ts_start = start_date.replace("-", "")
+            ts_end = end_date.replace("-", "")
+            cb_call_df = self.pro.cb_call(start_date=ts_start, end_date=ts_end)
+
+            if cb_call_df is None or cb_call_df.empty:
+                return self._empty_mapped_redemption_result()
+
+            filtered_df = cb_call_df.copy()
+            if "call_type" not in filtered_df.columns:
+                return self._empty_mapped_redemption_result()
+
+            filtered_df = filtered_df[filtered_df["call_type"] == CALL_TYPE_REDEEM].copy()
+            if filtered_df.empty:
+                return self._empty_mapped_redemption_result()
+
+            filtered_df = filtered_df.fillna("")
+            filtered_df["source_native_event_id"] = filtered_df.apply(
+                lambda row: (
+                    f"{str(row.get('ts_code', '')).strip().replace('.', '')}_"
+                    f"{self._source_id_date_token(row.get('ann_date', ''))}"
+                ),
+                axis=1,
+            )
+            filtered_snapshot_ids = filtered_df["source_native_event_id"].astype(str).tolist()
+
+            cb_basic_df = self.fetch_cb_basic()
+            if cb_basic_df is None or cb_basic_df.empty:
+                cb_basic_df = pd.DataFrame(columns=["code", "delist_Date"])
+            else:
+                cb_basic_df = cb_basic_df.copy()
+                if "code" not in cb_basic_df.columns and "ts_code" in cb_basic_df.columns:
+                    cb_basic_df = cb_basic_df.rename(columns={"ts_code": "code"})
+                if "delist_Date" not in cb_basic_df.columns and "delist_date" in cb_basic_df.columns:
+                    cb_basic_df = cb_basic_df.rename(columns={"delist_date": "delist_Date"})
+                for required_column in ["code", "delist_Date"]:
+                    if required_column not in cb_basic_df.columns:
+                        cb_basic_df[required_column] = ""
+                cb_basic_df = cb_basic_df[["code", "delist_Date"]]
+
+            merged_df = filtered_df.merge(
+                cb_basic_df,
+                how="left",
+                left_on="ts_code",
+                right_on="code",
+            )
+            merged_df = merged_df.fillna("")
+
+            updated_at = pd.Timestamp.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            mapped_df = pd.DataFrame(
+                {
+                    "source_native_event_id": merged_df["source_native_event_id"].astype(str),
+                    "bond_code": merged_df["ts_code"].astype(str).str.split(".").str[0],
+                    "announcement_date": merged_df["ann_date"].apply(self._normalize_tushare_date),
+                    "delisting_date": merged_df.apply(
+                        lambda row: self._normalize_tushare_date(
+                            row.get("delist_Date") or row.get("call_date") or ""
+                        ),
+                        axis=1,
+                    ),
+                    "source": SOURCE_TUSHARE,
+                    "updated_at": updated_at,
+                }
+            )
+            mapped_df = mapped_df[IMPORT_COLUMNS].fillna("")
+
+            duplicate_mask = mapped_df["source_native_event_id"].duplicated(keep=False)
+            rejected_duplicates = []
+            if duplicate_mask.any():
+                rejected_duplicates = merged_df.loc[duplicate_mask].to_dict(orient="records")
+                mapped_df = mapped_df.loc[~duplicate_mask].copy()
+
+            if mapped_df.empty:
+                mapped_df = pd.DataFrame(columns=IMPORT_COLUMNS)
+            else:
+                mapped_df = mapped_df.reset_index(drop=True)
+
+            return MappedRedemptionResult(
+                df=mapped_df,
+                filtered_snapshot_ids=filtered_snapshot_ids,
+                rejected_duplicates=rejected_duplicates,
+            )
         except Exception as e:
             self._handle_exception(e)
 
@@ -109,6 +257,7 @@ class TuShareProvider(BaseDataProvider):
             return df.set_index(["code", "time"])
         except Exception as e:
             self._handle_exception(e)
+
     def fetch_cb_price_changes(self, ticker: str) -> pd.DataFrame:
         try:
             df = self.pro.cb_price_chg(ts_code=ticker)
@@ -153,24 +302,24 @@ class TuShareProvider(BaseDataProvider):
 
     def fetch_stock_st_by_date(self, tickers: list[str], start_date: str, end_date: str) -> pd.DataFrame:
         """
-        Optimized ST status fetching: Queries by trade_date for the range to avoid 
+        Optimized ST status fetching: Queries by trade_date for the range to avoid
         per-ticker API calls which are slow and hit rate limits.
         """
         try:
             ts_start = start_date.replace("-", "")
             ts_end = end_date.replace("-", "")
-            
+
             # 1. Get trade days in range
-            cal_df = self.pro.trade_cal(exchange='SSE', start_date=ts_start, end_date=ts_end, is_open='1')
+            cal_df = self.pro.trade_cal(exchange="SSE", start_date=ts_start, end_date=ts_end, is_open="1")
             if cal_df.empty:
                 return pd.DataFrame(index=[], columns=tickers)
-            
+
             trade_days_ts = cal_df["cal_date"].tolist()
             trade_days_fmt = pd.to_datetime(cal_df["cal_date"]).dt.strftime("%Y-%m-%d").tolist()
-            
+
             result_df = pd.DataFrame(index=trade_days_fmt, columns=tickers, data=False)
             ticker_set = set(tickers)
-            
+
             # 2. Query stock_st for each trade day (much faster for large universes)
             for t_ts, t_fmt in zip(trade_days_ts, trade_days_fmt):
                 df_st = self.pro.stock_st(trade_date=t_ts)
@@ -179,7 +328,7 @@ class TuShareProvider(BaseDataProvider):
                     st_on_day = df_st[df_st["ts_code"].isin(ticker_set)]["ts_code"].tolist()
                     for ticker in st_on_day:
                         result_df.at[t_fmt, ticker] = True
-            
+
             return result_df
         except Exception as e:
             self._handle_exception(e)
@@ -188,7 +337,7 @@ class TuShareProvider(BaseDataProvider):
         try:
             ts_start = start_date.replace("-", "")
             ts_end = end_date.replace("-", "")
-            df = self.pro.trade_cal(exchange='SSE', start_date=ts_start, end_date=ts_end, is_open='1')
+            df = self.pro.trade_cal(exchange="SSE", start_date=ts_start, end_date=ts_end, is_open="1")
             return pd.to_datetime(df["cal_date"]).dt.strftime("%Y-%m-%d").tolist()
         except Exception as e:
             self._handle_exception(e)
