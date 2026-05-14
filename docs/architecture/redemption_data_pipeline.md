@@ -25,10 +25,21 @@ tushare_provider.TuShareProvider.fetch_and_map_redemption_events()
     │
     ▼
 redemption_fetcher.fetch_and_build_import_csv()
-    └── 写 Import CSV + rejected trace
+    ├── 拥有 fetch artifact/status gate：
+    │   ├── 写 Import CSV
+    │   ├── 写 rejected trace
+    │   ├── OK → 继续
+    │   ├── EMPTY_ABORT → 停止
+    │   └── API_FAILED → 停止
     │
-    ▼ (OK 路径)
-target_dates = BOOTSTRAP_START_DATE→today 交易日
+    ▼ (仅 OK 路径继续)
+Step 2: target_dates = BOOTSTRAP_START_DATE→today 交易日
+    │
+    ▼
+Step 3: 在 redemption_fetcher.py 中为 truth sources 创建相邻 `.bak` sidecars
+    ├── data/redemption_event_ledger.csv.bak
+    ├── data/canonical_redemption_state.csv.bak
+    └── data/reports/redemption_event_trace.json.bak
     │
     ▼
 run_redemption_wave3_pipeline(target_dates)
@@ -36,17 +47,20 @@ run_redemption_wave3_pipeline(target_dates)
     ├── derive_canonical_redemption_state
     └── 写 Ledger + Canonical + Trace
     │
+    ├── 成功 → 删除 `.bak` sidecars
+    └── 异常 → 恢复 truth sources，删除 import_csv + rejected trace，停止
+    │
     ▼ (成功后)
-消失检测 (filtered_snapshot_ids set diff)
+Step 4: 消失检测 (filtered_snapshot_ids set diff)
     └── 写入 freshness_report.json
     │
     ▼
-update_state_tracker(last_successful_sync)
+Step 5: update_state_tracker(last_successful_sync, previous_id_set)
 
 失败分支:
-  EMPTY_ABORT (0行) → empty_snapshot_warning, 不写 tracker
-  API_FAILED → 终止, 不写 tracker
-  wave3 异常 → 三文件回滚 (ledger+canonical+trace), 删临时文件, 终止
+  EMPTY_ABORT (0行) → empty_snapshot_warning, 不写 tracker, 不进入 trade calendar / wave3 / disappearance
+  API_FAILED → 终止, 不写 tracker, 不进入 trade calendar / wave3 / disappearance
+  wave3 异常 → 回滚 ledger+canonical+trace, 删 import_csv+rejected, 不写 tracker / freshness
 ```
 
 ### 1. 持久化构件
@@ -123,7 +137,7 @@ LEDGER_COLUMNS = [
 | 属性 | 值 |
 |---|---|
 | 文件 | `data/redemption_event_facts_import.csv` |
-| 性质 | 每轮 pipeline 重新生成。非持久化。wave3 失败时删除 |
+| 性质 | 每轮 pipeline 重新生成。临时 fetch 产物，不属于 rollback truth；wave3 失败时删除 |
 
 ```python
 # PRD A: 仅包含 TuShare 映射后数据（6 列）
@@ -153,7 +167,8 @@ IMPORT_COLUMNS = ["source_native_event_id", "bond_code", "announcement_date", "d
 | 属性 | 值 |
 |---|---|
 | 文件 | `data/reports/redemption_fetcher_rejected.json` |
-| 用途 | 记录重复 identity 被拒绝的原始行数据（wave3 失败时被删除——观测产物，非真相源） |
+| 用途 | 记录重复 identity 被拒绝的原始行数据 |
+| 语义 | 观测产物，不是 rollback truth source；wave3 失败时删除，下一轮重新生成 |
 
 ### 3. 派生产物（PRD A 不变）
 
@@ -170,25 +185,36 @@ CANONICAL_COLUMNS = ["date", "bond_code", "redeem_risk", "representative_event_i
 
 ### 4. 编排与原子性（PRD A 新增）
 
-`run_redemption_sync_pipeline()` 定义在 `etl/redemption_fetcher.py`，完整编排：
+`run_redemption_sync_pipeline()` 定义在 `etl/redemption_fetcher.py`，由它独占运行时 gate 与提交顺序：
 
 ```
 Step 1: fetch_and_build_import_csv()
   └── provider.fetch_and_map_redemption_events()
-  ├── 成功 → 继续
-  ├── EMPTY_ABORT → 终止, empty_snapshot_warning, 不写 tracker
-  └── API_FAILED → 终止, 不写 tracker
+  ├── 负责写 fetch 产物: import_csv + rejected trace
+  ├── OK → 继续
+  ├── EMPTY_ABORT → 终止, empty_snapshot_warning, 不写 tracker, 不进入 Step 2+
+  └── API_FAILED → 终止, 不写 tracker, 不进入 Step 2+
 
 Step 2: 推导 target_dates = BOOTSTRAP_START_DATE→today 交易日
 
-Step 3: 备份 (ledger+canonical+trace) → run_redemption_wave3_pipeline()
-  ├── 成功 → 删备份
-  └── 异常 → 回滚三文件, 删 import_csv+rejected, 终止
+Step 3: backup truth sources with adjacent `.bak` sidecars
+  ├── ledger.csv(.bak)
+  ├── canonical.csv(.bak)
+  └── trace.json(.bak)
+  └── run_redemption_wave3_pipeline()
+      ├── 成功 → 删除 `.bak` sidecars, 关闭 commit boundary
+      └── 异常 → 恢复三份 truth sources
+                 删除 import_csv + rejected trace
+                 不写 freshness_report
+                 不写 state tracker
+                 终止返回 `WAVE3_FAILED`
 
 Step 4: 消失检测 (set diff filtered_snapshot_ids)
 
 Step 5: update_state_tracker()
 ```
+
+这里的 rollback truth sources 仅限：ledger、canonical、wave3 trace。Import CSV 与 rejected trace 只是本轮 fetch 的临时/观测输出，不构成 committed baseline。
 
 ### 5. Identity 合约
 

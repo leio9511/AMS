@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -165,6 +166,51 @@ class RedemptionFetcher:
                 if backup_path and os.path.exists(backup_path):
                     os.unlink(backup_path)
 
+    @staticmethod
+    def _backup_sidecar_path(target_path: str) -> str:
+        return f"{target_path}.bak"
+
+    @staticmethod
+    def _delete_if_exists(path: str):
+        if os.path.exists(path):
+            os.unlink(path)
+
+    def _wave3_truth_source_paths(self) -> list[str]:
+        return [
+            self.ledger_csv_path,
+            self.canonical_csv_path,
+            self.trace_json_path,
+        ]
+
+    def _create_wave3_backups(self) -> dict[str, bool]:
+        backup_state: dict[str, bool] = {}
+        for target_path in self._wave3_truth_source_paths():
+            backup_path = self._backup_sidecar_path(target_path)
+            self._delete_if_exists(backup_path)
+
+            existed_before_run = os.path.exists(target_path)
+            backup_state[target_path] = existed_before_run
+            if existed_before_run:
+                self._ensure_parent_dir(backup_path)
+                shutil.copyfile(target_path, backup_path)
+
+        return backup_state
+
+    def _discard_wave3_backups(self, backup_state: dict[str, bool]):
+        for target_path in backup_state:
+            self._delete_if_exists(self._backup_sidecar_path(target_path))
+
+    def _restore_wave3_truth_sources(self, backup_state: dict[str, bool]):
+        for target_path, existed_before_run in backup_state.items():
+            backup_path = self._backup_sidecar_path(target_path)
+            if existed_before_run:
+                if os.path.exists(target_path):
+                    os.unlink(target_path)
+                os.replace(backup_path, target_path)
+            else:
+                self._delete_if_exists(target_path)
+                self._delete_if_exists(backup_path)
+
     def _read_state_tracker(self) -> dict:
         if not os.path.exists(self.state_path):
             return {
@@ -317,6 +363,7 @@ class RedemptionFetcher:
 
         today = self._today_str()
         target_dates = self.provider.fetch_trade_calendar(BOOTSTRAP_START_DATE, today)
+        backup_state = self._create_wave3_backups()
 
         try:
             run_redemption_wave3_pipeline(
@@ -327,6 +374,9 @@ class RedemptionFetcher:
                 target_dates=target_dates,
             )
         except Exception:
+            self._restore_wave3_truth_sources(backup_state)
+            self._delete_if_exists(self.import_csv_path)
+            self._delete_if_exists(self.rejected_trace_path)
             return PipelineResult(
                 success=False,
                 status="WAVE3_FAILED",
@@ -335,6 +385,8 @@ class RedemptionFetcher:
                 canonical_date_count=0,
                 disappearance_warning=None,
             )
+
+        self._discard_wave3_backups(backup_state)
 
         tracker_state = self._read_state_tracker()
         disappearance_warning = self._build_disappearance_warning(

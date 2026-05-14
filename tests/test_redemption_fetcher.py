@@ -913,3 +913,239 @@ def test_run_redemption_sync_pipeline_calls_trade_calendar_and_wave3_only_after_
         "trace_json_path": str(trace_json_path),
         "target_dates": ["2026-05-14", "2026-05-15"],
     }
+
+
+def test_run_redemption_sync_pipeline_cleans_backup_sidecars_after_successful_wave3_commit(tmp_path):
+    import_csv_path = tmp_path / "data" / "import.csv"
+    ledger_csv_path = tmp_path / "data" / "ledger.csv"
+    canonical_csv_path = tmp_path / "data" / "canonical.csv"
+    trace_json_path = tmp_path / "data" / "trace.json"
+
+    original_ledger = "event_id\nOLD_LEDGER_EVENT\n"
+    original_canonical = "date\n2026-05-14\n"
+    original_trace = json.dumps({"trace": "before"})
+
+    for path, content in [
+        (ledger_csv_path, original_ledger),
+        (canonical_csv_path, original_canonical),
+        (trace_json_path, original_trace),
+    ]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    provider = StubProvider(
+        result=_mapped_result(
+            df_rows=[
+                {
+                    "source_native_event_id": "118033SH_20260514",
+                    "bond_code": "118033",
+                    "announcement_date": "2026-05-14",
+                    "delisting_date": "2026-06-15",
+                    "source": "tushare",
+                    "updated_at": "2026-05-14T10:00:00Z",
+                }
+            ],
+            filtered_snapshot_ids=["118033SH_20260514"],
+            rejected_duplicates=[],
+        ),
+        trade_calendar_result=["2026-05-15"],
+    )
+
+    fetcher = RedemptionFetcher(
+        provider=provider,
+        import_csv_path=str(import_csv_path),
+        ledger_csv_path=str(ledger_csv_path),
+        canonical_csv_path=str(canonical_csv_path),
+        trace_json_path=str(trace_json_path),
+        rejected_trace_path=str(tmp_path / "data" / "rejected.json"),
+        state_path=str(tmp_path / "data" / "state.json"),
+        freshness_report_path=str(tmp_path / "data" / "freshness.json"),
+        today_fn=lambda: "2026-05-15",
+    )
+
+    def fake_wave3(**kwargs):
+        backup_paths = {
+            ledger_csv_path: ledger_csv_path.parent / f"{ledger_csv_path.name}.bak",
+            canonical_csv_path: canonical_csv_path.parent / f"{canonical_csv_path.name}.bak",
+            trace_json_path: trace_json_path.parent / f"{trace_json_path.name}.bak",
+        }
+        assert backup_paths[ledger_csv_path].read_text(encoding="utf-8") == original_ledger
+        assert backup_paths[canonical_csv_path].read_text(encoding="utf-8") == original_canonical
+        assert backup_paths[trace_json_path].read_text(encoding="utf-8") == original_trace
+
+        ledger_csv_path.write_text("event_id\nNEW_LEDGER_EVENT\n", encoding="utf-8")
+        canonical_csv_path.write_text("date\n2026-05-15\n", encoding="utf-8")
+        trace_json_path.write_text(json.dumps({"trace": "after"}), encoding="utf-8")
+
+    with patch("etl.redemption_fetcher.run_redemption_wave3_pipeline", side_effect=fake_wave3):
+        result = fetcher.run_redemption_sync_pipeline()
+
+    assert result.status == "OK"
+    assert not (ledger_csv_path.parent / f"{ledger_csv_path.name}.bak").exists()
+    assert not (canonical_csv_path.parent / f"{canonical_csv_path.name}.bak").exists()
+    assert not (trace_json_path.parent / f"{trace_json_path.name}.bak").exists()
+    assert ledger_csv_path.read_text(encoding="utf-8") == "event_id\nNEW_LEDGER_EVENT\n"
+    assert canonical_csv_path.read_text(encoding="utf-8") == "date\n2026-05-15\n"
+    assert json.loads(trace_json_path.read_text(encoding="utf-8")) == {"trace": "after"}
+
+
+def test_run_redemption_sync_pipeline_rolls_back_truth_source_files_and_deletes_temporary_fetch_outputs_on_wave3_failure(tmp_path):
+    import_csv_path = tmp_path / "data" / "import.csv"
+    ledger_csv_path = tmp_path / "data" / "ledger.csv"
+    canonical_csv_path = tmp_path / "data" / "canonical.csv"
+    trace_json_path = tmp_path / "data" / "trace.json"
+    rejected_trace_path = tmp_path / "data" / "rejected.json"
+
+    original_ledger = "event_id\nOLD_LEDGER_EVENT\n"
+    original_trace = json.dumps({"trace": "before"})
+
+    ledger_csv_path.parent.mkdir(parents=True, exist_ok=True)
+    ledger_csv_path.write_text(original_ledger, encoding="utf-8")
+    trace_json_path.write_text(original_trace, encoding="utf-8")
+
+    provider = StubProvider(
+        result=_mapped_result(
+            df_rows=[
+                {
+                    "source_native_event_id": "118033SH_20260514",
+                    "bond_code": "118033",
+                    "announcement_date": "2026-05-14",
+                    "delisting_date": "2026-06-15",
+                    "source": "tushare",
+                    "updated_at": "2026-05-14T10:00:00Z",
+                }
+            ],
+            filtered_snapshot_ids=["118033SH_20260514"],
+            rejected_duplicates=[{"ts_code": "118033.SH", "ann_date": "20260514"}],
+        ),
+        trade_calendar_result=["2026-05-15"],
+    )
+
+    fetcher = RedemptionFetcher(
+        provider=provider,
+        import_csv_path=str(import_csv_path),
+        ledger_csv_path=str(ledger_csv_path),
+        canonical_csv_path=str(canonical_csv_path),
+        trace_json_path=str(trace_json_path),
+        rejected_trace_path=str(rejected_trace_path),
+        state_path=str(tmp_path / "data" / "state.json"),
+        freshness_report_path=str(tmp_path / "data" / "freshness.json"),
+        today_fn=lambda: "2026-05-15",
+    )
+
+    def fake_wave3(**kwargs):
+        ledger_csv_path.write_text("event_id\nPARTIAL_LEDGER_EVENT\n", encoding="utf-8")
+        canonical_csv_path.write_text("date\n2026-05-15\n", encoding="utf-8")
+        trace_json_path.write_text(json.dumps({"trace": "partial"}), encoding="utf-8")
+        raise RuntimeError("wave3 exploded")
+
+    with patch("etl.redemption_fetcher.run_redemption_wave3_pipeline", side_effect=fake_wave3):
+        result = fetcher.run_redemption_sync_pipeline()
+
+    assert result == PipelineResult(
+        success=False,
+        status="WAVE3_FAILED",
+        ingress_count=1,
+        ledger_event_count=0,
+        canonical_date_count=0,
+        disappearance_warning=None,
+    )
+    assert ledger_csv_path.read_text(encoding="utf-8") == original_ledger
+    assert not canonical_csv_path.exists()
+    assert trace_json_path.read_text(encoding="utf-8") == original_trace
+    assert not import_csv_path.exists()
+    assert not rejected_trace_path.exists()
+    assert not (ledger_csv_path.parent / f"{ledger_csv_path.name}.bak").exists()
+    assert not (canonical_csv_path.parent / f"{canonical_csv_path.name}.bak").exists()
+    assert not (trace_json_path.parent / f"{trace_json_path.name}.bak").exists()
+
+
+def test_run_redemption_sync_pipeline_does_not_advance_tracker_or_write_post_failure_freshness_report_on_wave3_failure(tmp_path):
+    import_csv_path = tmp_path / "data" / "import.csv"
+    ledger_csv_path = tmp_path / "data" / "ledger.csv"
+    canonical_csv_path = tmp_path / "data" / "canonical.csv"
+    trace_json_path = tmp_path / "data" / "trace.json"
+    state_path = tmp_path / "data" / "state.json"
+    freshness_report_path = tmp_path / "data" / "freshness.json"
+
+    for path, content in [
+        (ledger_csv_path, "event_id\nOLD_LEDGER_EVENT\n"),
+        (canonical_csv_path, "date\n2026-05-14\n"),
+        (trace_json_path, json.dumps({"trace": "before"})),
+        (
+            state_path,
+            json.dumps(
+                {
+                    "last_successful_sync": "2026-05-14T00:00:00Z",
+                    "version": STATE_TRACKER_VERSION,
+                    "previous_id_set": ["OLD_BASELINE_EVENT"],
+                }
+            ),
+        ),
+        (
+            freshness_report_path,
+            json.dumps(
+                {
+                    "generated_at": "2026-05-14T00:00:00Z",
+                    "pipeline_status": "NORMAL",
+                    "empty_snapshot_warning": None,
+                    "disappearance_warning": {"missing_ids": ["OLD_BASELINE_EVENT"]},
+                }
+            ),
+        ),
+    ]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    original_state_bytes = state_path.read_bytes()
+    original_freshness_bytes = freshness_report_path.read_bytes()
+
+    provider = StubProvider(
+        result=_mapped_result(
+            df_rows=[
+                {
+                    "source_native_event_id": "118033SH_20260514",
+                    "bond_code": "118033",
+                    "announcement_date": "2026-05-14",
+                    "delisting_date": "2026-06-15",
+                    "source": "tushare",
+                    "updated_at": "2026-05-14T10:00:00Z",
+                }
+            ],
+            filtered_snapshot_ids=["118033SH_20260514"],
+            rejected_duplicates=[],
+        ),
+        trade_calendar_result=["2026-05-15"],
+    )
+
+    fetcher = RedemptionFetcher(
+        provider=provider,
+        import_csv_path=str(import_csv_path),
+        ledger_csv_path=str(ledger_csv_path),
+        canonical_csv_path=str(canonical_csv_path),
+        trace_json_path=str(trace_json_path),
+        rejected_trace_path=str(tmp_path / "data" / "rejected.json"),
+        state_path=str(state_path),
+        freshness_report_path=str(freshness_report_path),
+        today_fn=lambda: "2026-05-15",
+    )
+
+    def fake_wave3(**kwargs):
+        ledger_csv_path.write_text("event_id\nPARTIAL_LEDGER_EVENT\n", encoding="utf-8")
+        canonical_csv_path.write_text("date\n2026-05-15\n", encoding="utf-8")
+        trace_json_path.write_text(json.dumps({"trace": "partial"}), encoding="utf-8")
+        raise RuntimeError("wave3 exploded")
+
+    with patch("etl.redemption_fetcher.run_redemption_wave3_pipeline", side_effect=fake_wave3):
+        result = fetcher.run_redemption_sync_pipeline()
+
+    assert result.success is False
+    assert result.status == "WAVE3_FAILED"
+    assert state_path.read_bytes() == original_state_bytes
+    assert freshness_report_path.read_bytes() == original_freshness_bytes
+    with open(state_path, "r", encoding="utf-8") as handle:
+        assert json.load(handle) == {
+            "last_successful_sync": "2026-05-14T00:00:00Z",
+            "version": STATE_TRACKER_VERSION,
+            "previous_id_set": ["OLD_BASELINE_EVENT"],
+        }
