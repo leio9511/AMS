@@ -54,6 +54,15 @@ class RedemptionFetcher:
         if parent:
             os.makedirs(parent, exist_ok=True)
 
+    @staticmethod
+    def _validate_import_columns(df: pd.DataFrame):
+        missing_columns = [column for column in IMPORT_COLUMNS if column not in df.columns]
+        if missing_columns:
+            raise ValueError(
+                "Mapped redemption result missing required import columns: "
+                + ", ".join(missing_columns)
+            )
+
     @classmethod
     def _reserve_temp_path(cls, target_path: str, suffix: str) -> str:
         cls._ensure_parent_dir(target_path)
@@ -129,32 +138,22 @@ class RedemptionFetcher:
     def fetch_and_build_import_csv(self, import_csv_path: Optional[str] = None) -> FetchResult:
         target_import_csv_path = import_csv_path or self.import_csv_path
 
-        try:
-            mapped_result = self.provider.fetch_and_map_redemption_events(
-                BOOTSTRAP_START_DATE,
-                self._today_str(),
-            )
-        except Exception:
-            return FetchResult(
-                success=False,
-                status="API_FAILED",
-                row_count=0,
-                rejected_count=0,
-            )
+        mapped_result = self.provider.fetch_and_map_redemption_events(
+            BOOTSTRAP_START_DATE,
+            self._today_str(),
+        )
 
         self.filtered_snapshot_ids = list(mapped_result.filtered_snapshot_ids)
         admitted_df = mapped_result.df.copy()
         rejected_duplicates = list(mapped_result.rejected_duplicates)
 
         if admitted_df.empty:
-            return FetchResult(
-                success=False,
-                status="EMPTY_ABORT",
-                row_count=0,
-                rejected_count=len(rejected_duplicates),
+            raise NotImplementedError(
+                "Empty mapped redemption result handling is deferred to a later slice."
             )
 
-        admitted_df = admitted_df.reindex(columns=IMPORT_COLUMNS).fillna("")
+        self._validate_import_columns(admitted_df)
+        admitted_df = admitted_df[IMPORT_COLUMNS].fillna("")
         staged_import_csv_path = self._stage_csv(admitted_df, target_import_csv_path)
         staged_rejected_trace_path = self._stage_json(
             rejected_duplicates,

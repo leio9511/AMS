@@ -9,7 +9,7 @@ from etl.redemption_fetcher import (
     FetchResult,
     RedemptionFetcher,
 )
-from etl.tushare_provider import MappedRedemptionResult
+from etl.tushare_provider import IMPORT_COLUMNS, MappedRedemptionResult
 
 
 class StubProvider:
@@ -251,3 +251,108 @@ def test_fetch_and_build_import_csv_does_not_publish_new_import_csv_if_rejected_
 
     with open(rejected_trace_path, "r", encoding="utf-8") as handle:
         assert json.load(handle) == [{"stale": True}]
+
+
+def test_fetch_and_build_import_csv_raises_when_provider_result_is_empty_placeholder_scaffolding(tmp_path):
+    provider = StubProvider(
+        result=_mapped_result(
+            df_rows=[],
+            filtered_snapshot_ids=["118033SH_20260514"],
+            rejected_duplicates=[],
+        )
+    )
+
+    fetcher = RedemptionFetcher(
+        provider=provider,
+        import_csv_path=str(tmp_path / "import.csv"),
+        rejected_trace_path=str(tmp_path / "rejected.json"),
+        today_fn=lambda: "2026-05-15",
+    )
+
+    with pytest.raises(NotImplementedError, match="deferred to a later slice"):
+        fetcher.fetch_and_build_import_csv()
+
+    assert fetcher.filtered_snapshot_ids == ["118033SH_20260514"]
+    assert not (tmp_path / "import.csv").exists()
+    assert not (tmp_path / "rejected.json").exists()
+
+
+def test_fetch_and_build_import_csv_raises_provider_errors_instead_of_normalizing_them(tmp_path):
+    provider = StubProvider(error=RuntimeError("provider exploded"))
+    fetcher = RedemptionFetcher(
+        provider=provider,
+        import_csv_path=str(tmp_path / "import.csv"),
+        rejected_trace_path=str(tmp_path / "rejected.json"),
+        today_fn=lambda: "2026-05-15",
+    )
+
+    with pytest.raises(RuntimeError, match="provider exploded"):
+        fetcher.fetch_and_build_import_csv()
+
+    assert provider.calls == [(BOOTSTRAP_START_DATE, "2026-05-15")]
+    assert not (tmp_path / "import.csv").exists()
+    assert not (tmp_path / "rejected.json").exists()
+
+
+def test_fetch_and_build_import_csv_raises_when_provider_omits_required_import_columns(tmp_path):
+    incomplete_rows = [
+        {
+            "source_native_event_id": "118033SH_20260514",
+            "bond_code": "118033",
+            "announcement_date": "2026-05-14",
+            "delisting_date": "2026-06-15",
+            "source": "tushare",
+        }
+    ]
+    provider = StubProvider(
+        result=_mapped_result(
+            df_rows=incomplete_rows,
+            filtered_snapshot_ids=["118033SH_20260514"],
+            rejected_duplicates=[],
+        )
+    )
+    fetcher = RedemptionFetcher(
+        provider=provider,
+        import_csv_path=str(tmp_path / "import.csv"),
+        rejected_trace_path=str(tmp_path / "rejected.json"),
+        today_fn=lambda: "2026-05-15",
+    )
+
+    with pytest.raises(ValueError, match="missing required import columns: updated_at"):
+        fetcher.fetch_and_build_import_csv()
+
+    assert not (tmp_path / "import.csv").exists()
+    assert not (tmp_path / "rejected.json").exists()
+
+
+def test_fetch_and_build_import_csv_success_path_still_requires_all_import_columns(tmp_path):
+    provider = StubProvider(
+        result=_mapped_result(
+            df_rows=[
+                {
+                    column: value
+                    for column, value in {
+                        "source_native_event_id": "118033SH_20260514",
+                        "bond_code": "118033",
+                        "announcement_date": "2026-05-14",
+                        "delisting_date": "2026-06-15",
+                        "source": "tushare",
+                        "updated_at": "2026-05-14T10:00:00Z",
+                    }.items()
+                    if column in IMPORT_COLUMNS
+                }
+            ],
+            filtered_snapshot_ids=["118033SH_20260514"],
+            rejected_duplicates=[],
+        )
+    )
+    fetcher = RedemptionFetcher(
+        provider=provider,
+        import_csv_path=str(tmp_path / "import.csv"),
+        rejected_trace_path=str(tmp_path / "rejected.json"),
+        today_fn=lambda: "2026-05-15",
+    )
+
+    result = fetcher.fetch_and_build_import_csv()
+
+    assert result == FetchResult(success=True, status="OK", row_count=1, rejected_count=0)
