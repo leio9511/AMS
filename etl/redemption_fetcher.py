@@ -402,9 +402,9 @@ class RedemptionFetcher:
             disappearance_warning=disappearance_warning,
         )
 
-        current_previous_id_set = sorted(
-            {str(item) for item in self.filtered_snapshot_ids if str(item)}
-        )
+        current_previous_id_set = [
+            str(item) for item in self.filtered_snapshot_ids if str(item)
+        ]
         last_successful_sync = self._utc_timestamp()
         self._write_state_tracker(
             previous_id_set=current_previous_id_set,

@@ -702,7 +702,11 @@ def test_run_redemption_sync_pipeline_updates_tracker_and_writes_normal_freshnes
                     "updated_at": "2026-05-14T10:00:00Z",
                 },
             ],
-            filtered_snapshot_ids=["127001SZ_20260515", "118033SH_20260514"],
+            filtered_snapshot_ids=[
+                "127001SZ_20260515",
+                "118033SH_20260514",
+                "127001SZ_20260515",
+            ],
             rejected_duplicates=[],
         ),
         trade_calendar_result=["2026-05-14", "2026-05-15"],
@@ -758,8 +762,203 @@ def test_run_redemption_sync_pipeline_updates_tracker_and_writes_normal_freshnes
     with open(state_path, "r", encoding="utf-8") as handle:
         tracker_payload = json.load(handle)
     assert tracker_payload["version"] == STATE_TRACKER_VERSION
-    assert tracker_payload["previous_id_set"] == ["118033SH_20260514", "127001SZ_20260515"]
+    assert tracker_payload["previous_id_set"] == [
+        "127001SZ_20260515",
+        "118033SH_20260514",
+        "127001SZ_20260515",
+    ]
     assert tracker_payload["last_successful_sync"].endswith("Z")
+
+
+def test_run_redemption_sync_pipeline_persists_exact_filtered_snapshot_ids_in_tracker_after_successful_run(tmp_path):
+    ledger_csv_path = tmp_path / "data" / "ledger.csv"
+    canonical_csv_path = tmp_path / "data" / "canonical.csv"
+    trace_json_path = tmp_path / "data" / "trace.json"
+    state_path = tmp_path / "data" / "state.json"
+    freshness_report_path = tmp_path / "data" / "freshness.json"
+
+    provider = StubProvider(
+        result=_mapped_result(
+            df_rows=[
+                {
+                    "source_native_event_id": "127001SZ_20260515",
+                    "bond_code": "127001",
+                    "announcement_date": "2026-05-15",
+                    "delisting_date": "2026-06-20",
+                    "source": "tushare",
+                    "updated_at": "2026-05-14T10:00:00Z",
+                }
+            ],
+            filtered_snapshot_ids=[
+                "127001SZ_20260515",
+                "118033SH_20260514",
+                "127001SZ_20260515",
+                "110001SH_20260516",
+            ],
+            rejected_duplicates=[
+                {"ts_code": "127001.SZ", "ann_date": "20260515", "call_type": "强赎"},
+            ],
+        ),
+        trade_calendar_result=["2026-05-15"],
+    )
+
+    fetcher = RedemptionFetcher(
+        provider=provider,
+        import_csv_path=str(tmp_path / "data" / "import.csv"),
+        ledger_csv_path=str(ledger_csv_path),
+        canonical_csv_path=str(canonical_csv_path),
+        trace_json_path=str(trace_json_path),
+        rejected_trace_path=str(tmp_path / "data" / "rejected.json"),
+        state_path=str(state_path),
+        freshness_report_path=str(freshness_report_path),
+        today_fn=lambda: "2026-05-15",
+    )
+
+    def fake_wave3(**kwargs):
+        pd.DataFrame([{"event_id": "tushare:127001SZ_20260515"}]).to_csv(ledger_csv_path, index=False)
+        pd.DataFrame([{"date": "2026-05-15"}]).to_csv(canonical_csv_path, index=False)
+        trace_json_path.write_text(json.dumps({"ok": True}), encoding="utf-8")
+
+    with patch("etl.redemption_fetcher.run_redemption_wave3_pipeline", side_effect=fake_wave3):
+        result = fetcher.run_redemption_sync_pipeline()
+
+    assert result.success is True
+    with open(state_path, "r", encoding="utf-8") as handle:
+        tracker_payload = json.load(handle)
+    assert tracker_payload["previous_id_set"] == [
+        "127001SZ_20260515",
+        "118033SH_20260514",
+        "127001SZ_20260515",
+        "110001SH_20260516",
+    ]
+
+
+def test_read_write_state_tracker_round_trip_preserves_duplicate_observation_ids_and_order(tmp_path):
+    state_path = tmp_path / "data" / "state.json"
+    fetcher = RedemptionFetcher(
+        provider=StubProvider(),
+        state_path=str(state_path),
+    )
+
+    original_previous_id_set = [
+        "127001SZ_20260515",
+        "118033SH_20260514",
+        "127001SZ_20260515",
+        110001,
+    ]
+
+    fetcher._write_state_tracker(
+        previous_id_set=original_previous_id_set,
+        last_successful_sync="2026-05-15T00:00:00Z",
+    )
+
+    with open(state_path, "r", encoding="utf-8") as handle:
+        persisted_payload = json.load(handle)
+    assert persisted_payload["previous_id_set"] == [
+        "127001SZ_20260515",
+        "118033SH_20260514",
+        "127001SZ_20260515",
+        "110001",
+    ]
+
+    tracker_state = fetcher._read_state_tracker()
+    assert tracker_state["previous_id_set"] == [
+        "127001SZ_20260515",
+        "118033SH_20260514",
+        "127001SZ_20260515",
+        "110001",
+    ]
+
+
+def test_run_redemption_sync_pipeline_disappearance_detection_still_uses_set_diff_after_exact_baseline_persistence(tmp_path):
+    ledger_csv_path = tmp_path / "data" / "ledger.csv"
+    canonical_csv_path = tmp_path / "data" / "canonical.csv"
+    trace_json_path = tmp_path / "data" / "trace.json"
+    state_path = tmp_path / "data" / "state.json"
+    freshness_report_path = tmp_path / "data" / "freshness.json"
+
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "last_successful_sync": "2026-05-14T00:00:00Z",
+                "version": STATE_TRACKER_VERSION,
+                "previous_id_set": [
+                    "127001SZ_20260515",
+                    "118033SH_20260514",
+                    "127001SZ_20260515",
+                    "110001SH_20260516",
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    provider = StubProvider(
+        result=_mapped_result(
+            df_rows=[
+                {
+                    "source_native_event_id": "127001SZ_20260515",
+                    "bond_code": "127001",
+                    "announcement_date": "2026-05-15",
+                    "delisting_date": "2026-06-20",
+                    "source": "tushare",
+                    "updated_at": "2026-05-14T10:00:00Z",
+                },
+                {
+                    "source_native_event_id": "118033SH_20260514",
+                    "bond_code": "118033",
+                    "announcement_date": "2026-05-14",
+                    "delisting_date": "2026-06-15",
+                    "source": "tushare",
+                    "updated_at": "2026-05-14T10:00:00Z",
+                },
+            ],
+            filtered_snapshot_ids=[
+                "127001SZ_20260515",
+                "118033SH_20260514",
+                "127001SZ_20260515",
+            ],
+            rejected_duplicates=[],
+        ),
+        trade_calendar_result=["2026-05-15"],
+    )
+
+    fetcher = RedemptionFetcher(
+        provider=provider,
+        import_csv_path=str(tmp_path / "data" / "import.csv"),
+        ledger_csv_path=str(ledger_csv_path),
+        canonical_csv_path=str(canonical_csv_path),
+        trace_json_path=str(trace_json_path),
+        rejected_trace_path=str(tmp_path / "data" / "rejected.json"),
+        state_path=str(state_path),
+        freshness_report_path=str(freshness_report_path),
+        today_fn=lambda: "2026-05-15",
+    )
+
+    def fake_wave3(**kwargs):
+        pd.DataFrame(
+            [
+                {"event_id": "tushare:127001SZ_20260515"},
+                {"event_id": "tushare:118033SH_20260514"},
+            ]
+        ).to_csv(ledger_csv_path, index=False)
+        pd.DataFrame([{"date": "2026-05-15"}]).to_csv(canonical_csv_path, index=False)
+        trace_json_path.write_text(json.dumps({"ok": True}), encoding="utf-8")
+
+    with patch("etl.redemption_fetcher.run_redemption_wave3_pipeline", side_effect=fake_wave3):
+        result = fetcher.run_redemption_sync_pipeline()
+
+    expected_warning = {
+        "missing_ids": ["110001SH_20260516"],
+        "previous_count": 3,
+        "current_count": 2,
+    }
+    assert result.disappearance_warning == expected_warning
+
+    with open(freshness_report_path, "r", encoding="utf-8") as handle:
+        freshness_payload = json.load(handle)
+    assert freshness_payload["disappearance_warning"] == expected_warning
 
 
 def test_run_redemption_sync_pipeline_writes_disappearance_warning_from_previous_id_set_diff(tmp_path):
