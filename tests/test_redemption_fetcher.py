@@ -6,6 +6,8 @@ import pytest
 
 from etl.redemption_fetcher import (
     BOOTSTRAP_START_DATE,
+    EMPTY_SNAPSHOT_WARNING_MESSAGE,
+    EMPTY_SNAPSHOT_WARNING_SUGGESTED_ACTION,
     FetchResult,
     PipelineResult,
     RedemptionFetcher,
@@ -446,6 +448,228 @@ def test_fetch_and_build_import_csv_success_path_still_requires_all_import_colum
     result = fetcher.fetch_and_build_import_csv()
 
     assert result == FetchResult(success=True, status="OK", row_count=1, rejected_count=0)
+
+
+def test_run_redemption_sync_pipeline_writes_empty_snapshot_warning_and_preserves_tracker_baseline_on_empty_abort(tmp_path):
+    import_csv_path = tmp_path / "data" / "import.csv"
+    ledger_csv_path = tmp_path / "data" / "ledger.csv"
+    canonical_csv_path = tmp_path / "data" / "canonical.csv"
+    trace_json_path = tmp_path / "data" / "trace.json"
+    rejected_trace_path = tmp_path / "data" / "rejected.json"
+    state_path = tmp_path / "data" / "state.json"
+    freshness_report_path = tmp_path / "data" / "freshness.json"
+
+    for path, content in [
+        (
+            import_csv_path,
+            "source_native_event_id,bond_code,announcement_date,delisting_date,source,updated_at\n"
+            "OLD_EVENT,110001,2026-05-01,2026-05-10,tushare,2026-05-01T00:00:00Z\n",
+        ),
+        (ledger_csv_path, "event_id\nOLD_LEDGER_EVENT\n"),
+        (canonical_csv_path, "date\n2026-05-14\n"),
+        (trace_json_path, json.dumps({"trace": "keep"})),
+        (rejected_trace_path, json.dumps([{"rejected": "keep"}])),
+        (
+            state_path,
+            json.dumps(
+                {
+                    "last_successful_sync": "2026-05-14T00:00:00Z",
+                    "version": STATE_TRACKER_VERSION,
+                    "previous_id_set": ["118033SH_20260514", "127001SZ_20260515"],
+                }
+            ),
+        ),
+        (
+            freshness_report_path,
+            json.dumps(
+                {
+                    "generated_at": "2026-05-14T00:00:00Z",
+                    "pipeline_status": "NORMAL",
+                    "empty_snapshot_warning": None,
+                    "disappearance_warning": {"missing_ids": ["OLD"]},
+                }
+            ),
+        ),
+    ]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    provider = StubProvider(
+        result=_mapped_result(
+            df_rows=[],
+            filtered_snapshot_ids=[],
+            rejected_duplicates=[],
+        ),
+        trade_calendar_result=["2026-05-14", "2026-05-15"],
+    )
+
+    fetcher = RedemptionFetcher(
+        provider=provider,
+        import_csv_path=str(import_csv_path),
+        ledger_csv_path=str(ledger_csv_path),
+        canonical_csv_path=str(canonical_csv_path),
+        trace_json_path=str(trace_json_path),
+        rejected_trace_path=str(rejected_trace_path),
+        state_path=str(state_path),
+        freshness_report_path=str(freshness_report_path),
+        today_fn=lambda: "2026-05-15",
+    )
+
+    with patch("etl.redemption_fetcher.run_redemption_wave3_pipeline") as wave3_mock:
+        result = fetcher.run_redemption_sync_pipeline()
+
+    assert result == PipelineResult(
+        success=False,
+        status="EMPTY_ABORT",
+        ingress_count=0,
+        ledger_event_count=0,
+        canonical_date_count=0,
+        disappearance_warning=None,
+    )
+    assert provider.calls == [(BOOTSTRAP_START_DATE, "2026-05-15")]
+    assert provider.trade_calendar_calls == []
+    wave3_mock.assert_not_called()
+
+    with open(freshness_report_path, "r", encoding="utf-8") as handle:
+        freshness_payload = json.load(handle)
+    assert freshness_payload["pipeline_status"] == "EMPTY_ABORT"
+    assert freshness_payload["empty_snapshot_warning"] == {
+        "message": EMPTY_SNAPSHOT_WARNING_MESSAGE,
+        "suggested_action": EMPTY_SNAPSHOT_WARNING_SUGGESTED_ACTION,
+    }
+    assert freshness_payload["disappearance_warning"] is None
+
+    with open(state_path, "r", encoding="utf-8") as handle:
+        tracker_payload = json.load(handle)
+    assert tracker_payload == {
+        "last_successful_sync": "2026-05-14T00:00:00Z",
+        "version": STATE_TRACKER_VERSION,
+        "previous_id_set": ["118033SH_20260514", "127001SZ_20260515"],
+    }
+
+    written_import_df = pd.read_csv(import_csv_path, dtype=str, keep_default_na=False)
+    assert written_import_df["source_native_event_id"].tolist() == ["OLD_EVENT"]
+    written_ledger_df = pd.read_csv(ledger_csv_path, dtype=str, keep_default_na=False)
+    assert written_ledger_df["event_id"].tolist() == ["OLD_LEDGER_EVENT"]
+    written_canonical_df = pd.read_csv(canonical_csv_path, dtype=str, keep_default_na=False)
+    assert written_canonical_df["date"].tolist() == ["2026-05-14"]
+    with open(trace_json_path, "r", encoding="utf-8") as handle:
+        assert json.load(handle) == {"trace": "keep"}
+    with open(rejected_trace_path, "r", encoding="utf-8") as handle:
+        assert json.load(handle) == [{"rejected": "keep"}]
+
+
+
+def test_run_redemption_sync_pipeline_returns_fetch_failed_without_invoking_trade_calendar_or_wave3(tmp_path):
+    import_csv_path = tmp_path / "data" / "import.csv"
+    ledger_csv_path = tmp_path / "data" / "ledger.csv"
+    canonical_csv_path = tmp_path / "data" / "canonical.csv"
+    trace_json_path = tmp_path / "data" / "trace.json"
+    rejected_trace_path = tmp_path / "data" / "rejected.json"
+    state_path = tmp_path / "data" / "state.json"
+    freshness_report_path = tmp_path / "data" / "freshness.json"
+
+    provider = StubProvider(error=RuntimeError("provider exploded"), trade_calendar_result=["2026-05-14"])
+    fetcher = RedemptionFetcher(
+        provider=provider,
+        import_csv_path=str(import_csv_path),
+        ledger_csv_path=str(ledger_csv_path),
+        canonical_csv_path=str(canonical_csv_path),
+        trace_json_path=str(trace_json_path),
+        rejected_trace_path=str(rejected_trace_path),
+        state_path=str(state_path),
+        freshness_report_path=str(freshness_report_path),
+        today_fn=lambda: "2026-05-15",
+    )
+
+    with patch("etl.redemption_fetcher.run_redemption_wave3_pipeline") as wave3_mock:
+        result = fetcher.run_redemption_sync_pipeline()
+
+    assert result == PipelineResult(
+        success=False,
+        status="FETCH_FAILED",
+        ingress_count=0,
+        ledger_event_count=0,
+        canonical_date_count=0,
+        disappearance_warning=None,
+    )
+    assert provider.calls == [(BOOTSTRAP_START_DATE, "2026-05-15")]
+    assert provider.trade_calendar_calls == []
+    wave3_mock.assert_not_called()
+
+
+
+def test_run_redemption_sync_pipeline_leaves_existing_outputs_unchanged_on_fetch_failed(tmp_path):
+    import_csv_path = tmp_path / "data" / "import.csv"
+    ledger_csv_path = tmp_path / "data" / "ledger.csv"
+    canonical_csv_path = tmp_path / "data" / "canonical.csv"
+    trace_json_path = tmp_path / "data" / "trace.json"
+    rejected_trace_path = tmp_path / "data" / "rejected.json"
+    state_path = tmp_path / "data" / "state.json"
+    freshness_report_path = tmp_path / "data" / "freshness.json"
+
+    initial_artifacts = {
+        import_csv_path: (
+            "source_native_event_id,bond_code,announcement_date,delisting_date,source,updated_at\n"
+            "OLD_EVENT,110001,2026-05-01,2026-05-10,tushare,2026-05-01T00:00:00Z\n"
+        ),
+        ledger_csv_path: "event_id\nOLD_LEDGER_EVENT\n",
+        canonical_csv_path: "date\n2026-05-14\n",
+        trace_json_path: json.dumps({"trace": "keep"}),
+        rejected_trace_path: json.dumps([{"rejected": "keep"}]),
+        state_path: json.dumps(
+            {
+                "last_successful_sync": "2026-05-14T00:00:00Z",
+                "version": STATE_TRACKER_VERSION,
+                "previous_id_set": ["118033SH_20260514", "127001SZ_20260515"],
+            }
+        ),
+        freshness_report_path: json.dumps(
+            {
+                "generated_at": "2026-05-14T00:00:00Z",
+                "pipeline_status": "NORMAL",
+                "empty_snapshot_warning": None,
+                "disappearance_warning": {"missing_ids": ["OLD"]},
+            }
+        ),
+    }
+
+    expected_bytes = {}
+    for path, content in initial_artifacts.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        expected_bytes[path] = path.read_bytes()
+
+    provider = StubProvider(error=RuntimeError("provider exploded"))
+    fetcher = RedemptionFetcher(
+        provider=provider,
+        import_csv_path=str(import_csv_path),
+        ledger_csv_path=str(ledger_csv_path),
+        canonical_csv_path=str(canonical_csv_path),
+        trace_json_path=str(trace_json_path),
+        rejected_trace_path=str(rejected_trace_path),
+        state_path=str(state_path),
+        freshness_report_path=str(freshness_report_path),
+        today_fn=lambda: "2026-05-15",
+    )
+
+    with patch("etl.redemption_fetcher.run_redemption_wave3_pipeline") as wave3_mock:
+        result = fetcher.run_redemption_sync_pipeline()
+
+    assert result == PipelineResult(
+        success=False,
+        status="FETCH_FAILED",
+        ingress_count=0,
+        ledger_event_count=0,
+        canonical_date_count=0,
+        disappearance_warning=None,
+    )
+    assert provider.trade_calendar_calls == []
+    wave3_mock.assert_not_called()
+
+    for path, original_bytes in expected_bytes.items():
+        assert path.read_bytes() == original_bytes
+
 
 
 def test_run_redemption_sync_pipeline_updates_tracker_and_writes_normal_freshness_report_after_successful_non_empty_run(tmp_path):

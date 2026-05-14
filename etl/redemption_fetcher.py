@@ -23,6 +23,8 @@ TRACKER_LAST_SUCCESSFUL_SYNC = "last_successful_sync"
 TRACKER_VERSION = "version"
 TRACKER_PREVIOUS_ID_SET = "previous_id_set"
 STATE_TRACKER_VERSION = "1.0"
+EMPTY_SNAPSHOT_WARNING_MESSAGE = "全量历史 pull 返回 0 行，预期 ~2000 行"
+EMPTY_SNAPSHOT_WARNING_SUGGESTED_ACTION = "检查 TuShare API 状态，确认数据是否正确"
 
 
 @dataclass
@@ -190,11 +192,16 @@ class RedemptionFetcher:
         staged_state_path = self._stage_json(payload, self.state_path)
         self._publish_staged_artifacts([(staged_state_path, self.state_path)])
 
-    def _write_freshness_report(self, pipeline_status: str, disappearance_warning: dict | None):
+    def _write_freshness_report(
+        self,
+        pipeline_status: str,
+        disappearance_warning: dict | None,
+        empty_snapshot_warning: dict | None = None,
+    ):
         payload = {
             "generated_at": self._utc_timestamp(),
             "pipeline_status": pipeline_status,
-            "empty_snapshot_warning": None,
+            "empty_snapshot_warning": empty_snapshot_warning,
             "disappearance_warning": disappearance_warning,
         }
         staged_report_path = self._stage_json(payload, self.freshness_report_path)
@@ -217,6 +224,15 @@ class RedemptionFetcher:
             "missing_ids": missing_ids,
             "previous_count": len(previous_ids),
             "current_count": len(current_ids),
+        }
+
+    def _build_empty_snapshot_warning(self) -> dict | None:
+        if self.filtered_snapshot_ids:
+            return None
+
+        return {
+            "message": EMPTY_SNAPSHOT_WARNING_MESSAGE,
+            "suggested_action": EMPTY_SNAPSHOT_WARNING_SUGGESTED_ACTION,
         }
 
     def fetch_and_build_import_csv(self, import_csv_path: Optional[str] = None) -> FetchResult:
@@ -280,6 +296,13 @@ class RedemptionFetcher:
     def run_redemption_sync_pipeline(self) -> PipelineResult:
         fetch_result = self.fetch_and_build_import_csv()
         if not fetch_result.success:
+            if fetch_result.status == "EMPTY_ABORT":
+                self._write_freshness_report(
+                    pipeline_status="EMPTY_ABORT",
+                    disappearance_warning=None,
+                    empty_snapshot_warning=self._build_empty_snapshot_warning(),
+                )
+
             return PipelineResult(
                 success=False,
                 status="EMPTY_ABORT" if fetch_result.status == "EMPTY_ABORT" else "FETCH_FAILED",
