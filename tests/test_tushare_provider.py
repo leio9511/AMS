@@ -1,10 +1,11 @@
+import json
+
 import pandas as pd
 import pytest
 from unittest.mock import MagicMock
 
 from etl.cb_provider_base import DataProviderAuthError, DataProviderQuotaError
-from etl.redemption_ledger import IMPORT_COLUMNS
-from etl.tushare_provider import CALL_TYPE_REDEEM, SOURCE_TUSHARE, TuShareProvider
+from etl.tushare_provider import CALL_TYPE_REDEEM, IMPORT_COLUMNS, SOURCE_TUSHARE, TuShareProvider
 
 
 def test_tushare_cb_basic_mapping():
@@ -145,7 +146,25 @@ def test_fetch_and_map_redemption_events_rejects_all_rows_for_duplicate_source_n
     assert result.df["source_native_event_id"].tolist() == ["127001SZ_20260515"]
     assert len(result.rejected_duplicates) == 2
     assert {row["some_raw_field"] for row in result.rejected_duplicates} == {"alpha", "beta"}
-    assert all(row["source_native_event_id"] == "118033SH_20260514" for row in result.rejected_duplicates)
+    assert all("source_native_event_id" not in row for row in result.rejected_duplicates)
+    assert all("code" not in row for row in result.rejected_duplicates)
+    assert result.rejected_duplicates == [
+        {
+            "ts_code": "118033.SH",
+            "ann_date": "20260514",
+            "call_type": CALL_TYPE_REDEEM,
+            "call_date": "20260601",
+            "some_raw_field": "alpha",
+        },
+        {
+            "ts_code": "118033.SH",
+            "ann_date": "20260514",
+            "call_type": CALL_TYPE_REDEEM,
+            "call_date": "20260603",
+            "some_raw_field": "beta",
+        },
+    ]
+    assert json.dumps(result.rejected_duplicates)
 
 
 def test_fetch_and_map_redemption_events_returns_empty_result_for_empty_or_non_redeem_snapshot():

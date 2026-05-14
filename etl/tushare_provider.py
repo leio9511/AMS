@@ -10,10 +10,17 @@ from etl.cb_provider_base import (
     DataProviderError,
     DataProviderQuotaError,
 )
-from etl.redemption_ledger import IMPORT_COLUMNS
 
 logger = logging.getLogger(__name__)
 
+IMPORT_COLUMNS = [
+    "source_native_event_id",
+    "bond_code",
+    "announcement_date",
+    "delisting_date",
+    "source",
+    "updated_at",
+]
 SOURCE_TUSHARE = "tushare"
 CALL_TYPE_REDEEM = "强赎"
 
@@ -68,6 +75,35 @@ class TuShareProvider(BaseDataProvider):
         if normalized:
             return normalized.replace("-", "")
         return raw
+
+    @staticmethod
+    def _json_safe_scalar(value):
+        if value is None:
+            return None
+
+        if hasattr(value, "item") and not isinstance(value, (str, bytes)):
+            try:
+                value = value.item()
+            except Exception:
+                pass
+
+        if pd.isna(value):
+            return ""
+
+        if isinstance(value, pd.Timestamp):
+            return value.isoformat()
+
+        if isinstance(value, (str, int, float, bool)):
+            return value
+
+        return str(value)
+
+    @classmethod
+    def _json_safe_records(cls, df: pd.DataFrame) -> list[dict]:
+        records = []
+        for record in df.to_dict(orient="records"):
+            records.append({key: cls._json_safe_scalar(value) for key, value in record.items()})
+        return records
 
     @staticmethod
     def _empty_mapped_redemption_result() -> MappedRedemptionResult:
@@ -130,23 +166,37 @@ class TuShareProvider(BaseDataProvider):
             if cb_call_df is None or cb_call_df.empty:
                 return self._empty_mapped_redemption_result()
 
-            filtered_df = cb_call_df.copy()
-            if "call_type" not in filtered_df.columns:
+            filtered_raw_df = cb_call_df.copy()
+            if "call_type" not in filtered_raw_df.columns:
                 return self._empty_mapped_redemption_result()
 
-            filtered_df = filtered_df[filtered_df["call_type"] == CALL_TYPE_REDEEM].copy()
-            if filtered_df.empty:
+            filtered_raw_df = filtered_raw_df[filtered_raw_df["call_type"] == CALL_TYPE_REDEEM].copy()
+            if filtered_raw_df.empty:
                 return self._empty_mapped_redemption_result()
 
-            filtered_df = filtered_df.fillna("")
-            filtered_df["source_native_event_id"] = filtered_df.apply(
+            filtered_raw_df = filtered_raw_df.fillna("")
+            identity_df = filtered_raw_df.copy()
+            identity_df["source_native_event_id"] = identity_df.apply(
                 lambda row: (
                     f"{str(row.get('ts_code', '')).strip().replace('.', '')}_"
                     f"{self._source_id_date_token(row.get('ann_date', ''))}"
                 ),
                 axis=1,
             )
-            filtered_snapshot_ids = filtered_df["source_native_event_id"].astype(str).tolist()
+            filtered_snapshot_ids = identity_df["source_native_event_id"].astype(str).tolist()
+
+            duplicate_mask = identity_df["source_native_event_id"].duplicated(keep=False)
+            rejected_duplicates = []
+            if duplicate_mask.any():
+                rejected_duplicates = self._json_safe_records(filtered_raw_df.loc[duplicate_mask].copy())
+                identity_df = identity_df.loc[~duplicate_mask].copy()
+
+            if identity_df.empty:
+                return MappedRedemptionResult(
+                    df=pd.DataFrame(columns=IMPORT_COLUMNS),
+                    filtered_snapshot_ids=filtered_snapshot_ids,
+                    rejected_duplicates=rejected_duplicates,
+                )
 
             cb_basic_df = self.fetch_cb_basic()
             if cb_basic_df is None or cb_basic_df.empty:
@@ -162,7 +212,7 @@ class TuShareProvider(BaseDataProvider):
                         cb_basic_df[required_column] = ""
                 cb_basic_df = cb_basic_df[["code", "delist_Date"]]
 
-            merged_df = filtered_df.merge(
+            merged_df = identity_df.merge(
                 cb_basic_df,
                 how="left",
                 left_on="ts_code",
@@ -170,7 +220,7 @@ class TuShareProvider(BaseDataProvider):
             )
             merged_df = merged_df.fillna("")
 
-            updated_at = pd.Timestamp.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            updated_at = pd.Timestamp.now("UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
             mapped_df = pd.DataFrame(
                 {
                     "source_native_event_id": merged_df["source_native_event_id"].astype(str),
@@ -187,12 +237,6 @@ class TuShareProvider(BaseDataProvider):
                 }
             )
             mapped_df = mapped_df[IMPORT_COLUMNS].fillna("")
-
-            duplicate_mask = mapped_df["source_native_event_id"].duplicated(keep=False)
-            rejected_duplicates = []
-            if duplicate_mask.any():
-                rejected_duplicates = merged_df.loc[duplicate_mask].to_dict(orient="records")
-                mapped_df = mapped_df.loc[~duplicate_mask].copy()
 
             if mapped_df.empty:
                 mapped_df = pd.DataFrame(columns=IMPORT_COLUMNS)
