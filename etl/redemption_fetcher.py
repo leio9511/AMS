@@ -256,21 +256,24 @@ class RedemptionFetcher:
         rejected_duplicates = list(mapped_result.rejected_duplicates)
 
         if admitted_df.empty:
-            if rejected_duplicates:
-                staged_rejected_trace_path = self._stage_json(
-                    rejected_duplicates,
-                    self.rejected_trace_path,
-                )
-                self._publish_staged_artifacts(
-                    [(staged_rejected_trace_path, self.rejected_trace_path)]
+            if not self.filtered_snapshot_ids:
+                if rejected_duplicates:
+                    staged_rejected_trace_path = self._stage_json(
+                        rejected_duplicates,
+                        self.rejected_trace_path,
+                    )
+                    self._publish_staged_artifacts(
+                        [(staged_rejected_trace_path, self.rejected_trace_path)]
+                    )
+
+                return FetchResult(
+                    success=False,
+                    status="EMPTY_ABORT",
+                    row_count=0,
+                    rejected_count=len(rejected_duplicates),
                 )
 
-            return FetchResult(
-                success=False,
-                status="EMPTY_ABORT",
-                row_count=0,
-                rejected_count=len(rejected_duplicates),
-            )
+            admitted_df = pd.DataFrame(columns=IMPORT_COLUMNS)
 
         self._validate_import_columns(admitted_df)
         admitted_df = admitted_df[IMPORT_COLUMNS].fillna("")

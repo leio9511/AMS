@@ -266,7 +266,7 @@ def test_fetch_and_build_import_csv_does_not_publish_new_import_csv_if_rejected_
         assert json.load(handle) == [{"stale": True}]
 
 
-def test_fetch_and_build_import_csv_returns_empty_abort_and_refreshes_rejected_trace_when_all_rows_are_rejected_as_duplicates(tmp_path):
+def test_fetch_and_build_import_csv_preserves_existing_import_and_rejected_trace_when_all_rows_are_rejected_as_duplicates(tmp_path):
     import_csv_path = tmp_path / "artifacts" / "import.csv"
     rejected_trace_path = tmp_path / "artifacts" / "rejected.json"
 
@@ -300,15 +300,16 @@ def test_fetch_and_build_import_csv_returns_empty_abort_and_refreshes_rejected_t
     result = fetcher.fetch_and_build_import_csv()
 
     assert result == FetchResult(
-        success=False,
-        status="EMPTY_ABORT",
+        success=True,
+        status="OK",
         row_count=0,
         rejected_count=2,
     )
     assert fetcher.filtered_snapshot_ids == ["118033SH_20260514", "118033SH_20260514"]
 
     written_import_df = pd.read_csv(import_csv_path, dtype=str, keep_default_na=False)
-    assert written_import_df["source_native_event_id"].tolist() == ["OLD_EVENT"]
+    assert written_import_df.empty
+    assert list(written_import_df.columns) == IMPORT_COLUMNS
 
     with open(rejected_trace_path, "r", encoding="utf-8") as handle:
         assert json.load(handle) == duplicate_payload
