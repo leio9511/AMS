@@ -2,19 +2,27 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable, Optional
 
 import pandas as pd
 
+from etl.redemption_pipeline import run_redemption_wave3_pipeline
 from etl.tushare_provider import IMPORT_COLUMNS, TuShareProvider
 
 FETCHER_STATE_PATH = "data/redemption_fetcher_state.json"
 IMPORT_CSV_PATH = "data/redemption_event_facts_import.csv"
+LEDGER_CSV_PATH = "data/redemption_event_ledger.csv"
+CANONICAL_CSV_PATH = "data/canonical_redemption_state.csv"
+TRACE_JSON_PATH = "data/reports/redemption_event_trace.json"
 REJECTED_TRACE_PATH = "data/reports/redemption_fetcher_rejected.json"
 FRESHNESS_REPORT_PATH = "data/reports/freshness_report.json"
 BOOTSTRAP_START_DATE = "2019-01-01"
 SOURCE_TUSHARE = "tushare"
+TRACKER_LAST_SUCCESSFUL_SYNC = "last_successful_sync"
+TRACKER_VERSION = "version"
+TRACKER_PREVIOUS_ID_SET = "previous_id_set"
+STATE_TRACKER_VERSION = "1.0"
 
 
 @dataclass
@@ -25,11 +33,24 @@ class FetchResult:
     rejected_count: int
 
 
+@dataclass
+class PipelineResult:
+    success: bool
+    status: str
+    ingress_count: int
+    ledger_event_count: int
+    canonical_date_count: int
+    disappearance_warning: dict | None
+
+
 class RedemptionFetcher:
     def __init__(
         self,
         provider: TuShareProvider,
         import_csv_path: str = IMPORT_CSV_PATH,
+        ledger_csv_path: str = LEDGER_CSV_PATH,
+        canonical_csv_path: str = CANONICAL_CSV_PATH,
+        trace_json_path: str = TRACE_JSON_PATH,
         rejected_trace_path: str = REJECTED_TRACE_PATH,
         state_path: str = FETCHER_STATE_PATH,
         freshness_report_path: str = FRESHNESS_REPORT_PATH,
@@ -37,6 +58,9 @@ class RedemptionFetcher:
     ):
         self.provider = provider
         self.import_csv_path = import_csv_path
+        self.ledger_csv_path = ledger_csv_path
+        self.canonical_csv_path = canonical_csv_path
+        self.trace_json_path = trace_json_path
         self.rejected_trace_path = rejected_trace_path
         self.state_path = state_path
         self.freshness_report_path = freshness_report_path
@@ -47,6 +71,10 @@ class RedemptionFetcher:
         if self._today_fn is not None:
             return self._today_fn()
         return datetime.now().date().isoformat()
+
+    @staticmethod
+    def _utc_timestamp() -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     @staticmethod
     def _ensure_parent_dir(path: str):
@@ -135,6 +163,62 @@ class RedemptionFetcher:
                 if backup_path and os.path.exists(backup_path):
                     os.unlink(backup_path)
 
+    def _read_state_tracker(self) -> dict:
+        if not os.path.exists(self.state_path):
+            return {
+                TRACKER_LAST_SUCCESSFUL_SYNC: None,
+                TRACKER_VERSION: STATE_TRACKER_VERSION,
+                TRACKER_PREVIOUS_ID_SET: [],
+            }
+
+        with open(self.state_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+
+        previous_id_set = payload.get(TRACKER_PREVIOUS_ID_SET) or []
+        return {
+            TRACKER_LAST_SUCCESSFUL_SYNC: payload.get(TRACKER_LAST_SUCCESSFUL_SYNC),
+            TRACKER_VERSION: payload.get(TRACKER_VERSION, STATE_TRACKER_VERSION),
+            TRACKER_PREVIOUS_ID_SET: [str(item) for item in previous_id_set],
+        }
+
+    def _write_state_tracker(self, previous_id_set: list[str], last_successful_sync: str):
+        payload = {
+            TRACKER_LAST_SUCCESSFUL_SYNC: last_successful_sync,
+            TRACKER_VERSION: STATE_TRACKER_VERSION,
+            TRACKER_PREVIOUS_ID_SET: [str(item) for item in previous_id_set],
+        }
+        staged_state_path = self._stage_json(payload, self.state_path)
+        self._publish_staged_artifacts([(staged_state_path, self.state_path)])
+
+    def _write_freshness_report(self, pipeline_status: str, disappearance_warning: dict | None):
+        payload = {
+            "generated_at": self._utc_timestamp(),
+            "pipeline_status": pipeline_status,
+            "empty_snapshot_warning": None,
+            "disappearance_warning": disappearance_warning,
+        }
+        staged_report_path = self._stage_json(payload, self.freshness_report_path)
+        self._publish_staged_artifacts([(staged_report_path, self.freshness_report_path)])
+
+    @staticmethod
+    def _read_artifact_row_count(path: str) -> int:
+        if not os.path.exists(path):
+            return 0
+        return len(pd.read_csv(path, dtype=str, keep_default_na=False))
+
+    def _build_disappearance_warning(self, previous_id_set: list[str]) -> dict | None:
+        previous_ids = {str(item) for item in previous_id_set if str(item)}
+        current_ids = {str(item) for item in self.filtered_snapshot_ids if str(item)}
+        missing_ids = sorted(previous_ids - current_ids)
+        if not missing_ids:
+            return None
+
+        return {
+            "missing_ids": missing_ids,
+            "previous_count": len(previous_ids),
+            "current_count": len(current_ids),
+        }
+
     def fetch_and_build_import_csv(self, import_csv_path: Optional[str] = None) -> FetchResult:
         target_import_csv_path = import_csv_path or self.import_csv_path
 
@@ -191,4 +275,64 @@ class RedemptionFetcher:
             status="OK",
             row_count=len(admitted_df),
             rejected_count=len(rejected_duplicates),
+        )
+
+    def run_redemption_sync_pipeline(self) -> PipelineResult:
+        fetch_result = self.fetch_and_build_import_csv()
+        if not fetch_result.success:
+            return PipelineResult(
+                success=False,
+                status="EMPTY_ABORT" if fetch_result.status == "EMPTY_ABORT" else "FETCH_FAILED",
+                ingress_count=fetch_result.row_count,
+                ledger_event_count=0,
+                canonical_date_count=0,
+                disappearance_warning=None,
+            )
+
+        today = self._today_str()
+        target_dates = self.provider.fetch_trade_calendar(BOOTSTRAP_START_DATE, today)
+
+        try:
+            run_redemption_wave3_pipeline(
+                import_csv_path=self.import_csv_path,
+                ledger_csv_path=self.ledger_csv_path,
+                canonical_csv_path=self.canonical_csv_path,
+                trace_json_path=self.trace_json_path,
+                target_dates=target_dates,
+            )
+        except Exception:
+            return PipelineResult(
+                success=False,
+                status="WAVE3_FAILED",
+                ingress_count=fetch_result.row_count,
+                ledger_event_count=0,
+                canonical_date_count=0,
+                disappearance_warning=None,
+            )
+
+        tracker_state = self._read_state_tracker()
+        disappearance_warning = self._build_disappearance_warning(
+            tracker_state[TRACKER_PREVIOUS_ID_SET]
+        )
+        self._write_freshness_report(
+            pipeline_status="NORMAL",
+            disappearance_warning=disappearance_warning,
+        )
+
+        current_previous_id_set = sorted(
+            {str(item) for item in self.filtered_snapshot_ids if str(item)}
+        )
+        last_successful_sync = self._utc_timestamp()
+        self._write_state_tracker(
+            previous_id_set=current_previous_id_set,
+            last_successful_sync=last_successful_sync,
+        )
+
+        return PipelineResult(
+            success=True,
+            status="OK",
+            ingress_count=fetch_result.row_count,
+            ledger_event_count=self._read_artifact_row_count(self.ledger_csv_path),
+            canonical_date_count=self._read_artifact_row_count(self.canonical_csv_path),
+            disappearance_warning=disappearance_warning,
         )
