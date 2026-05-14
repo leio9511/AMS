@@ -55,31 +55,76 @@ class RedemptionFetcher:
             os.makedirs(parent, exist_ok=True)
 
     @classmethod
-    def _atomic_write_csv(cls, df: pd.DataFrame, path: str):
-        cls._ensure_parent_dir(path)
-        fd, temp_path = tempfile.mkstemp(prefix=".tmp_redemption_fetcher_", suffix=".csv", dir=os.path.dirname(path) or ".")
+    def _reserve_temp_path(cls, target_path: str, suffix: str) -> str:
+        cls._ensure_parent_dir(target_path)
+        fd, temp_path = tempfile.mkstemp(
+            prefix=".tmp_redemption_fetcher_",
+            suffix=suffix,
+            dir=os.path.dirname(target_path) or ".",
+        )
         os.close(fd)
+        return temp_path
+
+    @classmethod
+    def _stage_csv(cls, df: pd.DataFrame, path: str) -> str:
+        temp_path = cls._reserve_temp_path(path, ".csv")
         try:
             df.to_csv(temp_path, index=False)
-            os.replace(temp_path, path)
         except Exception:
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
             raise
+        return temp_path
 
     @classmethod
-    def _atomic_write_json(cls, payload, path: str):
-        cls._ensure_parent_dir(path)
-        fd, temp_path = tempfile.mkstemp(prefix=".tmp_redemption_fetcher_", suffix=".json", dir=os.path.dirname(path) or ".")
-        os.close(fd)
+    def _stage_json(cls, payload, path: str) -> str:
+        temp_path = cls._reserve_temp_path(path, ".json")
         try:
             with open(temp_path, "w", encoding="utf-8") as handle:
                 json.dump(payload, handle, indent=2, ensure_ascii=False)
-            os.replace(temp_path, path)
         except Exception:
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
             raise
+        return temp_path
+
+    @classmethod
+    def _backup_target(cls, target_path: str) -> Optional[str]:
+        if not os.path.exists(target_path):
+            return None
+
+        suffix = os.path.splitext(target_path)[1] or ".bak"
+        backup_path = cls._reserve_temp_path(target_path, suffix)
+        os.unlink(backup_path)
+        os.replace(target_path, backup_path)
+        return backup_path
+
+    @classmethod
+    def _publish_staged_artifacts(cls, staged_artifacts: list[tuple[str, str]]):
+        backups: dict[str, Optional[str]] = {}
+        try:
+            for _, target_path in staged_artifacts:
+                backups[target_path] = cls._backup_target(target_path)
+
+            for staged_path, target_path in staged_artifacts:
+                os.replace(staged_path, target_path)
+        except Exception:
+            for staged_path, _ in staged_artifacts:
+                if os.path.exists(staged_path):
+                    os.unlink(staged_path)
+
+            for _, target_path in reversed(staged_artifacts):
+                if os.path.exists(target_path):
+                    os.unlink(target_path)
+
+                backup_path = backups.get(target_path)
+                if backup_path and os.path.exists(backup_path):
+                    os.replace(backup_path, target_path)
+            raise
+        else:
+            for backup_path in backups.values():
+                if backup_path and os.path.exists(backup_path):
+                    os.unlink(backup_path)
 
     def fetch_and_build_import_csv(self, import_csv_path: Optional[str] = None) -> FetchResult:
         target_import_csv_path = import_csv_path or self.import_csv_path
@@ -110,8 +155,17 @@ class RedemptionFetcher:
             )
 
         admitted_df = admitted_df.reindex(columns=IMPORT_COLUMNS).fillna("")
-        self._atomic_write_csv(admitted_df, target_import_csv_path)
-        self._atomic_write_json(rejected_duplicates, self.rejected_trace_path)
+        staged_import_csv_path = self._stage_csv(admitted_df, target_import_csv_path)
+        staged_rejected_trace_path = self._stage_json(
+            rejected_duplicates,
+            self.rejected_trace_path,
+        )
+        self._publish_staged_artifacts(
+            [
+                (staged_import_csv_path, target_import_csv_path),
+                (staged_rejected_trace_path, self.rejected_trace_path),
+            ]
+        )
 
         return FetchResult(
             success=True,
