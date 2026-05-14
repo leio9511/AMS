@@ -106,6 +106,14 @@ class TuShareProvider(BaseDataProvider):
         return records
 
     @staticmethod
+    def _validate_required_columns(df: pd.DataFrame, required_columns: list[str], dataset_name: str):
+        missing_columns = [column for column in required_columns if column not in df.columns]
+        if missing_columns:
+            raise ValueError(
+                f"{dataset_name} response missing required columns: {', '.join(missing_columns)}"
+            )
+
+    @staticmethod
     def _empty_mapped_redemption_result() -> MappedRedemptionResult:
         return MappedRedemptionResult(
             df=pd.DataFrame(columns=IMPORT_COLUMNS),
@@ -167,8 +175,11 @@ class TuShareProvider(BaseDataProvider):
                 return self._empty_mapped_redemption_result()
 
             filtered_raw_df = cb_call_df.copy()
-            if "call_type" not in filtered_raw_df.columns:
-                return self._empty_mapped_redemption_result()
+            self._validate_required_columns(
+                filtered_raw_df,
+                ["call_type", "ts_code", "ann_date", "call_date"],
+                "cb_call",
+            )
 
             filtered_raw_df = filtered_raw_df[filtered_raw_df["call_type"] == CALL_TYPE_REDEEM].copy()
             if filtered_raw_df.empty:

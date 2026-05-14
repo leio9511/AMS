@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 from unittest.mock import MagicMock
 
-from etl.cb_provider_base import DataProviderAuthError, DataProviderQuotaError
+from etl.cb_provider_base import DataProviderAuthError, DataProviderError, DataProviderQuotaError
 from etl.tushare_provider import CALL_TYPE_REDEEM, IMPORT_COLUMNS, SOURCE_TUSHARE, TuShareProvider
 
 
@@ -165,6 +165,21 @@ def test_fetch_and_map_redemption_events_rejects_all_rows_for_duplicate_source_n
         },
     ]
     assert json.dumps(result.rejected_duplicates)
+
+
+def test_fetch_and_map_redemption_events_returns_provider_error_for_non_empty_payload_missing_required_columns():
+    provider = TuShareProvider(pro=MagicMock())
+    provider.pro.cb_call.return_value = pd.DataFrame(
+        {
+            "ts_code": ["118033.SH"],
+            "ann_date": ["20260514"],
+            "call_date": ["20260601"],
+        }
+    )
+
+    with pytest.raises(DataProviderError, match="TuShare error: cb_call response missing required columns: call_type"):
+        provider.fetch_and_map_redemption_events("2026-05-01", "2026-05-31")
+
 
 
 def test_fetch_and_map_redemption_events_returns_empty_result_for_empty_or_non_redeem_snapshot():
