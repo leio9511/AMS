@@ -138,18 +138,38 @@ class RedemptionFetcher:
     def fetch_and_build_import_csv(self, import_csv_path: Optional[str] = None) -> FetchResult:
         target_import_csv_path = import_csv_path or self.import_csv_path
 
-        mapped_result = self.provider.fetch_and_map_redemption_events(
-            BOOTSTRAP_START_DATE,
-            self._today_str(),
-        )
+        try:
+            mapped_result = self.provider.fetch_and_map_redemption_events(
+                BOOTSTRAP_START_DATE,
+                self._today_str(),
+            )
+        except Exception:
+            return FetchResult(
+                success=False,
+                status="API_FAILED",
+                row_count=0,
+                rejected_count=0,
+            )
 
         self.filtered_snapshot_ids = list(mapped_result.filtered_snapshot_ids)
         admitted_df = mapped_result.df.copy()
         rejected_duplicates = list(mapped_result.rejected_duplicates)
 
         if admitted_df.empty:
-            raise NotImplementedError(
-                "Empty mapped redemption result handling is deferred to a later slice."
+            if rejected_duplicates:
+                staged_rejected_trace_path = self._stage_json(
+                    rejected_duplicates,
+                    self.rejected_trace_path,
+                )
+                self._publish_staged_artifacts(
+                    [(staged_rejected_trace_path, self.rejected_trace_path)]
+                )
+
+            return FetchResult(
+                success=False,
+                status="EMPTY_ABORT",
+                row_count=0,
+                rejected_count=len(rejected_duplicates),
             )
 
         self._validate_import_columns(admitted_df)

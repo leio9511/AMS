@@ -253,45 +253,124 @@ def test_fetch_and_build_import_csv_does_not_publish_new_import_csv_if_rejected_
         assert json.load(handle) == [{"stale": True}]
 
 
-def test_fetch_and_build_import_csv_raises_when_provider_result_is_empty_placeholder_scaffolding(tmp_path):
+def test_fetch_and_build_import_csv_returns_empty_abort_and_refreshes_rejected_trace_when_all_rows_are_rejected_as_duplicates(tmp_path):
+    import_csv_path = tmp_path / "artifacts" / "import.csv"
+    rejected_trace_path = tmp_path / "artifacts" / "rejected.json"
+
+    import_csv_path.parent.mkdir(parents=True, exist_ok=True)
+    import_csv_path.write_text(
+        "source_native_event_id,bond_code,announcement_date,delisting_date,source,updated_at\n"
+        "OLD_EVENT,110001,2026-05-01,2026-05-10,tushare,2026-05-01T00:00:00Z\n",
+        encoding="utf-8",
+    )
+    rejected_trace_path.write_text('[{"stale": true}]', encoding="utf-8")
+
+    duplicate_payload = [
+        {"ts_code": "118033.SH", "ann_date": "20260514", "call_type": "强赎", "row": "alpha"},
+        {"ts_code": "118033.SH", "ann_date": "20260514", "call_type": "强赎", "row": "beta"},
+    ]
     provider = StubProvider(
         result=_mapped_result(
             df_rows=[],
-            filtered_snapshot_ids=["118033SH_20260514"],
+            filtered_snapshot_ids=["118033SH_20260514", "118033SH_20260514"],
+            rejected_duplicates=duplicate_payload,
+        )
+    )
+
+    fetcher = RedemptionFetcher(
+        provider=provider,
+        import_csv_path=str(import_csv_path),
+        rejected_trace_path=str(rejected_trace_path),
+        today_fn=lambda: "2026-05-15",
+    )
+
+    result = fetcher.fetch_and_build_import_csv()
+
+    assert result == FetchResult(
+        success=False,
+        status="EMPTY_ABORT",
+        row_count=0,
+        rejected_count=2,
+    )
+    assert fetcher.filtered_snapshot_ids == ["118033SH_20260514", "118033SH_20260514"]
+
+    written_import_df = pd.read_csv(import_csv_path, dtype=str, keep_default_na=False)
+    assert written_import_df["source_native_event_id"].tolist() == ["OLD_EVENT"]
+
+    with open(rejected_trace_path, "r", encoding="utf-8") as handle:
+        assert json.load(handle) == duplicate_payload
+
+
+
+def test_fetch_and_build_import_csv_returns_empty_abort_without_creating_a_misleading_success_import_artifact_for_true_empty_snapshot(tmp_path):
+    import_csv_path = tmp_path / "artifacts" / "import.csv"
+    rejected_trace_path = tmp_path / "artifacts" / "rejected.json"
+
+    provider = StubProvider(
+        result=_mapped_result(
+            df_rows=[],
+            filtered_snapshot_ids=[],
             rejected_duplicates=[],
         )
     )
 
     fetcher = RedemptionFetcher(
         provider=provider,
-        import_csv_path=str(tmp_path / "import.csv"),
-        rejected_trace_path=str(tmp_path / "rejected.json"),
+        import_csv_path=str(import_csv_path),
+        rejected_trace_path=str(rejected_trace_path),
         today_fn=lambda: "2026-05-15",
     )
 
-    with pytest.raises(NotImplementedError, match="deferred to a later slice"):
-        fetcher.fetch_and_build_import_csv()
+    result = fetcher.fetch_and_build_import_csv()
 
-    assert fetcher.filtered_snapshot_ids == ["118033SH_20260514"]
-    assert not (tmp_path / "import.csv").exists()
-    assert not (tmp_path / "rejected.json").exists()
+    assert result == FetchResult(
+        success=False,
+        status="EMPTY_ABORT",
+        row_count=0,
+        rejected_count=0,
+    )
+    assert fetcher.filtered_snapshot_ids == []
+    assert not import_csv_path.exists()
+    assert not rejected_trace_path.exists()
 
 
-def test_fetch_and_build_import_csv_raises_provider_errors_instead_of_normalizing_them(tmp_path):
+
+def test_fetch_and_build_import_csv_returns_api_failed_without_mutating_existing_fetch_outputs_or_observation_baseline(tmp_path):
+    import_csv_path = tmp_path / "artifacts" / "import.csv"
+    rejected_trace_path = tmp_path / "artifacts" / "rejected.json"
+
+    import_csv_path.parent.mkdir(parents=True, exist_ok=True)
+    import_csv_path.write_text(
+        "source_native_event_id,bond_code,announcement_date,delisting_date,source,updated_at\n"
+        "OLD_EVENT,110001,2026-05-01,2026-05-10,tushare,2026-05-01T00:00:00Z\n",
+        encoding="utf-8",
+    )
+    rejected_trace_path.write_text('[{"stale": true}]', encoding="utf-8")
+
     provider = StubProvider(error=RuntimeError("provider exploded"))
     fetcher = RedemptionFetcher(
         provider=provider,
-        import_csv_path=str(tmp_path / "import.csv"),
-        rejected_trace_path=str(tmp_path / "rejected.json"),
+        import_csv_path=str(import_csv_path),
+        rejected_trace_path=str(rejected_trace_path),
         today_fn=lambda: "2026-05-15",
     )
+    fetcher.filtered_snapshot_ids = ["PREVIOUS_BASELINE"]
 
-    with pytest.raises(RuntimeError, match="provider exploded"):
-        fetcher.fetch_and_build_import_csv()
+    result = fetcher.fetch_and_build_import_csv()
 
-    assert provider.calls == [(BOOTSTRAP_START_DATE, "2026-05-15")]
-    assert not (tmp_path / "import.csv").exists()
-    assert not (tmp_path / "rejected.json").exists()
+    assert result == FetchResult(
+        success=False,
+        status="API_FAILED",
+        row_count=0,
+        rejected_count=0,
+    )
+    assert fetcher.filtered_snapshot_ids == ["PREVIOUS_BASELINE"]
+
+    written_import_df = pd.read_csv(import_csv_path, dtype=str, keep_default_na=False)
+    assert written_import_df["source_native_event_id"].tolist() == ["OLD_EVENT"]
+
+    with open(rejected_trace_path, "r", encoding="utf-8") as handle:
+        assert json.load(handle) == [{"stale": True}]
 
 
 def test_fetch_and_build_import_csv_raises_when_provider_omits_required_import_columns(tmp_path):
