@@ -74,3 +74,5 @@ reports/report_*.json
 reports/report_*.txt
 .sdlc_link
 uat_debug/
+### Heartbeat/operational scripts
+scripts/etf_sentinel.py
