@@ -60,6 +60,18 @@ def test_cli_appends_single_declare_row_with_created_at_timestamp(tmp_path):
     }
 
 
+def test_cli_initializes_missing_csv_with_header_before_appending_first_row(tmp_path):
+    csv_path = tmp_path / "data" / "manual_events.csv"
+
+    append_manual_command(_base_args(csv_path), created_at="2026-05-15T10:00:00Z")
+
+    lines = csv_path.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == HEADER.rstrip("\n")
+    rows = _read_rows(csv_path)
+    assert len(rows) == 1
+    assert rows[0]["command"] == "DECLARE"
+
+
 def test_cli_appends_single_cancel_row_with_empty_delisting_date(tmp_path):
     csv_path = tmp_path / "data" / "manual_events.csv"
     _seed_manual_events_csv(csv_path)

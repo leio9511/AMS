@@ -100,9 +100,13 @@ def _build_row(args: argparse.Namespace, created_at: str | None = None) -> dict[
     return row
 
 
-def _read_and_validate_header(csv_path: Path) -> list[str]:
+def _ensure_header(csv_path: Path) -> list[str]:
     if not csv_path.exists():
-        raise FileNotFoundError(f"Manual events file not found: {csv_path}")
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with csv_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(MANUAL_EVENT_COLUMNS)
+        return MANUAL_EVENT_COLUMNS
 
     with csv_path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.reader(handle)
@@ -126,7 +130,7 @@ def append_manual_command(
 ) -> dict[str, str]:
     args = _parse_args(argv)
     csv_path = Path(args.csv_path)
-    _read_and_validate_header(csv_path)
+    _ensure_header(csv_path)
     row = _build_row(args, created_at=created_at)
 
     with csv_path.open("a", encoding="utf-8", newline="") as handle:
