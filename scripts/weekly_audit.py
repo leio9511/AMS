@@ -25,7 +25,7 @@ def run_weekly_scan():
     
     try:
         result = subprocess.run(
-            ["python3", "AMS/scripts/pilot_stock_radar.py"],
+            ["python3", "legacy_scripts/pilot_stock_radar.py"],
             capture_output=True,
             text=True,
             timeout=600  # 10分钟超时
@@ -37,7 +37,7 @@ def run_weekly_scan():
             return
         
         # 读取结果
-        result_path = "AMS/reports/stock_radar_sector.json"
+        result_path = "reports/stock_radar_sector.json"
         if not os.path.exists(result_path):
             print("[ERROR] 结果文件不存在")
             send_telegram("❌ 【水晶苍蝇拍 26.3】结果文件不存在")
@@ -90,7 +90,7 @@ def run_weekly_scan():
         report_lines.extend([
             "",
             "━" * 25,
-            "💡 详细数据见 AMS/reports/"
+            "💡 详细数据见 reports/"
         ])
         
         report = "\n".join(report_lines)
