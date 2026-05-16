@@ -207,7 +207,7 @@ If TuShare fetch succeeds:
 #### Degraded daily run
 If all of the following are true:
 - this is **not** bootstrap
-- TuShare fetch fails
+- TuShare fetch fails due to **network / upstream unavailability**
 - reduced manual facts are non-empty
 
 Then:
@@ -215,6 +215,30 @@ Then:
 - mark freshness / status as degraded
 - preserve the existing artifact-shape expectations of downstream outputs as much as possible
 - avoid introducing new truth-boundary rules beyond what is necessary to complete the degraded run
+
+#### Failure-class taxonomy for degraded-mode gating
+This PRD now freezes the failure-boundary contract that downstream implementation must make explicit and testable.
+
+Approved failure classes:
+- **NETWORK_UNAVAILABLE** — upstream network failure, upstream service unavailable, timeout, transport-layer interruption, or equivalent TuShare unavailability condition. This is the **only** failure class that may trigger degraded-mode fallback.
+- **AUTH_FAILED** — invalid token, revoked credential, permission denial, or equivalent authentication / authorization failure. This must **not** trigger degraded mode.
+- **QUOTA_EXCEEDED** — provider-side quota exhaustion, throttling limit, or equivalent rate / allowance failure. This must **not** trigger degraded mode.
+- **RUNTIME_BUG** — programmer bug, unexpected mapping/parsing/runtime exception, schema bug, or other non-provider implementation defect. This must **not** trigger degraded mode.
+
+Required implementation contract:
+- `etl/tushare_provider.py` and supporting provider/base-provider code are authorized to introduce the smallest necessary explicit exception/status taxonomy so these classes can be distinguished deterministically.
+- `etl/redemption_fetcher.py` must only enter degraded mode when the observed failure class is `NETWORK_UNAVAILABLE`.
+- `AUTH_FAILED`, `QUOTA_EXCEEDED`, and `RUNTIME_BUG` must fail closed and remain externally distinguishable from degraded-mode execution.
+- It is forbidden to collapse all failures into one generic fallback-eligible bucket if that would allow non-network failures to continue in degraded mode.
+
+Required observable status contract:
+- successful degraded fallback run → pipeline status `MANUAL_DEGRADED`
+- network/unavailability failure + empty reduced manual facts → explicit empty-fallback failure status `FRESHNESS_EMPTY`
+- auth failure → explicit auth failure status distinct from degraded mode
+- quota failure → explicit quota failure status distinct from degraded mode
+- runtime/programmer bug → explicit non-degraded hard failure status distinct from degraded mode
+
+The exact internal exception class names may be implementation-defined, but the above black-box behavioral separation is mandatory.
 
 #### Bootstrap failure
 If the system lacks required baseline state and TuShare fetch fails:
@@ -275,7 +299,7 @@ If a later design wants manual/TuShare convergence inside one ledger stream, tha
   - **And** PRD B does not introduce manual override or cross-source takeover behavior into the successful TuShare path
 
 - **Scenario 7: Degraded mode with manual fallback**
-  - **Given** a non-bootstrap daily run where TuShare fetch fails
+  - **Given** a non-bootstrap daily run where TuShare fails with a `NETWORK_UNAVAILABLE`-class failure
   - **And** the reduced manual facts are non-empty
   - **When** the pipeline executes
   - **Then** the run proceeds in explicit degraded mode
@@ -284,19 +308,40 @@ If a later design wants manual/TuShare convergence inside one ledger stream, tha
 
 - **Scenario 8: Bootstrap cannot use manual fallback**
   - **Given** required baseline state is absent
-  - **And** TuShare fetch fails
+  - **And** TuShare fails with a `NETWORK_UNAVAILABLE`-class failure
   - **When** the pipeline executes
   - **Then** the pipeline fails
   - **And** manual fallback is not used to bootstrap the system
 
 - **Scenario 9: Empty degraded fallback is not treated as success**
-  - **Given** a non-bootstrap daily run where TuShare fetch fails
+  - **Given** a non-bootstrap daily run where TuShare fails with a `NETWORK_UNAVAILABLE`-class failure
   - **And** the reduced manual facts are empty
   - **When** the pipeline executes
-  - **Then** the run terminates with an explicit failure/empty-fallback status
+  - **Then** the run terminates with explicit empty-fallback failure status `FRESHNESS_EMPTY`
   - **And** it is not reported as a normal successful sync
 
-- **Scenario 10: No implicit architecture migration**
+- **Scenario 10: Auth failure never triggers degraded mode**
+  - **Given** a non-bootstrap daily run where TuShare fails with an `AUTH_FAILED`-class failure
+  - **When** the pipeline executes
+  - **Then** degraded mode is not entered
+  - **And** the run fails closed with an explicit auth-failure status distinct from `MANUAL_DEGRADED`
+  - **And** reduced manual facts are not used as fallback ingress
+
+- **Scenario 11: Quota failure never triggers degraded mode**
+  - **Given** a non-bootstrap daily run where TuShare fails with a `QUOTA_EXCEEDED`-class failure
+  - **When** the pipeline executes
+  - **Then** degraded mode is not entered
+  - **And** the run fails closed with an explicit quota-failure status distinct from `MANUAL_DEGRADED`
+  - **And** reduced manual facts are not used as fallback ingress
+
+- **Scenario 12: Runtime/programmer bug never triggers degraded mode**
+  - **Given** a non-bootstrap daily run where upstream fetch/mapping fails with a `RUNTIME_BUG`-class failure
+  - **When** the pipeline executes
+  - **Then** degraded mode is not entered
+  - **And** the run fails closed with an explicit hard-failure status distinct from `MANUAL_DEGRADED`
+  - **And** reduced manual facts are not used as fallback ingress
+
+- **Scenario 13: No implicit architecture migration**
   - **Given** implementation work proceeds under PRD B
   - **When** downstream agents inspect the brief
   - **Then** they must not change the Wave 3 `event_id` / identity contract under this PRD
@@ -328,10 +373,15 @@ The main risk is not the CLI itself. The main risk is **scope leakage**:
    - verify degraded mode is entered only in the approved condition set
    - verify bootstrap still fails when TuShare is unavailable
    - verify empty manual fallback does not masquerade as success
+   - verify auth failures never enter degraded mode
+   - verify quota failures never enter degraded mode
+   - verify runtime/programmer bugs never enter degraded mode
+   - verify each failure class emits its required externally observable status
 
 4. **Boundary-protection tests**
    - verify no change to existing identity-contract behavior under PRD B
    - verify no cross-source takeover / supersede logic is introduced
+   - verify degraded-mode gating is fail-closed for all non-network failure classes
 
 ### Mocking guidance
 
