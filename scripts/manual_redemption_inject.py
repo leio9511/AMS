@@ -2,17 +2,24 @@ from __future__ import annotations
 
 import argparse
 import csv
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from etl.manual_event_injector import (
     MANUAL_CANCEL,
+    MANUAL_COMMAND_CHOICES,
     MANUAL_DECLARE,
     MANUAL_EVENT_COLUMNS,
+    normalize_manual_command,
 )
 
-DEFAULT_MANUAL_EVENTS_PATH = Path("data/manual_events.csv")
+DEFAULT_MANUAL_EVENTS_PATH = PROJECT_ROOT / "data" / "manual_events.csv"
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -38,10 +45,12 @@ def _normalize_text(value: str | None) -> str:
 
 
 def _normalize_command(value: str) -> str:
-    normalized = _normalize_text(value).upper()
-    if normalized not in {MANUAL_DECLARE, MANUAL_CANCEL}:
-        raise ValueError("--command must be DECLARE or CANCEL")
-    return normalized
+    try:
+        return normalize_manual_command(value)
+    except ValueError as exc:
+        raise ValueError(
+            f"--command must be {' or '.join(MANUAL_COMMAND_CHOICES)}"
+        ) from exc
 
 
 def _validate_date_arg(flag_name: str, value: str) -> str:

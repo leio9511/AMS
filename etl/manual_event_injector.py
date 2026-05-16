@@ -19,6 +19,7 @@ MANUAL_EVENT_COLUMNS = [
 ]
 MANUAL_DECLARE = "DECLARE"
 MANUAL_CANCEL = "CANCEL"
+MANUAL_COMMAND_CHOICES = (MANUAL_DECLARE, MANUAL_CANCEL)
 SOURCE_MANUAL = "manual"
 
 
@@ -35,7 +36,7 @@ class ManualEventRow:
     @classmethod
     def from_mapping(cls, row: dict) -> "ManualEventRow":
         normalized = {column: _normalize_scalar(row.get(column, "")) for column in MANUAL_EVENT_COLUMNS}
-        command = normalized["command"].upper()
+        command = normalize_manual_command(normalized["command"])
         return cls(
             command=command,
             source_native_event_id=normalized["source_native_event_id"],
@@ -53,6 +54,13 @@ def _normalize_scalar(value) -> str:
     return str(value).strip()
 
 
+def normalize_manual_command(value: str) -> str:
+    normalized = _normalize_scalar(value).upper()
+    if normalized not in MANUAL_COMMAND_CHOICES:
+        raise ValueError(f"Unsupported manual event command: {normalized}")
+    return normalized
+
+
 def _validate_schema(df: pd.DataFrame):
     missing_columns = [column for column in MANUAL_EVENT_COLUMNS if column not in df.columns]
     if missing_columns:
@@ -62,7 +70,7 @@ def _validate_schema(df: pd.DataFrame):
 
 
 def _validate_row(row: ManualEventRow):
-    if row.command not in {MANUAL_DECLARE, MANUAL_CANCEL}:
+    if row.command not in MANUAL_COMMAND_CHOICES:
         raise ValueError(f"Unsupported manual event command: {row.command}")
     if not row.source_native_event_id:
         raise ValueError("Manual event row missing source_native_event_id")
