@@ -354,7 +354,11 @@ Authorized AMS project files only:
 - `scripts/manual_redemption_inject.py`
 - `etl/manual_event_injector.py`
 - `etl/redemption_fetcher.py`
-- `etl/tushare_provider.py` (minimal adapter changes only if required by the existing ingestion surface)
+- `etl/tushare_provider.py`
+- `etl/cb_provider_base.py`
+
+**EXPLICIT REFACTORING AUTHORIZATION:**
+You are explicitly authorized to refactor `TuShareProvider.fetch_and_map_redemption_events` and base provider classes to distinguish genuine network/unavailability errors from generic runtime exceptions. This refactoring must be done so that degraded mode is ONLY triggered on actual network unavailability, preserving normal exception behavior for bugs.
 
 If implementation requires deeper changes to ledger identity or cross-source lifecycle semantics, stop and return for a new PRD decision.
 
