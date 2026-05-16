@@ -17,6 +17,11 @@ AMS redemption pipeline already has a Wave 3 ledger-based ingestion and derivati
 
 The missing capability is a **safe degraded-mode manual input path** for the operational case where TuShare is temporarily unavailable during normal daily runs.
 
+The intended semantics are *incremental post-baseline fallback*, not *manual truth replacement*:
+- if a healthy authoritative baseline already exists, operators may provide manual facts only for the missing run window since the last successful authoritative sync
+- if TuShare is unavailable only for the current day, operators provide only the current-day missing increment (or an explicit no-new-events degraded outcome)
+- if TuShare is unavailable during bootstrap / cold start, manual fallback is not allowed to stand in for full historical source reconstruction
+
 This PRD must stay narrowly scoped. The goal is **not** to redesign Wave 3 identity semantics or unify manual and TuShare into a single business-event stream. That larger problem exists, but it is not approved inside PRD B.
 
 ### Frozen design baseline for this PRD
@@ -29,9 +34,11 @@ This PRD must stay narrowly scoped. The goal is **not** to redesign Wave 3 ident
 
 3. **Manual input is a degraded-mode operational fallback.**
    It is not a general source-convergence mechanism and not a long-term replacement for TuShare.
+   Its effect is limited to post-baseline degraded runs and must not create long-lived manual truth inside the permanent Wave 3 ledger path.
 
 4. **Bootstrap cannot be replaced by manual input.**
    If the system lacks the required baseline and TuShare is unavailable, the pipeline must fail.
+   Manual fallback is valid only after at least one successful authoritative baseline exists.
 
 5. **This PRD does not solve cross-source lifecycle convergence.**
    Topics such as manual-to-TuShare takeover, unified event stream semantics, or identity migration are explicitly deferred.
@@ -130,6 +137,8 @@ Therefore:
 - treat manual input as a bounded fallback source for degraded operations
 - limit transformation responsibility to producing valid manual ingress facts
 - do not add new cross-source lifecycle semantics in the ledger layer
+- do not persist manual fallback rows as long-lived Wave 3 ledger truth revisions
+- keep manual fallback effects confined to run-scoped effective state and same-day operational outputs
 
 ### 3.4 `manual_events.csv` schema
 
@@ -190,6 +199,15 @@ It does not inspect ledger history and does not attempt to encode post-ingestion
 
 The reducer outputs a DataFrame matching the existing ingestion surface used for redemption facts, with `source="manual"` populated for rows originating from the reduced manual state.
 
+**Frozen ingress-schema contract for PRD B:**
+For this PRD, the authoritative manual-fallback ingress schema is explicitly frozen to `redemption_ledger.IMPORT_COLUMNS`.
+That schema is the required output shape of `etl/manual_event_injector.py` for downstream consumption in this PRD.
+
+Required downstream compatibility rule:
+- within the scope of PRD B, `etl/redemption_fetcher.py`, `etl/tushare_provider.py`, and any minimal adapter logic must treat `redemption_ledger.IMPORT_COLUMNS` as the canonical manual-fallback ingress contract
+- downstream implementation may add explicit contract assertions or adapter checks, but must not require additional ingress columns for PRD B manual-fallback rows unless this PRD is amended
+- reviewer acceptance for PRD B must evaluate reducer/fetcher/provider compatibility against this frozen six-column ingress contract, not against a broader implied schema that is not explicitly defined here
+
 Important boundary:
 - reducer output represents the **current manual fallback facts**
 - reducer output does **not** express a ledger tombstone, takeover, or cross-source retire event
@@ -197,6 +215,40 @@ Important boundary:
 If the current ingestion contract requires a minimal adapter for manual rows, that adapter must preserve existing Wave 3 identity semantics and must not redefine ledger identity.
 
 ### 3.8 Orchestration behavior in `etl/redemption_fetcher.py`
+
+#### Operational-state model for degraded runs
+This PRD freezes a two-layer model:
+- **authoritative long-lived truth** = the normal Wave 3 ledger/canonical path produced from successful TuShare-based authoritative runs
+- **run-scoped effective state** = the operational state used by the current degraded run to drive same-day outputs when authoritative upstream is temporarily unavailable
+
+Under PRD B:
+- reduced manual fallback facts may affect the run-scoped effective state
+- reduced manual fallback facts may drive same-day outputs, reports, and operational decisions for that degraded run
+- reduced manual fallback facts must **not** be persisted as long-lived manual ledger truth that survives as a permanent parallel source after TuShare recovery
+- the durable audit trail for manual intervention is `data/manual_events.csv`, not permanent manual truth rows in the Wave 3 ledger
+- when TuShare recovers, the next successful authoritative run replaces degraded operational state rather than converging with or coexisting alongside permanent manual ledger truth
+
+#### Frozen file-boundary contract for degraded runs
+To keep the truth boundary implementable and auditable, PRD B explicitly freezes what degraded runs may and may not write.
+
+**Degraded runs may write only run-scoped operational artifacts such as:**
+- the append-only audit trail in `data/manual_events.csv`
+- a run-scoped import artifact used only for the current degraded execution path
+- run-scoped freshness / status / report artifacts that explicitly describe degraded/manual operation
+- a run-scoped effective-state snapshot or equivalent temporary operational artifact, if needed, provided it is clearly not the long-lived authoritative Wave 3 truth layer
+
+**Degraded runs must not write or mutate as durable truth artifacts:**
+- the long-lived Wave 3 ledger truth file as if manual fallback rows were authoritative durable events
+- the long-lived canonical truth artifact as if degraded manual fallback were equivalent to a successful authoritative TuShare refresh
+- any persistent parallel manual-truth layer that survives as a second source after TuShare recovery
+
+Required recovery rule:
+- the next successful authoritative TuShare-based run is the only allowed mechanism for refreshing long-lived ledger/canonical truth after a degraded period
+- degraded-run operational artifacts may be replaced, superseded, or discarded on recovery without requiring cross-source convergence semantics
+
+Required isolation point:
+- if the current `run_redemption_wave3_pipeline` only produces durable ledger/canonical truth artifacts, PRD B must introduce or use a minimal isolated degraded-run path / adapter boundary so same-day outputs can be produced without persisting manual fallback rows as long-lived truth
+- PRD B does **not** authorize silently reusing the durable-truth pipeline in a way that writes manual fallback rows into permanent truth files while merely relabeling them as temporary
 
 #### Normal run
 If TuShare fetch succeeds:
@@ -207,11 +259,13 @@ If TuShare fetch succeeds:
 #### Degraded daily run
 If all of the following are true:
 - this is **not** bootstrap
+- a prior authoritative baseline exists
 - TuShare fetch fails due to **network / upstream unavailability**
-- reduced manual facts are non-empty
+- reduced manual facts for the missing run window are non-empty
 
 Then:
 - continue the pipeline in degraded mode using reduced manual facts as the fallback ingress source for this run
+- apply those facts only to the run-scoped effective state for that degraded run
 - mark freshness / status as degraded
 - preserve the existing artifact-shape expectations of downstream outputs as much as possible
 - avoid introducing new truth-boundary rules beyond what is necessary to complete the degraded run
@@ -234,21 +288,30 @@ Required implementation contract:
 Required observable status contract:
 - successful degraded fallback run → pipeline status `MANUAL_DEGRADED`
 - network/unavailability failure + empty reduced manual facts → explicit empty-fallback failure status `FRESHNESS_EMPTY`
-- auth failure → explicit auth failure status distinct from degraded mode
-- quota failure → explicit quota failure status distinct from degraded mode
-- runtime/programmer bug → explicit non-degraded hard failure status distinct from degraded mode
+- bootstrap/baseline absent when fallback would otherwise be needed → explicit status `BOOTSTRAP_REQUIRED`
+- auth failure → explicit auth failure status `AUTH_FAILED`
+- quota failure → explicit quota failure status `QUOTA_EXCEEDED`
+- runtime/programmer bug → explicit non-degraded hard failure status `RUNTIME_BUG`
 
 The exact internal exception class names may be implementation-defined, but the above black-box behavioral separation is mandatory.
 
 #### Bootstrap failure
 If the system lacks required baseline state and TuShare fetch fails:
-- fail the pipeline
+- fail the pipeline with explicit status `BOOTSTRAP_REQUIRED`
 - do not allow manual-only bootstrap
 
 #### Empty degraded fallback
-If TuShare fetch fails and reduced manual facts are empty:
+If TuShare fetch fails for the missing run window and reduced manual facts are empty:
 - fail with an explicit freshness/status outcome
 - do not pretend the run succeeded
+- this empty outcome means no usable incremental fallback facts were supplied for the missing run window
+
+#### No-new-events degraded outcome
+If TuShare fetch fails for the missing run window, a prior authoritative baseline exists, and the operator explicitly records that there are no new events in that missing window:
+- the degraded run may complete with an explicit no-new-events operational outcome rather than inventing business events
+- this outcome must be externally distinguishable from both normal TuShare success and event-bearing manual fallback
+- this outcome must not require ambiguous free-form placeholders such as raw `N/A` business-event rows
+- this outcome must be surfaced using the frozen externally observable status string `MANUAL_NO_EVENTS`
 
 ### 3.9 Canonical / ledger boundary
 
@@ -300,22 +363,26 @@ If a later design wants manual/TuShare convergence inside one ledger stream, tha
 
 - **Scenario 7: Degraded mode with manual fallback**
   - **Given** a non-bootstrap daily run where TuShare fails with a `NETWORK_UNAVAILABLE`-class failure
-  - **And** the reduced manual facts are non-empty
+  - **And** a prior authoritative baseline exists
+  - **And** the reduced manual facts for the missing run window are non-empty
   - **When** the pipeline executes
   - **Then** the run proceeds in explicit degraded mode
-  - **And** the run uses reduced manual facts through the existing ingestion surface
+  - **And** the run uses reduced manual facts through the existing ingress surface for that degraded run
   - **And** the resulting status/freshness output clearly indicates degraded/manual mode
+  - **And** the manual fallback affects run-scoped effective state rather than becoming long-lived permanent manual ledger truth
 
 - **Scenario 8: Bootstrap cannot use manual fallback**
   - **Given** required baseline state is absent
   - **And** TuShare fails with a `NETWORK_UNAVAILABLE`-class failure
   - **When** the pipeline executes
-  - **Then** the pipeline fails
+  - **Then** the pipeline fails with explicit status `BOOTSTRAP_REQUIRED`
   - **And** manual fallback is not used to bootstrap the system
+  - **And** operators are not required to reconstruct full historical source data by hand
 
 - **Scenario 9: Empty degraded fallback is not treated as success**
   - **Given** a non-bootstrap daily run where TuShare fails with a `NETWORK_UNAVAILABLE`-class failure
-  - **And** the reduced manual facts are empty
+  - **And** a prior authoritative baseline exists
+  - **And** the reduced manual facts for the missing run window are empty
   - **When** the pipeline executes
   - **Then** the run terminates with explicit empty-fallback failure status `FRESHNESS_EMPTY`
   - **And** it is not reported as a normal successful sync
@@ -324,24 +391,52 @@ If a later design wants manual/TuShare convergence inside one ledger stream, tha
   - **Given** a non-bootstrap daily run where TuShare fails with an `AUTH_FAILED`-class failure
   - **When** the pipeline executes
   - **Then** degraded mode is not entered
-  - **And** the run fails closed with an explicit auth-failure status distinct from `MANUAL_DEGRADED`
+  - **And** the run fails closed with explicit auth-failure status `AUTH_FAILED`
   - **And** reduced manual facts are not used as fallback ingress
 
 - **Scenario 11: Quota failure never triggers degraded mode**
   - **Given** a non-bootstrap daily run where TuShare fails with a `QUOTA_EXCEEDED`-class failure
   - **When** the pipeline executes
   - **Then** degraded mode is not entered
-  - **And** the run fails closed with an explicit quota-failure status distinct from `MANUAL_DEGRADED`
+  - **And** the run fails closed with explicit quota-failure status `QUOTA_EXCEEDED`
   - **And** reduced manual facts are not used as fallback ingress
 
 - **Scenario 12: Runtime/programmer bug never triggers degraded mode**
   - **Given** a non-bootstrap daily run where upstream fetch/mapping fails with a `RUNTIME_BUG`-class failure
   - **When** the pipeline executes
   - **Then** degraded mode is not entered
-  - **And** the run fails closed with an explicit hard-failure status distinct from `MANUAL_DEGRADED`
+  - **And** the run fails closed with explicit hard-failure status `RUNTIME_BUG`
   - **And** reduced manual facts are not used as fallback ingress
 
-- **Scenario 13: No implicit architecture migration**
+- **Scenario 13: Explicit no-new-events degraded outcome**
+  - **Given** a non-bootstrap daily run where TuShare fails with a `NETWORK_UNAVAILABLE`-class failure
+  - **And** a prior authoritative baseline exists
+  - **And** the operator explicitly records that there are no new events in the missing run window
+  - **When** the degraded run executes
+  - **Then** the run completes with explicit no-new-events status `MANUAL_NO_EVENTS`
+  - **And** that outcome is distinct from normal success and distinct from event-bearing manual fallback
+  - **And** the system does not fabricate business-event rows using ambiguous placeholder values such as raw `N/A`
+
+- **Scenario 14: Reducer output matches the frozen PRD B ingress contract**
+  - **Given** reduced manual command history is emitted for downstream ingestion under PRD B
+  - **When** the reducer returns manual fallback rows
+  - **Then** the output schema matches `redemption_ledger.IMPORT_COLUMNS`
+  - **And** fetcher/provider-side PRD B integration accepts that schema as sufficient manual-fallback ingress without requiring additional implicit columns
+
+- **Scenario 15: Degraded run writes only allowed operational artifacts**
+  - **Given** a degraded run executes using manual fallback
+  - **When** downstream artifacts are inspected
+  - **Then** only the PRD-approved run-scoped operational artifacts are written for degraded operation
+  - **And** the degraded run does not persist manual fallback rows as durable Wave 3 ledger truth or durable canonical truth
+
+- **Scenario 16: TuShare recovery replaces degraded operational state**
+  - **Given** a prior degraded run used manual fallback to produce run-scoped effective state
+  - **And** a later run succeeds from authoritative TuShare input
+  - **When** the recovery run completes
+  - **Then** the authoritative run replaces degraded operational state for future runs
+  - **And** the system does not require manual/TuShare long-term coexistence or cross-source convergence to restore normal operation
+
+- **Scenario 17: No implicit architecture migration**
   - **Given** implementation work proceeds under PRD B
   - **When** downstream agents inspect the brief
   - **Then** they must not change the Wave 3 `event_id` / identity contract under this PRD
@@ -370,18 +465,23 @@ The main risk is not the CLI itself. The main risk is **scope leakage**:
 
 3. **Pipeline orchestration tests**
    - mock TuShare fetch success/failure
-   - verify degraded mode is entered only in the approved condition set
+   - verify degraded mode is entered only in the approved post-baseline condition set
    - verify bootstrap still fails when TuShare is unavailable
    - verify empty manual fallback does not masquerade as success
+   - verify explicit no-new-events degraded outcome behavior
    - verify auth failures never enter degraded mode
    - verify quota failures never enter degraded mode
    - verify runtime/programmer bugs never enter degraded mode
    - verify each failure class emits its required externally observable status
+   - verify TuShare recovery replaces degraded operational state on the next successful authoritative run
 
 4. **Boundary-protection tests**
    - verify no change to existing identity-contract behavior under PRD B
    - verify no cross-source takeover / supersede logic is introduced
    - verify degraded-mode gating is fail-closed for all non-network failure classes
+   - verify manual reducer output and downstream PRD B integration both anchor to `redemption_ledger.IMPORT_COLUMNS` as the frozen ingress contract
+   - verify manual fallback effects remain run-scoped and do not create long-lived parallel manual ledger truth
+   - verify degraded runs write only the explicitly allowed operational artifacts and do not mutate durable truth artifacts
 
 ### Mocking guidance
 
@@ -454,6 +554,11 @@ CANCEL
 ```text
 MANUAL_DEGRADED
 FRESHNESS_EMPTY
+MANUAL_NO_EVENTS
+AUTH_FAILED
+QUOTA_EXCEEDED
+RUNTIME_BUG
+BOOTSTRAP_REQUIRED
 ```
 
 ### Manual source string
