@@ -197,10 +197,32 @@ def test_reduce_multiple_identities_isolated_by_source_native_event_id():
     assert reduced.iloc[0]["bond_code"] == "110001.SH"
 
 
+def test_manual_reducer_output_matches_import_column_contract():
+    reduced = reduce_manual_events_df(
+        _manual_events_df(
+            [
+                {
+                    "command": "DECLARE",
+                    "source_native_event_id": "110001SH_20260515",
+                    "bond_code": "110001.SH",
+                    "announcement_date": "2026-05-15",
+                    "delisting_date": "2026-06-20",
+                    "reason": "Contract match",
+                    "created_at": "2026-05-15T10:00:00Z",
+                }
+            ]
+        )
+    )
+
+    assert list(reduced.columns) == IMPORT_COLUMNS
+
+
 def test_manual_events_seed_file_has_exact_required_header():
     manual_events_path = Path("data/manual_events.csv")
 
     if not manual_events_path.exists():
+        # The seed file belongs to a separate manual-command-log slice, so keep this reducer PR resilient
+        # while still verifying the header when that file is present in the repo state under test.
         pytest.skip("manual_events.csv seed file is not part of this reducer-focused PR slice")
 
     header = manual_events_path.read_text(encoding="utf-8").splitlines()[0]

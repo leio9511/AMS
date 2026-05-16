@@ -112,29 +112,43 @@ def parse_manual_event_rows(df: pd.DataFrame) -> list[ManualEventRow]:
     return rows
 
 
+def _manual_row_to_import_row(row: ManualEventRow) -> dict[str, str]:
+    return {
+        "source_native_event_id": row.source_native_event_id,
+        "bond_code": row.bond_code,
+        "announcement_date": row.announcement_date,
+        "delisting_date": row.delisting_date,
+        "source": SOURCE_MANUAL,
+        "updated_at": row.created_at,
+    }
+
+
+def _empty_manual_import_df() -> pd.DataFrame:
+    return pd.DataFrame(columns=IMPORT_COLUMNS)
+
+
 def reduce_manual_event_rows(rows: Iterable[ManualEventRow]) -> pd.DataFrame:
+    """Reduce append-only manual command history into current active manual facts.
+
+    Semantics are intentionally command-log local and identity-scoped:
+    - latest effective DECLARE emits one active manual fact,
+    - latest effective CANCEL emits no active fact,
+    - DECLARE -> CANCEL -> DECLARE resolves to the latest DECLARE,
+    - CANCEL-only history remains a no-output state.
+    """
     latest_by_identity: dict[str, ManualEventRow] = {}
     for row in rows:
         _validate_row(row)
         latest_by_identity[row.source_native_event_id] = row
 
     reduced_rows = []
-    for source_native_event_id, row in latest_by_identity.items():
-        if row.command != MANUAL_DECLARE:
+    for row in latest_by_identity.values():
+        if row.command == MANUAL_CANCEL:
             continue
-        reduced_rows.append(
-            {
-                "source_native_event_id": source_native_event_id,
-                "bond_code": row.bond_code,
-                "announcement_date": row.announcement_date,
-                "delisting_date": row.delisting_date,
-                "source": SOURCE_MANUAL,
-                "updated_at": row.created_at,
-            }
-        )
+        reduced_rows.append(_manual_row_to_import_row(row))
 
     if not reduced_rows:
-        return pd.DataFrame(columns=IMPORT_COLUMNS)
+        return _empty_manual_import_df()
 
     return pd.DataFrame(reduced_rows, columns=IMPORT_COLUMNS).fillna("")
 
