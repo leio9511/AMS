@@ -75,13 +75,30 @@ Step 5: update_state_tracker(last_successful_sync, previous_id_set)
 | 重复处理 | 重复 `source_native_event_id` 全拒绝（不 ingesting），写入 rejected trace |
 | 出错处理 | `_handle_exception` 透传 → 编排出层捕获为 `FetchResult.status="API_FAILED"` |
 
-`redemption_fetcher.py` 不感知 TuShare 字段名，只调用 provider 接口。字段映射定义在 provider 内部。
+`redemption_fetcher.py` 不感知 TuShare 字段名，只调用 provider 接口。字段映射定义在 provider 内部。`etl.tushare_provider.IMPORT_COLUMNS` 也作为 manual reducer 的共享 ingress 合约，PRD B 仅复用这 6 列导入面：
 
-#### 1.2 `manual_events.csv` — Append-only 指令日志（PRD B 待实现）
+```python
+IMPORT_COLUMNS = [
+    "source_native_event_id",
+    "bond_code",
+    "announcement_date",
+    "delisting_date",
+    "source",
+    "updated_at",
+]
+```
 
-**当前状态：未实现。** 由后续 PRD B 追加。
+#### 1.2 `manual_events.csv` — Append-only 指令日志（PRD B 局部已实现）
 
-设计目标概要（来自 issue #13）：CLI 追加 `--command DECLARE/CANCEL`，Reduce-then-apply 模式，与 PRD A 的 `process_ingress_to_ledger` 集成。
+当前仓库已落地 reducer-local 基础：
+- `data/manual_events.csv`：git-tracked seed file，仅包含表头
+- `etl/manual_event_injector.py`：纯 reducer，将 append-only manual command history 折叠为当前 manual fallback ingress facts
+
+当前 PRD B 实现边界：
+- 只覆盖 command-log local reduction
+- 不接入 fetcher degraded-mode orchestration
+- 不改动 Wave 3 `event_id` / identity contract
+- 不实现 manual/TuShare convergence、takeover、supersede、ledger tombstone 语义
 
 #### 1.3 Source 间冲突解决（PRD C 待实现）
 
