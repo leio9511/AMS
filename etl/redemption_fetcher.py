@@ -23,6 +23,7 @@ FRESHNESS_REPORT_PATH = "data/reports/freshness_report.json"
 MANUAL_EVENTS_PATH = "data/manual_events.csv"
 MANUAL_REVIEW_COMPLETIONS_PATH = "data/manual_review_completions.json"
 MANUAL_DEGRADED_IMPORT_CSV_PATH = "data/reports/manual_degraded_redemption_event_facts_import.csv"
+MANUAL_DEGRADED_EFFECTIVE_STATE_CSV_PATH = "data/reports/manual_degraded_effective_redemption_state.csv"
 MANUAL_DEGRADED_LEDGER_CSV_PATH = "data/reports/manual_degraded_redemption_event_ledger.csv"
 MANUAL_DEGRADED_CANONICAL_CSV_PATH = "data/reports/manual_degraded_canonical_redemption_state.csv"
 MANUAL_DEGRADED_TRACE_JSON_PATH = "data/reports/manual_degraded_redemption_event_trace.json"
@@ -72,6 +73,7 @@ class RedemptionFetcher:
         manual_events_path: str = MANUAL_EVENTS_PATH,
         manual_review_completions_path: str = MANUAL_REVIEW_COMPLETIONS_PATH,
         manual_degraded_import_csv_path: str = MANUAL_DEGRADED_IMPORT_CSV_PATH,
+        manual_degraded_effective_state_csv_path: str = MANUAL_DEGRADED_EFFECTIVE_STATE_CSV_PATH,
         manual_degraded_ledger_csv_path: str = MANUAL_DEGRADED_LEDGER_CSV_PATH,
         manual_degraded_canonical_csv_path: str = MANUAL_DEGRADED_CANONICAL_CSV_PATH,
         manual_degraded_trace_json_path: str = MANUAL_DEGRADED_TRACE_JSON_PATH,
@@ -88,6 +90,7 @@ class RedemptionFetcher:
         self.manual_events_path = manual_events_path
         self.manual_review_completions_path = manual_review_completions_path
         self.manual_degraded_import_csv_path = manual_degraded_import_csv_path
+        self.manual_degraded_effective_state_csv_path = manual_degraded_effective_state_csv_path
         self.manual_degraded_ledger_csv_path = manual_degraded_ledger_csv_path
         self.manual_degraded_canonical_csv_path = manual_degraded_canonical_csv_path
         self.manual_degraded_trace_json_path = manual_degraded_trace_json_path
@@ -202,6 +205,7 @@ class RedemptionFetcher:
     def _manual_degraded_operational_artifact_paths(self) -> list[str]:
         return [
             self.manual_degraded_import_csv_path,
+            self.manual_degraded_effective_state_csv_path,
             self.manual_degraded_ledger_csv_path,
             self.manual_degraded_canonical_csv_path,
             self.manual_degraded_trace_json_path,
@@ -417,6 +421,7 @@ class RedemptionFetcher:
 
         staged_import_csv_path = self._stage_csv(manual_df, self.manual_degraded_import_csv_path)
         self._publish_staged_artifacts([(staged_import_csv_path, self.manual_degraded_import_csv_path)])
+        self._delete_if_exists(self.manual_degraded_effective_state_csv_path)
         self._delete_if_exists(self.manual_degraded_ledger_csv_path)
         self._delete_if_exists(self.manual_degraded_canonical_csv_path)
         self._delete_if_exists(self.manual_degraded_trace_json_path)

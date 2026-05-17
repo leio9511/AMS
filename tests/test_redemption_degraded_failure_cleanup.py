@@ -86,6 +86,7 @@ def _fetcher(tmp_path, baseline=True):
         manual_events_path=str(tmp_path / "data" / "manual_events.csv"),
         manual_review_completions_path=str(tmp_path / "data" / "manual_review_completions.json"),
         manual_degraded_import_csv_path=str(tmp_path / "data" / "reports" / "manual_degraded_import.csv"),
+        manual_degraded_effective_state_csv_path=str(tmp_path / "data" / "reports" / "manual_degraded_effective_state.csv"),
         manual_degraded_ledger_csv_path=str(tmp_path / "data" / "reports" / "manual_degraded_ledger.csv"),
         manual_degraded_canonical_csv_path=str(tmp_path / "data" / "reports" / "manual_degraded_canonical.csv"),
         manual_degraded_trace_json_path=str(tmp_path / "data" / "reports" / "manual_degraded_trace.json"),
@@ -96,6 +97,7 @@ def _fetcher(tmp_path, baseline=True):
 def _write_stale_degraded_artifacts(fetcher):
     for path, content in [
         (fetcher.manual_degraded_import_csv_path, "source_native_event_id,bond_code,announcement_date,delisting_date,source,updated_at\nSTALE,STALE,2026-05-16,2026-06-16,manual,2026-05-16T00:00:00Z\n"),
+        (fetcher.manual_degraded_effective_state_csv_path, "date,bond_code,redeem_risk,representative_event_id,representative_revision\n2026-05-17,STALE,True,manual:STALE,0\n"),
         (fetcher.manual_degraded_ledger_csv_path, "event_id,revision,is_active_revision,revision_reason,source_native_event_id,bond_code,announcement_date,delisting_date,source,updated_at\nmanual:STALE,0,True,ACTIVE,STALE,STALE,2026-05-16,2026-06-16,manual,2026-05-16T00:00:00Z\n"),
         (fetcher.manual_degraded_canonical_csv_path, "date,bond_code,redeem_risk,representative_event_id,representative_revision\n2026-05-17,STALE,True,manual:STALE,0\n"),
         (fetcher.manual_degraded_trace_json_path, '{"pipeline_status":"MANUAL_DEGRADED"}'),
@@ -108,6 +110,7 @@ def _write_stale_degraded_artifacts(fetcher):
 
 def _assert_no_degraded_artifacts(fetcher):
     assert not pd.io.common.file_exists(fetcher.manual_degraded_import_csv_path)
+    assert not pd.io.common.file_exists(fetcher.manual_degraded_effective_state_csv_path)
     assert not pd.io.common.file_exists(fetcher.manual_degraded_ledger_csv_path)
     assert not pd.io.common.file_exists(fetcher.manual_degraded_canonical_csv_path)
     assert not pd.io.common.file_exists(fetcher.manual_degraded_trace_json_path)
@@ -169,6 +172,9 @@ def test_degraded_adapter_failure_cleans_partial_degraded_outputs(tmp_path):
     def fail_after_partial_outputs(**kwargs):
         pd.DataFrame([_manual_command_row()], columns=IMPORT_COLUMNS).to_csv(
             kwargs["ledger_csv_path"], index=False
+        )
+        pd.DataFrame([{"date": "2026-05-17", "bond_code": "PARTIAL_EFFECTIVE"}]).to_csv(
+            fetcher.manual_degraded_effective_state_csv_path, index=False
         )
         pd.DataFrame([{"date": "2026-05-17", "bond_code": "PARTIAL"}]).to_csv(
             kwargs["canonical_csv_path"], index=False
