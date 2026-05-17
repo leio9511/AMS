@@ -63,7 +63,8 @@ cache/
 __pycache__/
 
 .sdlc_runs/
-data/
+data/*
+!data/manual_events.csv
 
 .sdlc_repo.lock
 .sdlc_lock_manifest.json
