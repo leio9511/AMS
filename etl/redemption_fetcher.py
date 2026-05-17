@@ -22,6 +22,7 @@ REJECTED_TRACE_PATH = "data/reports/redemption_fetcher_rejected.json"
 FRESHNESS_REPORT_PATH = "data/reports/freshness_report.json"
 MANUAL_EVENTS_PATH = "data/manual_events.csv"
 MANUAL_REVIEW_COMPLETIONS_PATH = "data/manual_review_completions.json"
+MANUAL_DEGRADED_IMPORT_CSV_PATH = "data/reports/manual_degraded_redemption_event_facts_import.csv"
 MANUAL_DEGRADED_LEDGER_CSV_PATH = "data/reports/manual_degraded_redemption_event_ledger.csv"
 MANUAL_DEGRADED_CANONICAL_CSV_PATH = "data/reports/manual_degraded_canonical_redemption_state.csv"
 MANUAL_DEGRADED_TRACE_JSON_PATH = "data/reports/manual_degraded_redemption_event_trace.json"
@@ -70,6 +71,7 @@ class RedemptionFetcher:
         freshness_report_path: str = FRESHNESS_REPORT_PATH,
         manual_events_path: str = MANUAL_EVENTS_PATH,
         manual_review_completions_path: str = MANUAL_REVIEW_COMPLETIONS_PATH,
+        manual_degraded_import_csv_path: str = MANUAL_DEGRADED_IMPORT_CSV_PATH,
         manual_degraded_ledger_csv_path: str = MANUAL_DEGRADED_LEDGER_CSV_PATH,
         manual_degraded_canonical_csv_path: str = MANUAL_DEGRADED_CANONICAL_CSV_PATH,
         manual_degraded_trace_json_path: str = MANUAL_DEGRADED_TRACE_JSON_PATH,
@@ -85,6 +87,7 @@ class RedemptionFetcher:
         self.freshness_report_path = freshness_report_path
         self.manual_events_path = manual_events_path
         self.manual_review_completions_path = manual_review_completions_path
+        self.manual_degraded_import_csv_path = manual_degraded_import_csv_path
         self.manual_degraded_ledger_csv_path = manual_degraded_ledger_csv_path
         self.manual_degraded_canonical_csv_path = manual_degraded_canonical_csv_path
         self.manual_degraded_trace_json_path = manual_degraded_trace_json_path
@@ -370,22 +373,22 @@ class RedemptionFetcher:
         except Exception:
             return self._pipeline_result_with_status(DataProviderFailureStatus.RUNTIME_BUG.value)
 
-        staged_import_csv_path = self._stage_csv(manual_df, self.import_csv_path)
-        self._publish_staged_artifacts([(staged_import_csv_path, self.import_csv_path)])
+        staged_import_csv_path = self._stage_csv(manual_df, self.manual_degraded_import_csv_path)
+        self._publish_staged_artifacts([(staged_import_csv_path, self.manual_degraded_import_csv_path)])
         self._delete_if_exists(self.manual_degraded_ledger_csv_path)
         self._delete_if_exists(self.manual_degraded_canonical_csv_path)
         self._delete_if_exists(self.manual_degraded_trace_json_path)
 
         try:
             run_redemption_wave3_pipeline(
-                import_csv_path=self.import_csv_path,
+                import_csv_path=self.manual_degraded_import_csv_path,
                 ledger_csv_path=self.manual_degraded_ledger_csv_path,
                 canonical_csv_path=self.manual_degraded_canonical_csv_path,
                 trace_json_path=self.manual_degraded_trace_json_path,
                 target_dates=[target_date],
             )
         except Exception:
-            self._delete_if_exists(self.import_csv_path)
+            self._delete_if_exists(self.manual_degraded_import_csv_path)
             self._delete_if_exists(self.manual_degraded_ledger_csv_path)
             self._delete_if_exists(self.manual_degraded_canonical_csv_path)
             self._delete_if_exists(self.manual_degraded_trace_json_path)
