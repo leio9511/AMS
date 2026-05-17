@@ -81,7 +81,13 @@ Step 5: update_state_tracker(last_successful_sync, previous_id_set)
 
 **当前状态：未实现。** 由后续 PRD B 追加。
 
-设计目标概要（来自 issue #13）：CLI 追加 `--command DECLARE/CANCEL`，Reduce-then-apply 模式，与 PRD A 的 `process_ingress_to_ledger` 集成。
+设计目标概要（更新自当前 PRD B）：
+- CLI 追加 `--command DECLARE/CANCEL`
+- 语义对象是 **summarized same-day degraded fallback fact**，不是 raw per-announcement detail
+- operator 必须先把同一转债同一日的多条相关公告归并为一个最终事实，再通过 CLI 录入
+- PRD B 范围内同一 `(bond_code, announcement_date)` 只允许一条人工归纳事实
+- Reduce-then-apply 模式，与 PRD A 的既有 ingress / orchestration surface 集成
+- 该 manual path 只服务于 post-baseline 的 target-date degraded fallback，不承担 bootstrap / full-history reconstruction
 
 #### 1.3 Source 间冲突解决（PRD C 待实现）
 
@@ -244,16 +250,22 @@ event_id = f"{source}:{native_id}"
 ### PRD B — Manual Event Injection
 
 - 新增 `manual_events.csv` append-only 指令日志 + `manual_redemption_inject.py` CLI
-- `IMPORT_COLUMNS` 扩展为 7 列（+ `is_cancelled`）
-- `process_ingress_to_ledger` 新增 `is_cancelled=True, source=manual` → 写 `revision_reason="CANCELLED"`
-- 引入 cancellation rows
+- CLI 支持 `DECLARE/CANCEL`
+- manual 输入语义是 **单日单债单一归纳事实**，不是逐公告存档
+- 如果同一转债同一日存在多条相关公告，operator 必须先归并为一个最终事实，再通过 CLI 录入
+- PRD B 范围内同一 `(bond_code, announcement_date)` 只允许一条人工归纳事实
+- operator 只录入 event-bearing facts；未被提及的债在完成的 target-date manual review 中隐式视为该日无事件
+- `MANUAL_NO_EVENTS` 由“显式完成 review + 零 event-bearing rows”触发，而不是逐债 `NO_EVENTS` 行协议
+- degraded mode 仅用于 post-baseline / target-date fallback，不允许 bootstrap 替代或 full-history manual reconstruction
+- run-scoped degraded outputs，不把 manual fallback 写成长期 durable truth
 - DEPENDS ON: PRD A（identity 合约、provider 接口、编排框架）
 
 ### PRD C — Data Source Integration
 
-- `derive_canonical_redemption_state` 增加 `source_priority`（manual > tushare）排序
-- `process_ingress_to_ledger` 新增 SUPERSEDED 分支（`generate_supersede_rows` 等）
-- TuShare API 失败降级（freshness FAILED 时已有 ledger 推导 canonical）
+- raw announcement-level modeling if business later requires it
+- manual/TuShare takeover / source_priority / `SUPERSEDED`
+- multi-event same-day support if business later requires it
+- TuShare API 失败后的更深 source-convergence / canonical integration
 - `migrate_legacy_revision_reasons()` 脚本将 LEGACY 行重写为准确值
 - DEPENDS ON: PRD A + PRD B
 
