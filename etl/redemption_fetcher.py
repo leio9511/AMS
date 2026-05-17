@@ -8,6 +8,8 @@ from typing import Callable, Optional
 
 import pandas as pd
 
+from etl.cb_provider_base import DataProviderError, DataProviderFailureStatus
+from etl.manual_event_injector import load_and_reduce_manual_events
 from etl.redemption_pipeline import run_redemption_wave3_pipeline
 from etl.tushare_provider import IMPORT_COLUMNS, TuShareProvider
 
@@ -18,8 +20,14 @@ CANONICAL_CSV_PATH = "data/canonical_redemption_state.csv"
 TRACE_JSON_PATH = "data/reports/redemption_event_trace.json"
 REJECTED_TRACE_PATH = "data/reports/redemption_fetcher_rejected.json"
 FRESHNESS_REPORT_PATH = "data/reports/freshness_report.json"
+MANUAL_EVENTS_PATH = "data/manual_events.csv"
+MANUAL_REVIEW_COMPLETIONS_PATH = "data/manual_review_completions.json"
 BOOTSTRAP_START_DATE = "2019-01-01"
 SOURCE_TUSHARE = "tushare"
+STATUS_MANUAL_DEGRADED = "MANUAL_DEGRADED"
+STATUS_FRESHNESS_EMPTY = "FRESHNESS_EMPTY"
+STATUS_MANUAL_NO_EVENTS = "MANUAL_NO_EVENTS"
+STATUS_BOOTSTRAP_REQUIRED = "BOOTSTRAP_REQUIRED"
 TRACKER_LAST_SUCCESSFUL_SYNC = "last_successful_sync"
 TRACKER_VERSION = "version"
 TRACKER_PREVIOUS_ID_SET = "previous_id_set"
@@ -57,6 +65,8 @@ class RedemptionFetcher:
         rejected_trace_path: str = REJECTED_TRACE_PATH,
         state_path: str = FETCHER_STATE_PATH,
         freshness_report_path: str = FRESHNESS_REPORT_PATH,
+        manual_events_path: str = MANUAL_EVENTS_PATH,
+        manual_review_completions_path: str = MANUAL_REVIEW_COMPLETIONS_PATH,
         today_fn: Optional[Callable[[], str]] = None,
     ):
         self.provider = provider
@@ -67,6 +77,8 @@ class RedemptionFetcher:
         self.rejected_trace_path = rejected_trace_path
         self.state_path = state_path
         self.freshness_report_path = freshness_report_path
+        self.manual_events_path = manual_events_path
+        self.manual_review_completions_path = manual_review_completions_path
         self._today_fn = today_fn
         self.filtered_snapshot_ids: list[str] = []
 
@@ -281,6 +293,70 @@ class RedemptionFetcher:
             "suggested_action": EMPTY_SNAPSHOT_WARNING_SUGGESTED_ACTION,
         }
 
+    def _has_authoritative_baseline(self) -> bool:
+        tracker_state = self._read_state_tracker()
+        if tracker_state.get(TRACKER_LAST_SUCCESSFUL_SYNC):
+            return True
+
+        for path in [self.ledger_csv_path, self.canonical_csv_path]:
+            if self._read_artifact_row_count(path) > 0:
+                return True
+        return False
+
+    def _read_manual_fallback_for_target_date(self, target_date: str) -> pd.DataFrame:
+        manual_df = load_and_reduce_manual_events(
+            self.manual_events_path,
+            updated_at=self._utc_timestamp(),
+        )
+        self._validate_import_columns(manual_df)
+        manual_df = manual_df[IMPORT_COLUMNS].fillna("")
+        return manual_df[manual_df["announcement_date"].astype(str) == target_date].reset_index(drop=True)
+
+    def _has_manual_review_completion(self, target_date: str) -> bool:
+        if not os.path.exists(self.manual_review_completions_path):
+            return False
+        with open(self.manual_review_completions_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if not isinstance(payload, list):
+            return False
+        return any(
+            str(item.get("announcement_date", "")).strip() == target_date
+            for item in payload
+            if isinstance(item, dict)
+        )
+
+    def _pipeline_result_with_status(self, status: str, success: bool = False, ingress_count: int = 0) -> PipelineResult:
+        self._write_freshness_report(
+            pipeline_status=status,
+            disappearance_warning=None,
+        )
+        return PipelineResult(
+            success=success,
+            status=status,
+            ingress_count=ingress_count,
+            ledger_event_count=self._read_artifact_row_count(self.ledger_csv_path) if success else 0,
+            canonical_date_count=self._read_artifact_row_count(self.canonical_csv_path) if success else 0,
+            disappearance_warning=None,
+        )
+
+    def _handle_network_fallback(self, target_date: str) -> PipelineResult:
+        if not self._has_authoritative_baseline():
+            return self._pipeline_result_with_status(STATUS_BOOTSTRAP_REQUIRED)
+
+        manual_df = self._read_manual_fallback_for_target_date(target_date)
+        if manual_df.empty:
+            if self._has_manual_review_completion(target_date):
+                return self._pipeline_result_with_status(STATUS_MANUAL_NO_EVENTS, success=True)
+            return self._pipeline_result_with_status(STATUS_FRESHNESS_EMPTY)
+
+        staged_import_csv_path = self._stage_csv(manual_df, self.import_csv_path)
+        self._publish_staged_artifacts([(staged_import_csv_path, self.import_csv_path)])
+        return self._pipeline_result_with_status(
+            STATUS_MANUAL_DEGRADED,
+            success=True,
+            ingress_count=len(manual_df),
+        )
+
     def fetch_and_build_import_csv(
         self,
         import_csv_path: Optional[str] = None,
@@ -293,6 +369,13 @@ class RedemptionFetcher:
             mapped_result = self.provider.fetch_and_map_redemption_events(
                 BOOTSTRAP_START_DATE,
                 fetch_today,
+            )
+        except DataProviderError as exc:
+            return FetchResult(
+                success=False,
+                status=exc.status,
+                row_count=0,
+                rejected_count=0,
             )
         except Exception:
             return FetchResult(
@@ -357,6 +440,16 @@ class RedemptionFetcher:
                     disappearance_warning=None,
                     empty_snapshot_warning=self._build_empty_snapshot_warning(),
                 )
+
+            explicit_statuses = {
+                DataProviderFailureStatus.AUTH_FAILED.value,
+                DataProviderFailureStatus.QUOTA_EXCEEDED.value,
+                DataProviderFailureStatus.RUNTIME_BUG.value,
+            }
+            if fetch_result.status == DataProviderFailureStatus.NETWORK_UNAVAILABLE.value:
+                return self._handle_network_fallback(today)
+            if fetch_result.status in explicit_statuses:
+                return self._pipeline_result_with_status(fetch_result.status)
 
             return PipelineResult(
                 success=False,
