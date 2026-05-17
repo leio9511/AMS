@@ -361,14 +361,20 @@ class RedemptionFetcher:
         if not self._has_authoritative_baseline():
             return self._pipeline_result_with_status(STATUS_BOOTSTRAP_REQUIRED)
 
-        manual_df = self._read_manual_fallback_for_target_date(target_date)
-        if manual_df.empty:
-            if self._has_manual_review_completion(target_date):
-                return self._pipeline_result_with_status(STATUS_MANUAL_NO_EVENTS, success=True)
-            return self._pipeline_result_with_status(STATUS_FRESHNESS_EMPTY)
+        try:
+            manual_df = self._read_manual_fallback_for_target_date(target_date)
+            if manual_df.empty:
+                if self._has_manual_review_completion(target_date):
+                    return self._pipeline_result_with_status(STATUS_MANUAL_NO_EVENTS, success=True)
+                return self._pipeline_result_with_status(STATUS_FRESHNESS_EMPTY)
+        except Exception:
+            return self._pipeline_result_with_status(DataProviderFailureStatus.RUNTIME_BUG.value)
 
         staged_import_csv_path = self._stage_csv(manual_df, self.import_csv_path)
         self._publish_staged_artifacts([(staged_import_csv_path, self.import_csv_path)])
+        self._delete_if_exists(self.manual_degraded_ledger_csv_path)
+        self._delete_if_exists(self.manual_degraded_canonical_csv_path)
+        self._delete_if_exists(self.manual_degraded_trace_json_path)
 
         try:
             run_redemption_wave3_pipeline(
@@ -383,6 +389,10 @@ class RedemptionFetcher:
             self._delete_if_exists(self.manual_degraded_ledger_csv_path)
             self._delete_if_exists(self.manual_degraded_canonical_csv_path)
             self._delete_if_exists(self.manual_degraded_trace_json_path)
+            self._write_freshness_report(
+                pipeline_status="WAVE3_FAILED",
+                disappearance_warning=None,
+            )
             return PipelineResult(
                 success=False,
                 status="WAVE3_FAILED",

@@ -212,15 +212,7 @@ def test_network_failure_with_baseline_empty_manual_and_completion_returns_manua
     assert _freshness_status(fetcher) == "MANUAL_NO_EVENTS"
 
 
-@pytest.mark.parametrize(
-    ("error", "status"),
-    [
-        (DataProviderAuthError("bad token"), "AUTH_FAILED"),
-        (DataProviderQuotaError("quota"), "QUOTA_EXCEEDED"),
-        (DataProviderRuntimeBugError("bug"), "RUNTIME_BUG"),
-    ],
-)
-def test_non_network_failures_never_read_or_use_manual_fallback(tmp_path, error, status):
+def _assert_failure_does_not_use_manual_fallback(tmp_path, error, status):
     provider = StubProvider(error=error)
     fetcher = _fetcher(tmp_path, provider)
     manual_events_path = tmp_path / "data" / "manual_events.csv"
@@ -237,25 +229,40 @@ def test_non_network_failures_never_read_or_use_manual_fallback(tmp_path, error,
     assert _freshness_status(fetcher) == status
 
 
+@pytest.mark.parametrize(
+    ("error", "status"),
+    [
+        (DataProviderAuthError("bad token"), "AUTH_FAILED"),
+        (DataProviderQuotaError("quota"), "QUOTA_EXCEEDED"),
+        (DataProviderRuntimeBugError("bug"), "RUNTIME_BUG"),
+    ],
+)
+def test_non_network_failures_never_read_or_use_manual_fallback(tmp_path, error, status):
+    _assert_failure_does_not_use_manual_fallback(tmp_path, error, status)
+
+
 def test_auth_failure_never_reads_or_uses_manual_fallback(tmp_path):
-    provider = StubProvider(error=DataProviderAuthError("bad token"))
-    fetcher = _fetcher(tmp_path, provider)
-    result = fetcher.run_redemption_sync_pipeline()
-    assert result.status == "AUTH_FAILED"
+    _assert_failure_does_not_use_manual_fallback(
+        tmp_path,
+        DataProviderAuthError("bad token"),
+        "AUTH_FAILED",
+    )
 
 
 def test_quota_failure_never_reads_or_uses_manual_fallback(tmp_path):
-    provider = StubProvider(error=DataProviderQuotaError("quota"))
-    fetcher = _fetcher(tmp_path, provider)
-    result = fetcher.run_redemption_sync_pipeline()
-    assert result.status == "QUOTA_EXCEEDED"
+    _assert_failure_does_not_use_manual_fallback(
+        tmp_path,
+        DataProviderQuotaError("quota"),
+        "QUOTA_EXCEEDED",
+    )
 
 
 def test_runtime_bug_never_reads_or_uses_manual_fallback(tmp_path):
-    provider = StubProvider(error=DataProviderRuntimeBugError("bug"))
-    fetcher = _fetcher(tmp_path, provider)
-    result = fetcher.run_redemption_sync_pipeline()
-    assert result.status == "RUNTIME_BUG"
+    _assert_failure_does_not_use_manual_fallback(
+        tmp_path,
+        DataProviderRuntimeBugError("bug"),
+        "RUNTIME_BUG",
+    )
 
 
 def test_plain_provider_exception_maps_to_runtime_bug_and_never_uses_manual_fallback(tmp_path):
@@ -287,6 +294,44 @@ def test_degraded_facts_are_filtered_to_target_announcement_date(tmp_path):
     assert not (tmp_path / "data" / "import.csv").exists()
 
 
+def test_degraded_run_discards_prior_manual_degraded_state_for_current_target_date(tmp_path):
+    provider = StubProvider(error=DataProviderNetworkUnavailableError("network down"))
+    fetcher = _fetcher(tmp_path, provider)
+    old_ledger_path = tmp_path / "data" / "reports" / "manual_degraded_ledger.csv"
+    old_ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    old_ledger_path.write_text(
+        "event_id,revision,is_active_revision,revision_reason,source_native_event_id,bond_code,announcement_date,delisting_date,source,updated_at\n"
+        "manual:OLD_2026-05-16,0,True,ACTIVE,OLD_2026-05-16,OLD,2026-05-16,2026-06-16,manual,2026-05-16T00:00:00Z\n",
+        encoding="utf-8",
+    )
+    _write_manual_events(tmp_path / "data" / "manual_events.csv", [_manual_command_row(bond_code="CURRENT")])
+
+    result = fetcher.run_redemption_sync_pipeline()
+
+    assert result.status == "MANUAL_DEGRADED"
+    degraded_ledger = pd.read_csv(fetcher.manual_degraded_ledger_csv_path, dtype=str, keep_default_na=False)
+    assert degraded_ledger["bond_code"].tolist() == ["CURRENT"]
+    assert degraded_ledger["announcement_date"].tolist() == ["2026-05-17"]
+
+
+def test_manual_degraded_wave3_failure_writes_freshness_report(tmp_path):
+    provider = StubProvider(error=DataProviderNetworkUnavailableError("network down"))
+    fetcher = _fetcher(tmp_path, provider)
+    _write_manual_events(tmp_path / "data" / "manual_events.csv", [_manual_command_row()])
+
+    def fail_wave3(**kwargs):
+        raise RuntimeError("degraded wave3 failed")
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr("etl.redemption_fetcher.run_redemption_wave3_pipeline", fail_wave3)
+        result = fetcher.run_redemption_sync_pipeline()
+
+    assert result.success is False
+    assert result.status == "WAVE3_FAILED"
+    assert _freshness_status(fetcher) == "WAVE3_FAILED"
+    assert not (tmp_path / "data" / "import.csv").exists()
+
+
 def test_manual_fallback_ingress_schema_asserts_redemption_ledger_import_columns(tmp_path):
     provider = StubProvider(error=DataProviderNetworkUnavailableError("network down"))
     fetcher = _fetcher(tmp_path, provider)
@@ -296,8 +341,12 @@ def test_manual_fallback_ingress_schema_asserts_redemption_ledger_import_columns
         columns=["command", "source_native_event_id", "bond_code", "announcement_date", "reason", "created_at"],
     )
 
-    with pytest.raises(ValueError, match="missing required columns: delisting_date"):
-        fetcher.run_redemption_sync_pipeline()
+    result = fetcher.run_redemption_sync_pipeline()
+
+    assert result.success is False
+    assert result.status == "RUNTIME_BUG"
+    assert _freshness_status(fetcher) == "RUNTIME_BUG"
+    assert not (tmp_path / "data" / "import.csv").exists()
 
     _write_manual_events(tmp_path / "data" / "manual_events.csv", [_manual_command_row()])
     result = fetcher.run_redemption_sync_pipeline()
