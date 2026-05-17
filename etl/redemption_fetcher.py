@@ -199,6 +199,18 @@ class RedemptionFetcher:
         if os.path.exists(path):
             os.unlink(path)
 
+    def _manual_degraded_operational_artifact_paths(self) -> list[str]:
+        return [
+            self.manual_degraded_import_csv_path,
+            self.manual_degraded_ledger_csv_path,
+            self.manual_degraded_canonical_csv_path,
+            self.manual_degraded_trace_json_path,
+        ]
+
+    def _cleanup_manual_degraded_operational_artifacts(self):
+        for path in self._manual_degraded_operational_artifact_paths():
+            self._delete_if_exists(path)
+
     def _wave3_truth_source_paths(self) -> list[str]:
         return [
             self.ledger_csv_path,
@@ -358,7 +370,10 @@ class RedemptionFetcher:
         ingress_count: int = 0,
         ledger_csv_path: Optional[str] = None,
         canonical_csv_path: Optional[str] = None,
+        cleanup_degraded_artifacts: bool = False,
     ) -> PipelineResult:
+        if cleanup_degraded_artifacts:
+            self._cleanup_manual_degraded_operational_artifacts()
         self._write_freshness_report(
             pipeline_status=status,
             disappearance_warning=None,
@@ -376,16 +391,29 @@ class RedemptionFetcher:
 
     def _handle_network_fallback(self, target_date: str) -> PipelineResult:
         if not self._has_authoritative_baseline():
-            return self._pipeline_result_with_status(STATUS_BOOTSTRAP_REQUIRED)
+            return self._pipeline_result_with_status(
+                STATUS_BOOTSTRAP_REQUIRED,
+                cleanup_degraded_artifacts=True,
+            )
 
         try:
             manual_df = self._read_manual_fallback_for_target_date(target_date)
             if manual_df.empty:
                 if self._has_manual_review_completion(target_date):
-                    return self._pipeline_result_with_status(STATUS_MANUAL_NO_EVENTS, success=True)
-                return self._pipeline_result_with_status(STATUS_FRESHNESS_EMPTY)
+                    return self._pipeline_result_with_status(
+                        STATUS_MANUAL_NO_EVENTS,
+                        success=True,
+                        cleanup_degraded_artifacts=True,
+                    )
+                return self._pipeline_result_with_status(
+                    STATUS_FRESHNESS_EMPTY,
+                    cleanup_degraded_artifacts=True,
+                )
         except Exception:
-            return self._pipeline_result_with_status(DataProviderFailureStatus.RUNTIME_BUG.value)
+            return self._pipeline_result_with_status(
+                DataProviderFailureStatus.RUNTIME_BUG.value,
+                cleanup_degraded_artifacts=True,
+            )
 
         staged_import_csv_path = self._stage_csv(manual_df, self.manual_degraded_import_csv_path)
         self._publish_staged_artifacts([(staged_import_csv_path, self.manual_degraded_import_csv_path)])
@@ -403,10 +431,7 @@ class RedemptionFetcher:
             )
             self._decorate_manual_degraded_trace(target_date)
         except Exception:
-            self._delete_if_exists(self.manual_degraded_import_csv_path)
-            self._delete_if_exists(self.manual_degraded_ledger_csv_path)
-            self._delete_if_exists(self.manual_degraded_canonical_csv_path)
-            self._delete_if_exists(self.manual_degraded_trace_json_path)
+            self._cleanup_manual_degraded_operational_artifacts()
             self._write_freshness_report(
                 pipeline_status="WAVE3_FAILED",
                 disappearance_warning=None,
