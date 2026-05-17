@@ -21,6 +21,8 @@ The intended semantics are *incremental post-baseline fallback*, not *manual tru
 - if a healthy authoritative baseline already exists, operators may provide manual facts only for the missing run window since the last successful authoritative sync
 - if TuShare is unavailable only for the current day, operators provide only the current-day missing increment (or an explicit no-new-events degraded outcome)
 - if TuShare is unavailable during bootstrap / cold start, manual fallback is not allowed to stand in for full historical source reconstruction
+- if the system cannot establish the required historical baseline from TuShare, the pipeline must fail closed rather than request manual reconstruction of full history
+- manual fallback is therefore limited to target-date / missing-window degraded execution and is never a substitute for bootstrap or historical backfill
 
 This PRD must stay narrowly scoped. The goal is **not** to redesign Wave 3 identity semantics or unify manual and TuShare into a single business-event stream. That larger problem exists, but it is not approved inside PRD B.
 
@@ -62,10 +64,13 @@ PRD B therefore needs to provide:
   Add `data/manual_events.csv` as the truth source for manual operator commands. Existing rows are never edited or deleted.
 
 - **FR2 — CLI appends commands only**
-  `scripts/manual_redemption_inject.py` appends `DECLARE` or `CANCEL` rows to `manual_events.csv` and performs basic argument validation.
+  `scripts/manual_redemption_inject.py` appends `DECLARE` or `CANCEL` rows to `manual_events.csv`, performs basic argument validation over business fields only, and works together with an explicit operator-completion step for the target-date degraded fallback workflow.
 
 - **FR3 — Deterministic reduce of manual command history**
-  A pure transform reduces the append-only command history by `source_native_event_id` into the latest manual state for each identity.
+  A pure transform reduces the append-only command history by a deterministic system-derived `source_native_event_id` into the latest manual state for each identity.
+
+- **FR3A — Explicit completion boundary for empty manual input**
+  PRD B must define an explicit operator-completion protocol for target-date degraded fallback review. Zero event-bearing manual rows may be interpreted as `MANUAL_NO_EVENTS` only after that completion step is explicitly recorded.
 
 - **FR4 — Bounded degraded-mode ingestion**
   During non-bootstrap daily runs, if TuShare fetch fails and reduced manual facts are non-empty, the pipeline may continue in a clearly marked degraded mode.
@@ -144,6 +149,11 @@ Therefore:
 
 `manual_events.csv` is append-only and git-tracked.
 
+This file records **summarized same-day degraded fallback facts**, not raw per-announcement detail.
+For PRD B, the operator is responsible for consolidating multiple same-day announcements for the same bond into one final redemption-related fact before CLI submission.
+PRD B does not model raw announcement archival or multi-announcement merge semantics inside the system.
+`manual_events.csv` stores only event-bearing manual command rows. It does not require per-bond explicit “no event” rows.
+
 Schema:
 
 ```text
@@ -152,11 +162,21 @@ command,source_native_event_id,bond_code,announcement_date,delisting_date,reason
 
 Rules:
 - `command` is `DECLARE` or `CANCEL`
-- `source_native_event_id` is provided by the operator and is the identity key for reducing manual commands
+- `announcement_date` is the target-date identity boundary for PRD B manual fallback
+- at most one logical manual fact may exist per `(bond_code, announcement_date)` pair within PRD B degraded fallback scope
+- `source_native_event_id` is a system-derived deterministic identity key generated from the approved business input fields for the summarized same-day manual fact; operators do not provide it directly
 - `delisting_date` is required for `DECLARE`
 - `delisting_date` must be empty for `CANCEL`
 - `reason` is required for both commands
 - `created_at` is written by the CLI at append time
+
+Deterministic identity rule for this PRD:
+- `source_native_event_id` must be derived internally from the exact tuple `(bond_code, announcement_date)`
+- `delisting_date`, `reason`, and `command` must not participate in identity derivation
+- a later `CANCEL` or re-`DECLARE` targets the same logical summarized same-day manual fact only if it is issued with the same `(bond_code, announcement_date)` pair
+- `CANCEL` revokes a previously entered manual fallback fact in the append-only command log; it is not a claim that the real-world announcement itself was cancelled
+- if multiple announcements exist for the same bond on the same date, the operator must consolidate them into one final fact before CLI entry; PRD B does not support multiple independent same-day facts for one bond
+- if a future design needs raw announcement-level modeling or multiple same-day facts for the same bond/date pair, that is a new PRD rather than an implementation choice inside PRD B
 
 Example:
 
@@ -167,33 +187,40 @@ CANCEL,123456.SH_2026-05-15,123456.SH,2026-05-15,,wrong manual entry,2026-05-15T
 
 ### 3.5 CLI contract
 
-`manual_redemption_inject.py` is a thin append-only writer.
+`manual_redemption_inject.py` is a thin append-only writer for **summarized same-day degraded fallback facts**.
 
 Responsibilities:
 - validate required arguments
 - normalize command casing
 - enforce `DECLARE` vs `CANCEL` field rules
+- derive `source_native_event_id` internally from the PRD-approved business input tuple `(bond_code, announcement_date)` using one documented deterministic rule
 - append exactly one CSV row
 - never rewrite prior rows
+- support a separate explicit operator-completion step for the target-date degraded fallback review workflow
 
 Non-responsibilities:
+- no raw per-announcement archival
+- no automatic multi-announcement merge logic
 - no ledger reads
 - no source-convergence logic
 - no takeover logic
 - no canonical regeneration logic
+- no ledger-level cancellation or durable-truth revocation semantics
 
 ### 3.6 Reduction model
 
-`etl/manual_event_injector.py` reduces command history per `source_native_event_id`.
+`etl/manual_event_injector.py` reduces command history per system-derived `source_native_event_id`.
 
 Reducer semantics:
-- latest effective `DECLARE` => emit one active manual fact
+- latest effective `DECLARE` => emit one active summarized same-day manual fact
 - latest effective `CANCEL` => emit no manual fact for that identity
 - `DECLARE -> CANCEL -> DECLARE` => final DECLARE wins
 - `CANCEL` with no preceding DECLARE in command history => reduced output is empty for that identity
+- `CANCEL` is operationally a revocation of a previously entered manual fallback fact before durable-truth persistence; it does not define a ledger-level cancellation lifecycle for long-lived Wave 3 truth
 
 This reducer is intentionally **command-log local**.
 It does not inspect ledger history and does not attempt to encode post-ingestion lifecycle.
+It also does not implement raw announcement-level merge semantics; the operator must already have consolidated same-day multiple announcements into one final fact before CLI submission.
 
 ### 3.7 Output of manual reducer
 
@@ -227,6 +254,7 @@ Under PRD B:
 - reduced manual fallback facts must **not** be persisted as long-lived manual ledger truth that survives as a permanent parallel source after TuShare recovery
 - the durable audit trail for manual intervention is `data/manual_events.csv`, not permanent manual truth rows in the Wave 3 ledger
 - when TuShare recovers, the next successful authoritative run replaces degraded operational state rather than converging with or coexisting alongside permanent manual ledger truth
+- PRD B assumes operator mistakes in manual entry are corrected before durable-truth persistence through append-only command-log revocation (`CANCEL`) and re-reduction of the current effective manual state
 
 #### Frozen file-boundary contract for degraded runs
 To keep the truth boundary implementable and auditable, PRD B explicitly freezes what degraded runs may and may not write.
@@ -302,15 +330,25 @@ If the system lacks required baseline state and TuShare fetch fails:
 
 #### Empty degraded fallback
 If TuShare fetch fails for the missing run window and reduced manual facts are empty:
-- fail with an explicit freshness/status outcome
-- do not pretend the run succeeded
-- this empty outcome means no usable incremental fallback facts were supplied for the missing run window
+- this must not be treated as a normal successful authoritative TuShare run by default
+- if the operator has explicitly completed the target-date manual review workflow and submitted zero event-bearing manual rows, the run may complete with explicit `MANUAL_NO_EVENTS` degraded semantics
+- if the system required event-bearing fallback facts for the missing run window and no explicit operator-completion signal exists, the run must fail with explicit `FRESHNESS_EMPTY`
+- under no circumstance may the system interpret empty manual fallback as permission to fabricate historical/manual backfill beyond the target run window
+
+#### Explicit operator-completion boundary for empty manual input
+PRD B requires an explicit operator-completion protocol for target-date degraded fallback review.
+This may be implemented as a finalize CLI action, a completion marker artifact, or an equivalent explicit control-plane signal.
+The protocol contract is frozen as follows:
+- before the completion signal exists, zero manual event rows are ambiguous and must not be interpreted as `MANUAL_NO_EVENTS`
+- after the completion signal exists, zero event-bearing manual rows for the target date mean `MANUAL_NO_EVENTS`
+- the operator records only bonds with event-bearing facts; bonds omitted from a completed target-date manual review are implicitly treated as having no event for that date
+- if the operator completes the manual review and records zero event-bearing rows, the semantic meaning is “no relevant redemption-related events were found for the target date across the reviewed universe”
 
 #### No-new-events degraded outcome
-If TuShare fetch fails for the missing run window, a prior authoritative baseline exists, and the operator explicitly records that there are no new events in that missing window:
+If TuShare fetch fails for the missing run window, a prior authoritative baseline exists, the operator explicitly completes the manual review workflow for the target date, and zero event-bearing manual rows are submitted:
 - the degraded run may complete with an explicit no-new-events operational outcome rather than inventing business events
 - this outcome must be externally distinguishable from both normal TuShare success and event-bearing manual fallback
-- this outcome must not require ambiguous free-form placeholders such as raw `N/A` business-event rows
+- this outcome must not require explicit per-bond `NO_EVENTS` rows or ambiguous free-form placeholders such as raw `N/A` business-event rows
 - this outcome must be surfaced using the frozen externally observable status string `MANUAL_NO_EVENTS`
 
 ### 3.9 Canonical / ledger boundary
@@ -322,6 +360,7 @@ Therefore:
 - no requirement to append new `SUPERSEDED` revisions for manual-to-TuShare takeover
 - no requirement to introduce manual-overrides-active-TuShare semantics
 - no requirement to express `CANCEL` as a ledger-level cross-source lifecycle action
+- if erroneous manual-derived durable truth is ever persisted outside PRD B’s intended run-scoped boundary, recovery is an operational rebuild concern using authoritative TuShare data once available, not an in-PRD-B ledger-level cancellation protocol
 
 If a later design wants manual/TuShare convergence inside one ledger stream, that work needs a separate architecture PRD.
 
@@ -329,16 +368,31 @@ If a later design wants manual/TuShare convergence inside one ledger stream, tha
 
 - **Scenario 1: Append DECLARE command**
   - **Given** `manual_events.csv` exists with a valid header
-  - **When** the operator runs the CLI with `--command DECLARE` and all required fields
+  - **When** the operator runs the CLI with `--command DECLARE` and all required business fields
   - **Then** exactly one new CSV row is appended
   - **And** no previous row is modified or deleted
+  - **And** the CLI derives `source_native_event_id` internally from `(bond_code, announcement_date)` rather than requiring an explicit identity argument
+  - **And** the appended row represents one summarized same-day manual fact rather than raw per-announcement detail
 
 - **Scenario 2: Append CANCEL command**
   - **Given** `manual_events.csv` exists with prior command history for an identity
-  - **When** the operator runs the CLI with `--command CANCEL` and valid required fields
+  - **When** the operator runs the CLI with `--command CANCEL` and valid required business fields using the same `(bond_code, announcement_date)` pair as the target prior DECLARE
   - **Then** exactly one new CSV row is appended
   - **And** `delisting_date` is empty in the appended row
   - **And** no previous row is modified or deleted
+
+- **Scenario 2A: Same-day multiple announcements are consolidated before entry**
+  - **Given** a bond has multiple relevant announcements on the same target date
+  - **When** the operator uses the PRD B manual CLI
+  - **Then** the operator records only one final summarized manual fact for that bond/date
+  - **And** PRD B does not accept multiple independent same-day facts for the same `(bond_code, announcement_date)` pair
+  - **And** raw per-announcement detail is out of scope for this manual fallback path
+
+- **Scenario 2B: Explicit operator-completion makes zero rows auditable**
+  - **Given** a target-date degraded manual review completes with no event-bearing facts to add
+  - **When** the operator submits the PRD B completion signal for that target date
+  - **Then** the system has sufficient evidence to distinguish explicit completed no-events review from silent empty fallback
+  - **And** no explicit per-bond `NO_EVENTS` row is required
 
 - **Scenario 3: Reduce DECLARE only**
   - **Given** command history for an identity ends with `DECLARE`
@@ -411,7 +465,8 @@ If a later design wants manual/TuShare convergence inside one ledger stream, tha
 - **Scenario 13: Explicit no-new-events degraded outcome**
   - **Given** a non-bootstrap daily run where TuShare fails with a `NETWORK_UNAVAILABLE`-class failure
   - **And** a prior authoritative baseline exists
-  - **And** the operator explicitly records that there are no new events in the missing run window
+  - **And** the operator explicitly completes the target-date manual review workflow
+  - **And** zero event-bearing manual rows were submitted for that completed review
   - **When** the degraded run executes
   - **Then** the run completes with explicit no-new-events status `MANUAL_NO_EVENTS`
   - **And** that outcome is distinct from normal success and distinct from event-bearing manual fallback
@@ -458,10 +513,11 @@ The main risk is not the CLI itself. The main risk is **scope leakage**:
    - verify `DECLARE/CANCEL` state transitions
    - verify no reducer dependency on ledger state or runtime clock
 
-2. **CLI behavior tests**
+2. **CLI / completion behavior tests**
    - verify valid rows are appended exactly once
    - verify invalid argument combinations are rejected
    - verify no historical row is rewritten
+   - verify explicit operator-completion semantics for zero-row target-date review
 
 3. **Pipeline orchestration tests**
    - mock TuShare fetch success/failure
@@ -521,6 +577,8 @@ If implementation requires deeper changes to ledger identity or cross-source lif
 - **v1.0**: Drafts attempted to combine manual command log delivery with Wave 3 identity/lifecycle redesign.
 - **Audit Rejection (earlier drafts)**: Rejections centered on hidden scope expansion: changing frozen `event_id` contract, introducing cross-source lifecycle semantics without migration planning, and overloading degraded mode with broader truth-boundary changes.
 - **v2.0 Revision Rationale**: This rewrite deliberately narrows PRD B to a degraded-mode manual fallback path, defers source convergence, and explicitly forbids identity-contract migration under this PRD.
+- **v2.1 Clarification Rationale**: This revision further clarifies that PRD B manual fallback records one summarized same-day fact per bond/date, not raw per-announcement detail, and that any same-day multi-announcement interpretation must be consolidated by the operator before CLI submission.
+- **v2.2 Clarification Rationale**: This revision removes row-level `NO_EVENTS` commands in favor of an explicit operator-completion boundary: operators record only event-bearing facts, omitted bonds are implicitly no-event after completed review, and `CANCEL` is limited to revoking previously entered manual fallback facts before durable-truth persistence.
 
 ---
 
@@ -547,6 +605,32 @@ CANCEL
 --ann <YYYY-MM-DD> (required)
 --delist <YYYY-MM-DD> (required for DECLARE, forbidden/empty for CANCEL)
 --reason <string> (required)
+```
+
+### Deterministic identity derivation contract
+
+```text
+source_native_event_id is system-derived from exactly (bond_code, announcement_date).
+The CLI must not require or accept an operator-supplied source_native_event_id.
+CANCEL and later DECLARE commands target the same logical summarized same-day manual fact only when they reuse the same bond_code + announcement_date pair.
+```
+
+### Operator completion contract for empty manual review
+
+```text
+Operators record only event-bearing facts for target-date degraded fallback review.
+Bonds omitted from a completed target-date manual review are implicitly treated as no-event for that date.
+Zero event-bearing rows may be interpreted as MANUAL_NO_EVENTS only after an explicit operator-completion signal is recorded.
+Before that completion signal exists, zero rows remain ambiguous and must not be treated as MANUAL_NO_EVENTS.
+```
+
+### Same-day manual fact consolidation rule
+
+```text
+For PRD B degraded manual fallback, the operator records one summarized same-day redemption fact per (bond_code, announcement_date).
+If multiple relevant announcements exist for the same bond on the same date, the operator must consolidate them into one final fact before CLI submission.
+PRD B does not support multiple independent same-day facts for the same bond/date pair and does not model raw per-announcement archival.
+CANCEL only revokes a previously entered manual fallback fact before durable-truth persistence; ledger-level cancellation semantics are out of scope for PRD B.
 ```
 
 ### Required degraded status strings
