@@ -349,7 +349,7 @@ def test_fetch_and_build_import_csv_returns_empty_abort_without_creating_a_misle
 
 
 
-def test_fetch_and_build_import_csv_returns_api_failed_without_mutating_existing_fetch_outputs_or_observation_baseline(tmp_path):
+def test_fetch_and_build_import_csv_returns_runtime_bug_without_mutating_existing_fetch_outputs_or_observation_baseline(tmp_path):
     import_csv_path = tmp_path / "artifacts" / "import.csv"
     rejected_trace_path = tmp_path / "artifacts" / "rejected.json"
 
@@ -374,7 +374,7 @@ def test_fetch_and_build_import_csv_returns_api_failed_without_mutating_existing
 
     assert result == FetchResult(
         success=False,
-        status="API_FAILED",
+        status="RUNTIME_BUG",
         row_count=0,
         rejected_count=0,
     )
@@ -561,7 +561,7 @@ def test_run_redemption_sync_pipeline_writes_empty_snapshot_warning_and_preserve
 
 
 
-def test_run_redemption_sync_pipeline_returns_fetch_failed_without_invoking_trade_calendar_or_wave3(tmp_path):
+def test_run_redemption_sync_pipeline_returns_runtime_bug_without_invoking_trade_calendar_or_wave3(tmp_path):
     import_csv_path = tmp_path / "data" / "import.csv"
     ledger_csv_path = tmp_path / "data" / "ledger.csv"
     canonical_csv_path = tmp_path / "data" / "canonical.csv"
@@ -588,7 +588,7 @@ def test_run_redemption_sync_pipeline_returns_fetch_failed_without_invoking_trad
 
     assert result == PipelineResult(
         success=False,
-        status="FETCH_FAILED",
+        status="RUNTIME_BUG",
         ingress_count=0,
         ledger_event_count=0,
         canonical_date_count=0,
@@ -659,7 +659,7 @@ def test_run_redemption_sync_pipeline_leaves_existing_outputs_unchanged_on_fetch
 
     assert result == PipelineResult(
         success=False,
-        status="FETCH_FAILED",
+        status="RUNTIME_BUG",
         ingress_count=0,
         ledger_event_count=0,
         canonical_date_count=0,
@@ -668,8 +668,20 @@ def test_run_redemption_sync_pipeline_leaves_existing_outputs_unchanged_on_fetch
     assert provider.trade_calendar_calls == []
     wave3_mock.assert_not_called()
 
-    for path, original_bytes in expected_bytes.items():
-        assert path.read_bytes() == original_bytes
+    expected_unchanged_paths = [
+        import_csv_path,
+        ledger_csv_path,
+        canonical_csv_path,
+        trace_json_path,
+        rejected_trace_path,
+        state_path,
+    ]
+    for path in expected_unchanged_paths:
+        assert path.read_bytes() == expected_bytes[path]
+    freshness_payload = json.loads(freshness_report_path.read_text(encoding="utf-8"))
+    assert freshness_payload["pipeline_status"] == "RUNTIME_BUG"
+    assert freshness_payload["empty_snapshot_warning"] is None
+    assert freshness_payload["disappearance_warning"] is None
 
 
 

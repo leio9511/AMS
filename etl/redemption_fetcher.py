@@ -22,6 +22,9 @@ REJECTED_TRACE_PATH = "data/reports/redemption_fetcher_rejected.json"
 FRESHNESS_REPORT_PATH = "data/reports/freshness_report.json"
 MANUAL_EVENTS_PATH = "data/manual_events.csv"
 MANUAL_REVIEW_COMPLETIONS_PATH = "data/manual_review_completions.json"
+MANUAL_DEGRADED_LEDGER_CSV_PATH = "data/reports/manual_degraded_redemption_event_ledger.csv"
+MANUAL_DEGRADED_CANONICAL_CSV_PATH = "data/reports/manual_degraded_canonical_redemption_state.csv"
+MANUAL_DEGRADED_TRACE_JSON_PATH = "data/reports/manual_degraded_redemption_event_trace.json"
 BOOTSTRAP_START_DATE = "2019-01-01"
 SOURCE_TUSHARE = "tushare"
 STATUS_MANUAL_DEGRADED = "MANUAL_DEGRADED"
@@ -67,6 +70,9 @@ class RedemptionFetcher:
         freshness_report_path: str = FRESHNESS_REPORT_PATH,
         manual_events_path: str = MANUAL_EVENTS_PATH,
         manual_review_completions_path: str = MANUAL_REVIEW_COMPLETIONS_PATH,
+        manual_degraded_ledger_csv_path: str = MANUAL_DEGRADED_LEDGER_CSV_PATH,
+        manual_degraded_canonical_csv_path: str = MANUAL_DEGRADED_CANONICAL_CSV_PATH,
+        manual_degraded_trace_json_path: str = MANUAL_DEGRADED_TRACE_JSON_PATH,
         today_fn: Optional[Callable[[], str]] = None,
     ):
         self.provider = provider
@@ -79,6 +85,9 @@ class RedemptionFetcher:
         self.freshness_report_path = freshness_report_path
         self.manual_events_path = manual_events_path
         self.manual_review_completions_path = manual_review_completions_path
+        self.manual_degraded_ledger_csv_path = manual_degraded_ledger_csv_path
+        self.manual_degraded_canonical_csv_path = manual_degraded_canonical_csv_path
+        self.manual_degraded_trace_json_path = manual_degraded_trace_json_path
         self._today_fn = today_fn
         self.filtered_snapshot_ids: list[str] = []
 
@@ -325,17 +334,26 @@ class RedemptionFetcher:
             if isinstance(item, dict)
         )
 
-    def _pipeline_result_with_status(self, status: str, success: bool = False, ingress_count: int = 0) -> PipelineResult:
+    def _pipeline_result_with_status(
+        self,
+        status: str,
+        success: bool = False,
+        ingress_count: int = 0,
+        ledger_csv_path: Optional[str] = None,
+        canonical_csv_path: Optional[str] = None,
+    ) -> PipelineResult:
         self._write_freshness_report(
             pipeline_status=status,
             disappearance_warning=None,
         )
+        ledger_count_path = ledger_csv_path or self.ledger_csv_path
+        canonical_count_path = canonical_csv_path or self.canonical_csv_path
         return PipelineResult(
             success=success,
             status=status,
             ingress_count=ingress_count,
-            ledger_event_count=self._read_artifact_row_count(self.ledger_csv_path) if success else 0,
-            canonical_date_count=self._read_artifact_row_count(self.canonical_csv_path) if success else 0,
+            ledger_event_count=self._read_artifact_row_count(ledger_count_path) if success else 0,
+            canonical_date_count=self._read_artifact_row_count(canonical_count_path) if success else 0,
             disappearance_warning=None,
         )
 
@@ -351,10 +369,35 @@ class RedemptionFetcher:
 
         staged_import_csv_path = self._stage_csv(manual_df, self.import_csv_path)
         self._publish_staged_artifacts([(staged_import_csv_path, self.import_csv_path)])
+
+        try:
+            run_redemption_wave3_pipeline(
+                import_csv_path=self.import_csv_path,
+                ledger_csv_path=self.manual_degraded_ledger_csv_path,
+                canonical_csv_path=self.manual_degraded_canonical_csv_path,
+                trace_json_path=self.manual_degraded_trace_json_path,
+                target_dates=[target_date],
+            )
+        except Exception:
+            self._delete_if_exists(self.import_csv_path)
+            self._delete_if_exists(self.manual_degraded_ledger_csv_path)
+            self._delete_if_exists(self.manual_degraded_canonical_csv_path)
+            self._delete_if_exists(self.manual_degraded_trace_json_path)
+            return PipelineResult(
+                success=False,
+                status="WAVE3_FAILED",
+                ingress_count=len(manual_df),
+                ledger_event_count=0,
+                canonical_date_count=0,
+                disappearance_warning=None,
+            )
+
         return self._pipeline_result_with_status(
             STATUS_MANUAL_DEGRADED,
             success=True,
             ingress_count=len(manual_df),
+            ledger_csv_path=self.manual_degraded_ledger_csv_path,
+            canonical_csv_path=self.manual_degraded_canonical_csv_path,
         )
 
     def fetch_and_build_import_csv(
@@ -380,7 +423,7 @@ class RedemptionFetcher:
         except Exception:
             return FetchResult(
                 success=False,
-                status="API_FAILED",
+                status=DataProviderFailureStatus.RUNTIME_BUG.value,
                 row_count=0,
                 rejected_count=0,
             )

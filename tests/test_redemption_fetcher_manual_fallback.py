@@ -103,6 +103,9 @@ def _fetcher(tmp_path, provider, baseline=True):
         freshness_report_path=str(tmp_path / "data" / "freshness.json"),
         manual_events_path=str(tmp_path / "data" / "manual_events.csv"),
         manual_review_completions_path=str(tmp_path / "data" / "manual_review_completions.json"),
+        manual_degraded_ledger_csv_path=str(tmp_path / "data" / "reports" / "manual_degraded_ledger.csv"),
+        manual_degraded_canonical_csv_path=str(tmp_path / "data" / "reports" / "manual_degraded_canonical.csv"),
+        manual_degraded_trace_json_path=str(tmp_path / "data" / "reports" / "manual_degraded_trace.json"),
         today_fn=lambda: "2026-05-17",
     )
 
@@ -154,6 +157,15 @@ def test_network_failure_with_baseline_and_manual_facts_enters_manual_degraded(t
     written = pd.read_csv(fetcher.import_csv_path, dtype=str, keep_default_na=False)
     assert list(written.columns) == IMPORT_COLUMNS
     assert written["source"].tolist() == ["manual"]
+    degraded_ledger = pd.read_csv(fetcher.manual_degraded_ledger_csv_path, dtype=str, keep_default_na=False)
+    degraded_canonical = pd.read_csv(fetcher.manual_degraded_canonical_csv_path, dtype=str, keep_default_na=False)
+    with open(fetcher.manual_degraded_trace_json_path, "r", encoding="utf-8") as handle:
+        degraded_trace = json.load(handle)
+    assert degraded_ledger["source"].tolist() == ["manual"]
+    assert degraded_canonical["bond_code"].tolist() == ["123456.SH"]
+    assert degraded_trace["ingress_artifact_path"] == fetcher.import_csv_path
+    assert result.ledger_event_count == 1
+    assert result.canonical_date_count == 1
     assert _freshness_status(fetcher) == "MANUAL_DEGRADED"
 
 
@@ -244,6 +256,20 @@ def test_runtime_bug_never_reads_or_uses_manual_fallback(tmp_path):
     fetcher = _fetcher(tmp_path, provider)
     result = fetcher.run_redemption_sync_pipeline()
     assert result.status == "RUNTIME_BUG"
+
+
+def test_plain_provider_exception_maps_to_runtime_bug_and_never_uses_manual_fallback(tmp_path):
+    provider = StubProvider(error=RuntimeError("plain mapping explosion"))
+    fetcher = _fetcher(tmp_path, provider)
+    _write_manual_events(tmp_path / "data" / "manual_events.csv", [_manual_command_row()])
+
+    result = fetcher.run_redemption_sync_pipeline()
+
+    assert result.success is False
+    assert result.status == "RUNTIME_BUG"
+    assert not (tmp_path / "data" / "import.csv").exists()
+    assert not (tmp_path / "data" / "reports" / "manual_degraded_trace.json").exists()
+    assert _freshness_status(fetcher) == "RUNTIME_BUG"
 
 
 def test_degraded_facts_are_filtered_to_target_announcement_date(tmp_path):
