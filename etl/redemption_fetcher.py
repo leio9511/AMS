@@ -586,6 +586,7 @@ class RedemptionFetcher:
             )
 
         self._discard_wave3_backups(backup_state)
+        self._cleanup_manual_degraded_operational_artifacts()
 
         tracker_state = self._read_state_tracker()
         disappearance_warning = self._build_disappearance_warning(
