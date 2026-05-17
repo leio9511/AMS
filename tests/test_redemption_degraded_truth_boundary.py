@@ -190,8 +190,11 @@ def test_degraded_status_never_reported_as_normal_success(tmp_path):
     assert freshness["pipeline_status"] == "MANUAL_DEGRADED"
     assert freshness["pipeline_status"] not in {"NORMAL", "OK"}
     trace = json.loads(tmp_path_from_path(fetcher.manual_degraded_trace_json_path).read_text(encoding="utf-8"))
-    assert trace.get("pipeline_status") != "NORMAL"
-    assert trace.get("pipeline_status") != "OK"
+    assert trace["pipeline_status"] == "MANUAL_DEGRADED"
+    assert trace["execution_mode"] == "manual_degraded"
+    assert trace["source_mode"] == "manual_fallback"
+    assert trace["target_date"] == "2026-05-17"
+    assert trace["pipeline_status"] not in {"NORMAL", "OK"}
 
 
 def test_existing_wave3_identity_contract_unchanged_by_degraded_artifact_isolation():

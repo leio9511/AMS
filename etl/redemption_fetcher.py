@@ -277,6 +277,20 @@ class RedemptionFetcher:
         staged_report_path = self._stage_json(payload, self.freshness_report_path)
         self._publish_staged_artifacts([(staged_report_path, self.freshness_report_path)])
 
+    def _decorate_manual_degraded_trace(self, target_date: str):
+        with open(self.manual_degraded_trace_json_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+
+        payload["pipeline_status"] = STATUS_MANUAL_DEGRADED
+        payload["execution_mode"] = "manual_degraded"
+        payload["source_mode"] = "manual_fallback"
+        payload["target_date"] = target_date
+
+        staged_trace_path = self._stage_json(payload, self.manual_degraded_trace_json_path)
+        self._publish_staged_artifacts(
+            [(staged_trace_path, self.manual_degraded_trace_json_path)]
+        )
+
     @staticmethod
     def _read_artifact_row_count(path: str) -> int:
         if not os.path.exists(path):
@@ -387,6 +401,7 @@ class RedemptionFetcher:
                 trace_json_path=self.manual_degraded_trace_json_path,
                 target_dates=[target_date],
             )
+            self._decorate_manual_degraded_trace(target_date)
         except Exception:
             self._delete_if_exists(self.manual_degraded_import_csv_path)
             self._delete_if_exists(self.manual_degraded_ledger_csv_path)
