@@ -1,17 +1,50 @@
 from abc import ABC, abstractmethod
+from enum import Enum
+
 import pandas as pd
+
+
+class DataProviderFailureStatus(str, Enum):
+    """Externally observable provider failure statuses for degraded-mode gating."""
+
+    NETWORK_UNAVAILABLE = "NETWORK_UNAVAILABLE"
+    AUTH_FAILED = "AUTH_FAILED"
+    QUOTA_EXCEEDED = "QUOTA_EXCEEDED"
+    RUNTIME_BUG = "RUNTIME_BUG"
+
 
 class DataProviderError(Exception):
     """Base class for data provider errors."""
-    pass
+
+    failure_status = DataProviderFailureStatus.RUNTIME_BUG
+
+    @property
+    def status(self) -> str:
+        return self.failure_status.value
+
 
 class DataProviderAuthError(DataProviderError):
     """Raised when authentication with the data provider fails."""
-    pass
+
+    failure_status = DataProviderFailureStatus.AUTH_FAILED
+
 
 class DataProviderQuotaError(DataProviderError):
     """Raised when the data provider quota is exceeded."""
-    pass
+
+    failure_status = DataProviderFailureStatus.QUOTA_EXCEEDED
+
+
+class DataProviderNetworkUnavailableError(DataProviderError):
+    """Raised when the data provider is unreachable or upstream is unavailable."""
+
+    failure_status = DataProviderFailureStatus.NETWORK_UNAVAILABLE
+
+
+class DataProviderRuntimeBugError(DataProviderError):
+    """Raised when provider adapter mapping/parsing/runtime logic fails."""
+
+    failure_status = DataProviderFailureStatus.RUNTIME_BUG
 
 class BaseDataProvider(ABC):
     @abstractmethod

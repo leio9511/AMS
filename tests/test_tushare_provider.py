@@ -4,7 +4,12 @@ import pandas as pd
 import pytest
 from unittest.mock import MagicMock
 
-from etl.cb_provider_base import DataProviderAuthError, DataProviderError, DataProviderQuotaError
+from etl.cb_provider_base import (
+    DataProviderAuthError,
+    DataProviderNetworkUnavailableError,
+    DataProviderQuotaError,
+    DataProviderRuntimeBugError,
+)
 from etl.tushare_provider import CALL_TYPE_REDEEM, IMPORT_COLUMNS, SOURCE_TUSHARE, TuShareProvider
 
 
@@ -167,7 +172,7 @@ def test_fetch_and_map_redemption_events_rejects_all_rows_for_duplicate_source_n
     assert json.dumps(result.rejected_duplicates)
 
 
-def test_fetch_and_map_redemption_events_returns_provider_error_for_non_empty_payload_missing_required_columns():
+def test_fetch_and_map_redemption_events_missing_required_columns_classifies_as_runtime_bug():
     provider = TuShareProvider(pro=MagicMock())
     provider.pro.cb_call.return_value = pd.DataFrame(
         {
@@ -177,9 +182,72 @@ def test_fetch_and_map_redemption_events_returns_provider_error_for_non_empty_pa
         }
     )
 
-    with pytest.raises(DataProviderError, match="TuShare error: cb_call response missing required columns: call_type"):
+    with pytest.raises(DataProviderRuntimeBugError, match="TuShare runtime bug: cb_call response missing required columns: call_type") as exc_info:
         provider.fetch_and_map_redemption_events("2026-05-01", "2026-05-31")
 
+    assert exc_info.value.status == "RUNTIME_BUG"
+    assert not isinstance(exc_info.value, DataProviderNetworkUnavailableError)
+
+
+def test_network_unavailable_exception_classifies_as_network_unavailable():
+    provider = TuShareProvider(pro=MagicMock())
+    provider.pro.cb_call.side_effect = TimeoutError("request timed out")
+
+    with pytest.raises(DataProviderNetworkUnavailableError, match="TuShare network unavailable") as exc_info:
+        provider.fetch_and_map_redemption_events("2026-05-01", "2026-05-31")
+
+    assert exc_info.value.status == "NETWORK_UNAVAILABLE"
+
+
+def test_service_unavailable_exception_classifies_as_network_unavailable():
+    provider = TuShareProvider(pro=MagicMock())
+    provider.pro.cb_call.side_effect = Exception("503 Service Unavailable")
+
+    with pytest.raises(DataProviderNetworkUnavailableError) as exc_info:
+        provider.fetch_and_map_redemption_events("2026-05-01", "2026-05-31")
+
+    assert exc_info.value.status == "NETWORK_UNAVAILABLE"
+
+
+def test_auth_failure_classifies_as_auth_failed_not_network():
+    provider = TuShareProvider(pro=MagicMock())
+    provider.pro.cb_call.side_effect = Exception("401 permission denied: TOKEN invalid")
+
+    with pytest.raises(DataProviderAuthError) as exc_info:
+        provider.fetch_and_map_redemption_events("2026-05-01", "2026-05-31")
+
+    assert exc_info.value.status == "AUTH_FAILED"
+    assert not isinstance(exc_info.value, DataProviderNetworkUnavailableError)
+
+
+def test_quota_failure_classifies_as_quota_exceeded_not_network():
+    provider = TuShareProvider(pro=MagicMock())
+    provider.pro.cb_call.side_effect = Exception("抱歉，您每分钟最多访问该接口次数限制")
+
+    with pytest.raises(DataProviderQuotaError) as exc_info:
+        provider.fetch_and_map_redemption_events("2026-05-01", "2026-05-31")
+
+    assert exc_info.value.status == "QUOTA_EXCEEDED"
+    assert not isinstance(exc_info.value, DataProviderNetworkUnavailableError)
+
+
+def test_unexpected_mapping_exception_classifies_as_runtime_bug(monkeypatch):
+    provider = TuShareProvider(pro=MagicMock())
+    provider.pro.cb_call.return_value = pd.DataFrame(
+        {
+            "ts_code": ["118033.SH"],
+            "ann_date": ["20260514"],
+            "call_type": [CALL_TYPE_REDEEM],
+            "call_date": ["20260601"],
+        }
+    )
+    monkeypatch.setattr(provider, "fetch_cb_basic", MagicMock(side_effect=TypeError("local mapping broke")))
+
+    with pytest.raises(DataProviderRuntimeBugError, match="TuShare runtime bug: local mapping broke") as exc_info:
+        provider.fetch_and_map_redemption_events("2026-05-01", "2026-05-31")
+
+    assert exc_info.value.status == "RUNTIME_BUG"
+    assert not isinstance(exc_info.value, DataProviderNetworkUnavailableError)
 
 
 def test_fetch_and_map_redemption_events_returns_empty_result_for_empty_or_non_redeem_snapshot():

@@ -8,7 +8,9 @@ from etl.cb_provider_base import (
     BaseDataProvider,
     DataProviderAuthError,
     DataProviderError,
+    DataProviderNetworkUnavailableError,
     DataProviderQuotaError,
+    DataProviderRuntimeBugError,
 )
 
 logger = logging.getLogger(__name__)
@@ -121,13 +123,76 @@ class TuShareProvider(BaseDataProvider):
             rejected_duplicates=[],
         )
 
-    def _handle_exception(self, e):
+    @staticmethod
+    def _is_network_unavailable_exception(e) -> bool:
+        if isinstance(e, (TimeoutError, ConnectionError)):
+            return True
+
         err_msg = str(e).lower()
-        if "token" in err_msg or "认证" in err_msg or "401" in err_msg:
-            raise DataProviderAuthError(f"TuShare auth failure: {e}")
-        if "次数" in err_msg or "频率" in err_msg or "limit" in err_msg or "每分钟" in err_msg or "403" in err_msg:
-            raise DataProviderQuotaError(f"TuShare quota exceeded: {e}")
-        raise DataProviderError(f"TuShare error: {e}")
+        network_markers = [
+            "timeout",
+            "timed out",
+            "connection error",
+            "connection aborted",
+            "connection reset",
+            "connection refused",
+            "network",
+            "service unavailable",
+            "temporarily unavailable",
+            "bad gateway",
+            "gateway timeout",
+            "503",
+            "502",
+            "504",
+            "远程主机",
+            "连接",
+            "超时",
+            "服务不可用",
+        ]
+        return any(marker in err_msg for marker in network_markers)
+
+    @staticmethod
+    def _is_auth_exception(e) -> bool:
+        err_msg = str(e).lower()
+        auth_markers = [
+            "token",
+            "认证",
+            "401",
+            "unauthorized",
+            "authentication",
+            "permission denied",
+            "forbidden",
+            "权限",
+        ]
+        return any(marker in err_msg for marker in auth_markers)
+
+    @staticmethod
+    def _is_quota_exception(e) -> bool:
+        err_msg = str(e).lower()
+        quota_markers = [
+            "次数",
+            "频率",
+            "limit",
+            "每分钟",
+            "quota",
+            "rate",
+            "throttle",
+            "too many requests",
+            "429",
+            "403",
+        ]
+        return any(marker in err_msg for marker in quota_markers)
+
+    def _handle_exception(self, e):
+        if isinstance(e, DataProviderError):
+            raise e
+        if self._is_auth_exception(e):
+            raise DataProviderAuthError(f"TuShare auth failure: {e}") from e
+        if self._is_quota_exception(e):
+            raise DataProviderQuotaError(f"TuShare quota exceeded: {e}") from e
+        if self._is_network_unavailable_exception(e):
+            raise DataProviderNetworkUnavailableError(f"TuShare network unavailable: {e}") from e
+        raise DataProviderRuntimeBugError(f"TuShare runtime bug: {e}") from e
 
     def fetch_cb_basic(self) -> pd.DataFrame:
         try:
